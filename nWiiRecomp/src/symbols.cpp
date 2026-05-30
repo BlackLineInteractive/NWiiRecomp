@@ -1,65 +1,55 @@
-#include "nwii/recompiler/symbols.h"
+#include "recompiler/symbols.h"
 #include <fstream>
 #include <sstream>
-#include <iostream>
 
 namespace nwii {
-namespace recompiler {
+namespace recomp {
 
-bool SymbolMap::load_ghidra_csv(const std::string& filepath) {
+bool SymbolTable::load_csv(const std::string& filepath) {
     std::ifstream file(filepath);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open symbol file: " << filepath << std::endl;
-        return false;
-    }
-
+    if (!file.is_open()) return false;
+    
     std::string line;
-    // Skip header
+    // Skip header if exists (Name, Location, Size)
     std::getline(file, line);
-
+    
     while (std::getline(file, line)) {
         if (line.empty()) continue;
-
+        
         std::stringstream ss(line);
-        std::string name, location_str, size_str, type, rest;
-
-        // Basic CSV parsing (Ghidra export usually: Name,Location,Size,Type,...)
-        // Note: Real Ghidra CSVs might have quotes, this is a basic split implementation.
-        std::getline(ss, name, ',');
-        std::getline(ss, location_str, ',');
-        std::getline(ss, size_str, ',');
-        std::getline(ss, type, ',');
-
-        // Remove quotes if present
-        if (!name.empty() && name.front() == '"') {
-            name = name.substr(1, name.size() - 2);
-        }
-
-        Symbol sym;
-        sym.name = name;
-        sym.type = type;
-
-        try {
-            // Location might have "80" prefix in RAM for Wii (e.g., 0x80001234)
-            sym.address = std::stoul(location_str, nullptr, 16);
-            sym.size = size_str.empty() ? 0 : std::stoul(size_str, nullptr, 10);
-            symbols.push_back(sym);
-        } catch (const std::exception& e) {
-            // Skip invalid lines
+        std::string name, loc_str, size_str;
+        
+        if (std::getline(ss, name, ',') && std::getline(ss, loc_str, ',')) {
+            // Trim quotes if any
+            if (!name.empty() && name.front() == '"') name.erase(0, 1);
+            if (!name.empty() && name.back() == '"') name.pop_back();
+            if (!loc_str.empty() && loc_str.front() == '"') loc_str.erase(0, 1);
+            if (!loc_str.empty() && loc_str.back() == '"') loc_str.pop_back();
+            
+            try {
+                uint32_t addr = std::stoul(loc_str, nullptr, 16);
+                symbols_[addr] = name;
+            } catch(...) {}
         }
     }
-
     return true;
 }
 
-const Symbol* SymbolMap::get_symbol_by_address(uint32_t address) const {
-    for (const auto& sym : symbols) {
-        if (sym.address == address) {
-            return &sym;
-        }
+std::string SymbolTable::get_symbol(uint32_t address) const {
+    auto it = symbols_.find(address);
+    if (it != symbols_.end()) {
+        return it->second;
     }
-    return nullptr;
+    return "";
 }
 
-} // namespace recompiler
+bool SymbolTable::has_symbol(uint32_t address) const {
+    return symbols_.find(address) != symbols_.end();
+}
+
+void SymbolTable::add_symbol(uint32_t address, const std::string& name) {
+    symbols_[address] = name;
+}
+
+} // namespace recomp
 } // namespace nwii

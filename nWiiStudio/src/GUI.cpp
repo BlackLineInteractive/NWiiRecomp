@@ -5,6 +5,7 @@
 #include "imgui_memory_editor.h"
 #include "TextEditor.h"
 #include "ImGuiFileDialog.h"
+#include "recompiler/recompiler.h"
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -101,7 +102,6 @@ static void DrawSettingsWindow(StudioState& state) {
                     bool selected = (state.settings.selectedFont == font);
                     if (ImGui::Selectable(font.c_str(), selected)) {
                         state.settings.selectedFont = font;
-                        // Defer font rebuild to main loop (prevents crash)
                         state.pendingFontRebuild = true;
                     }
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -109,11 +109,8 @@ static void DrawSettingsWindow(StudioState& state) {
                 ImGui::EndCombo();
             }
 
-            // Font size slider - changes are deferred to prevent crash
             if (ImGui::SliderFloat("Font Size", &state.settings.fontSize, 10.0f, 24.0f, "%.1f")) {
-                // Clamp to safe range
                 state.settings.fontSize = std::clamp(state.settings.fontSize, 10.0f, 48.0f);
-                // Defer font rebuild to main loop - NOT during frame rendering
                 state.pendingFontRebuild = true;
             }
         }
@@ -168,7 +165,6 @@ void GUI::DrawStudio(StudioState& state) {
         ghidra_editor.SetPalette(TextEditor::GetDarkPalette());
         ghidra_editor.SetReadOnly(true);
 
-        // Log editor: read-only TextEditor that supports text selection (Ctrl+A, Ctrl+C, mouse drag)
         log_editor.SetPalette(TextEditor::GetDarkPalette());
         log_editor.SetReadOnly(true);
         log_editor.SetShowWhitespaces(false);
@@ -177,20 +173,17 @@ void GUI::DrawStudio(StudioState& state) {
         mem_edit.OptShowAscii = true;
         mem_edit.OptGreyOutZeroes = true;
         mem_edit.OptUpperCaseHex = false;
-        // Set BgColorFn for highlighting selected functions in hex view
         mem_edit.BgColorFn = HexBgColorCallback;
         mem_edit.UserData = nullptr;
 
         editors_initialized = true;
     }
 
-    // Sync config editor if requested
     if (config_editor_needs_sync) {
         config_editor.SetText(state.data.configTomlContent);
         config_editor_needs_sync = false;
     }
 
-    // Update log editor when logs change
     {
         size_t currentVersion = state.logVersion.load();
         if (currentVersion != last_log_version) {
@@ -201,7 +194,6 @@ void GUI::DrawStudio(StudioState& state) {
             }
             log_editor.SetText(ss.str());
 
-            // Set error markers for lines containing Error/Failed
             TextEditor::ErrorMarkers markers;
             for (size_t i = 0; i < state.logs.size(); i++) {
                 const auto& line = state.logs[i];
@@ -217,7 +209,6 @@ void GUI::DrawStudio(StudioState& state) {
         }
     }
 
-    // Dockspace
     ImGuiID dockspace_id = ImGui::GetID("StudioDock");
     ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport());
 
@@ -239,30 +230,11 @@ void GUI::DrawStudio(StudioState& state) {
         ImGui::DockBuilderFinish(dockspace_id);
     }
 
-    // File dialogs
     ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
 
     if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
-            state.LoadELF(ImGuiFileDialog::Instance()->GetFilePathName());
-        }
-        ImGuiFileDialog::Instance()->Close();
-    }
-
-    if (ImGuiFileDialog::Instance()->Display("ImportGhidraKey")) {
-        if (ImGuiFileDialog::Instance()->IsOk()) {
-            std::string csvPath = ImGuiFileDialog::Instance()->GetFilePathName();
-            state.ImportGhidraCSV(csvPath);
-            // Add to imported CSV list (avoid duplicates)
-            bool alreadyImported = false;
-            for (const auto& existing : state.data.importedCSVFiles) {
-                if (existing == csvPath) { alreadyImported = true; break; }
-            }
-            if (!alreadyImported) {
-                state.data.importedCSVFiles.push_back(csvPath);
-            }
-            state.data.selectedCSVIndex = static_cast<int>(state.data.importedCSVFiles.size()) - 1;
-            ghidra_editor.SetText(state.data.ghidraCSVContent);
+            state.LoadUnpackedGame(ImGuiFileDialog::Instance()->GetFilePathName());
         }
         ImGuiFileDialog::Instance()->Close();
     }
@@ -274,18 +246,28 @@ void GUI::DrawStudio(StudioState& state) {
         ImGuiFileDialog::Instance()->Close();
     }
 
+    if (ImGuiFileDialog::Instance()->Display("ChooseGhidraCSV")) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            std::string path = ImGuiFileDialog::Instance()->GetFilePathName();
+            state.LoadGhidraCSV(path);
+            
+            std::ifstream file(path);
+            if (file.is_open()) {
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                ghidra_editor.SetText(buffer.str());
+            }
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
+
     // ---- Main Menu Bar ----
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open ELF...", "Ctrl+O")) {
+            if (ImGui::MenuItem("Open Unpacked Game...", "Ctrl+O")) {
                 IGFD::FileDialogConfig config;
                 config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".*,.elf", config);
-            }
-            if (ImGui::MenuItem("Import Ghidra CSV...")) {
-                IGFD::FileDialogConfig config;
-                config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ImportGhidraKey", "Choose CSV", ".csv", config);
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Directory", nullptr, config);
             }
             if (ImGui::MenuItem("Set Output Directory...")) {
                 IGFD::FileDialogConfig config;
@@ -308,15 +290,11 @@ void GUI::DrawStudio(StudioState& state) {
 
         if (ImGui::BeginMenu("Tools")) {
             bool busy = state.isBusy.load();
-            if (ImGui::MenuItem("Analyze", "F5", false, !busy && !state.data.elfPath.empty())) {
+            if (ImGui::MenuItem("Analyze", "F5", false, !busy && state.data.executable != nullptr)) {
                 state.StartAnalysis();
             }
-            if (ImGui::MenuItem("Recompile", "F7", false, !busy && state.data.isAnalysisComplete)) {
+            if (ImGui::MenuItem("Generate C++", "F6", false, !busy && state.data.isAnalysisComplete)) {
                 state.StartRecompilation();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Run System Diagnostics", nullptr, false, !busy)) {
-                state.RunDiagnostics();
             }
             ImGui::EndMenu();
         }
@@ -328,7 +306,6 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::EndMenu();
         }
 
-        // Show output path in menu bar
         std::string pathDisplay = state.GetEffectiveOutputPath();
         float pathWidth = ImGui::CalcTextSize(pathDisplay.c_str()).x;
         if (ImGui::GetWindowWidth() > pathWidth + 300) {
@@ -339,7 +316,6 @@ void GUI::DrawStudio(StudioState& state) {
         ImGui::EndMainMenuBar();
     }
 
-    // ---- Keyboard Shortcuts ----
     {
         ImGuiIO& io = ImGui::GetIO();
         bool noPopup = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
@@ -347,17 +323,13 @@ void GUI::DrawStudio(StudioState& state) {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) {
                 IGFD::FileDialogConfig config;
                 config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".*,.elf", config);
-            }
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && state.data.isAnalysisComplete) {
-                state.SaveConfigTOML();
-                config_editor_needs_sync = true;
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Directory", nullptr, config);
             }
             bool busy = state.isBusy.load();
-            if (ImGui::IsKeyPressed(ImGuiKey_F5) && !busy && !state.data.elfPath.empty()) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F5) && !busy && state.data.executable != nullptr) {
                 state.StartAnalysis();
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_F7) && !busy && state.data.isAnalysisComplete) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F6) && !busy && state.data.isAnalysisComplete) {
                 state.StartRecompilation();
             }
         }
@@ -374,15 +346,16 @@ void GUI::DrawStudio(StudioState& state) {
 
     if (state.data.isAnalysisComplete && state.data.analyzer) {
         ImGui::BeginChild("FuncList", ImVec2(0, 0), false);
-        const auto& funcs = state.data.analyzer->getFunctions();
+        const auto& funcsMap = state.data.analyzer->get_functions();
+        std::vector<nwii::analyzer::Function> funcs;
+        for(const auto& pair : funcsMap) funcs.push_back(pair.second);
 
-        // Build filtered index list so clipper works correctly
         std::string filterStr(filterBuf);
         static std::vector<int> filteredIndices;
         filteredIndices.clear();
-        filteredIndices.reserve(funcs.size());
         for (int idx = 0; idx < static_cast<int>(funcs.size()); idx++) {
-            if (filterStr.empty() || funcs[idx].name.find(filterStr) != std::string::npos) {
+            std::string addrStr = FormatHex(funcs[idx].start_address);
+            if (filterStr.empty() || addrStr.find(filterStr) != std::string::npos) {
                 filteredIndices.push_back(idx);
             }
         }
@@ -391,13 +364,12 @@ void GUI::DrawStudio(StudioState& state) {
         clipper.Begin(static_cast<int>(filteredIndices.size()));
         while (clipper.Step()) {
             for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
-                if (row < 0 || row >= static_cast<int>(filteredIndices.size())) continue;
                 int i = filteredIndices[row];
-
                 const auto& func = funcs[i];
+                std::string funcName = "func_" + FormatHex(func.start_address).substr(2);
 
                 OverrideStatus status = OverrideStatus::Default;
-                auto it = state.data.funcOverrides.find(func.name);
+                auto it = state.data.funcOverrides.find(func.start_address);
                 if (it != state.data.funcOverrides.end()) {
                     status = it->second;
                 }
@@ -412,34 +384,31 @@ void GUI::DrawStudio(StudioState& state) {
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
-                bool isSelected = state.selectedFuncIndex == i;
-                if (ImGui::Selectable(func.name.c_str(), isSelected)) {
-                    state.selectedFuncIndex = i;
+                bool isSelected = state.selectedFuncAddress == func.start_address;
+                if (ImGui::Selectable(funcName.c_str(), isSelected)) {
+                    state.selectedFuncAddress = func.start_address;
+                    
                     std::stringstream codeSS;
-                    codeSS << "// Function: " << func.name << "\n";
-                    codeSS << "// Address:  " << FormatHex(func.start) << "\n";
-                    codeSS << "// Size:     " << (func.end - func.start) << " bytes\n\n";
-                    codeSS << "void " << func.name << "() {\n";
-                    for (const auto& inst : func.instructions) {
-                        codeSS << "    // " << FormatHex(inst.address)
-                               << ": [0x" << std::hex << inst.opcode << "]\n";
-                    }
-                    codeSS << "}\n";
+                    codeSS << "// Function: " << funcName << "\n";
+                    codeSS << "// Address:  " << FormatHex(func.start_address) << "\n";
+                    codeSS << "// Size:     " << (func.end_address - func.start_address) << " bytes\n\n";
+                    
+                    nwii::recomp::Recompiler live_recompiler(*state.data.analyzer, &state.symbolTable);
+                    codeSS << live_recompiler.generate_function_cpp(func);
+                    
                     code_editor.SetText(codeSS.str());
 
-                    // Update hex view to highlight and jump to this function
-                    if (!state.data.rawElfData.empty() &&
-                        func.start < state.data.rawElfData.size()) {
-                        mem_edit.GotoAddrAndHighlight(func.start,
-                            std::min(static_cast<size_t>(func.end), state.data.rawElfData.size()));
+                    if (!state.data.rawExecutableData.empty() && func.start_address < state.data.rawExecutableData.size()) {
+                        mem_edit.GotoAddrAndHighlight(func.start_address,
+                            std::min(static_cast<size_t>(func.end_address), state.data.rawExecutableData.size()));
                     }
                 }
                 ImGui::PopStyleColor();
 
                 if (ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    ImGui::Text("Start: %s", FormatHex(func.start).c_str());
-                    ImGui::Text("Size:  %d bytes", (func.end - func.start));
+                    ImGui::Text("Start: %s", FormatHex(func.start_address).c_str());
+                    ImGui::Text("Size:  %d bytes", (func.end_address - func.start_address));
                     ImGui::EndTooltip();
                 }
             }
@@ -448,8 +417,8 @@ void GUI::DrawStudio(StudioState& state) {
     } else {
         float winW = ImGui::GetWindowSize().x;
         float winH = ImGui::GetWindowSize().y;
-        if (state.data.elfPath.empty()) {
-            const char* txt = "No ELF loaded";
+        if (!state.data.executable) {
+            const char* txt = "No game loaded";
             ImGui::SetCursorPos(ImVec2((winW - ImGui::CalcTextSize(txt).x) * 0.5f, winH * 0.4f));
             ImGui::TextDisabled("%s", txt);
         } else {
@@ -466,23 +435,24 @@ void GUI::DrawStudio(StudioState& state) {
 
     // ---- Inspector Panel ----
     ImGui::Begin("Inspector");
-    if (state.data.analyzer && state.selectedFuncIndex >= 0) {
-        const auto& funcs = state.data.analyzer->getFunctions();
-        if (state.selectedFuncIndex < static_cast<int>(funcs.size())) {
-            const auto& func = funcs[state.selectedFuncIndex];
+    if (state.data.analyzer && state.selectedFuncAddress != 0) {
+        auto& funcsMap = state.data.analyzer->get_functions();
+        if (funcsMap.find(state.selectedFuncAddress) != funcsMap.end()) {
+            auto& func = funcsMap.at(state.selectedFuncAddress);
+            std::string funcName = "func_" + FormatHex(func.start_address).substr(2);
 
             if (ImGui::GetIO().Fonts->Fonts.Size > 0) {
                 ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-                ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "%s", func.name.c_str());
+                ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "%s", funcName.c_str());
                 ImGui::PopFont();
             } else {
-                ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "%s", func.name.c_str());
+                ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "%s", funcName.c_str());
             }
             ImGui::Separator();
             ImGui::Spacing();
 
             OverrideStatus current = OverrideStatus::Default;
-            auto it = state.data.funcOverrides.find(func.name);
+            auto it = state.data.funcOverrides.find(func.start_address);
             if (it != state.data.funcOverrides.end()) {
                 current = it->second;
             }
@@ -492,8 +462,8 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::TextDisabled("Strategy:");
             ImGui::SetNextItemWidth(-1);
             if (ImGui::Combo("##Action", &idx, options, 4)) {
-                state.data.funcOverrides[func.name] = static_cast<OverrideStatus>(idx);
-                state.Log("Strategy changed for " + func.name);
+                state.data.funcOverrides[func.start_address] = static_cast<OverrideStatus>(idx);
+                state.Log("Strategy changed for " + funcName);
             }
 
             ImGui::Spacing();
@@ -505,24 +475,18 @@ void GUI::DrawStudio(StudioState& state) {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextDisabled("Address:");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", FormatHex(func.start).c_str());
+                ImGui::Text("%s", FormatHex(func.start_address).c_str());
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextDisabled("Size:");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%d bytes", (func.end - func.start));
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextDisabled("Instructions:");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%zu", func.instructions.size());
+                ImGui::Text("%d bytes", (func.end_address - func.start_address));
 
                 ImGui::EndTable();
             }
         } else {
-            state.selectedFuncIndex = -1;
+            state.selectedFuncAddress = 0;
             ImGui::TextDisabled("Select a function to inspect");
         }
     } else {
@@ -535,7 +499,6 @@ void GUI::DrawStudio(StudioState& state) {
     ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoTitleBar);
 
     if (ImGui::BeginTabBar("Tabs", ImGuiTabBarFlags_Reorderable)) {
-        // C++ Preview Tab
         if (ImGui::BeginTabItem("  C++ Preview  ")) {
             if (ImGui::BeginPopupContextItem("CppContext")) {
                 if (ImGui::MenuItem("Copy All")) {
@@ -548,46 +511,32 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::EndTabItem();
         }
 
-        // Hex View Tab - with highlighting
         if (ImGui::BeginTabItem("  Hex View  ")) {
-            if (state.data.rawElfData.empty()) {
+            if (state.data.rawExecutableData.empty()) {
                 ImGui::TextDisabled("No binary data available (File not loaded or read error)");
             } else {
-                // Setup hex highlights based on selected function
                 hex_highlight_ranges.clear();
-                if (state.data.analyzer && state.selectedFuncIndex >= 0) {
-                    const auto& funcs = state.data.analyzer->getFunctions();
-                    if (state.selectedFuncIndex < static_cast<int>(funcs.size())) {
-                        const auto& func = funcs[state.selectedFuncIndex];
-                        if (func.start < state.data.rawElfData.size()) {
+                if (state.data.analyzer && state.selectedFuncAddress != 0) {
+                    auto& funcsMap = state.data.analyzer->get_functions();
+                    if (funcsMap.find(state.selectedFuncAddress) != funcsMap.end()) {
+                        auto& func = funcsMap.at(state.selectedFuncAddress);
+                        if (func.start_address < state.data.rawExecutableData.size()) {
                             HexHighlightRange hl;
-                            hl.start = func.start;
-                            hl.end = std::min(static_cast<size_t>(func.end), state.data.rawElfData.size());
+                            hl.start = func.start_address;
+                            hl.end = std::min(static_cast<size_t>(func.end_address), state.data.rawExecutableData.size());
                             hl.color = IM_COL32(0, 120, 215, 80);
-                            hl.label = "Function: " + func.name;
+                            hl.label = "Function: func_" + FormatHex(func.start_address).substr(2);
                             hex_highlight_ranges.push_back(hl);
                         }
                     }
                 }
 
-                // Also highlight ELF header (first 52 bytes for 32-bit ELF)
-                if (state.data.rawElfData.size() >= 52) {
-                    HexHighlightRange elfHeader;
-                    elfHeader.start = 0;
-                    elfHeader.end = 52;
-                    elfHeader.color = IM_COL32(100, 180, 80, 40);
-                    elfHeader.label = "ELF Header";
-                    hex_highlight_ranges.push_back(elfHeader);
-                }
-
-                mem_edit.DrawContents(state.data.rawElfData.data(), state.data.rawElfData.size());
+                mem_edit.DrawContents(state.data.rawExecutableData.data(), state.data.rawExecutableData.size());
             }
             ImGui::EndTabItem();
         }
 
-        // config.toml Tab
         if (ImGui::BeginTabItem("  config.toml  ")) {
-            // Toolbar for config editor
             if (ImGui::Button("Save")) {
                 state.SaveConfigTomlFromEditor(config_editor.GetText());
             }
@@ -612,82 +561,20 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::EndTabItem();
         }
 
-        // Imported CSV Files Tab - ALWAYS visible
         if (ImGui::BeginTabItem("  Ghidra CSV  ")) {
-            // Import button always available
-            if (ImGui::Button("Import CSV...")) {
+            if (ImGui::Button("Import CSV")) {
                 IGFD::FileDialogConfig config;
                 config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ImportGhidraKey", "Choose CSV", ".csv", config);
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseGhidraCSV", "Choose Ghidra CSV", ".csv", config);
             }
-
-            if (state.data.importedCSVFiles.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("No CSV files imported yet");
+            ImGui::SameLine();
+            if (!state.symbolsPath.empty()) {
+                ImGui::TextDisabled("Loaded: %s", state.symbolsPath.c_str());
             } else {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%zu files)", state.data.importedCSVFiles.size());
+                ImGui::TextDisabled("No CSV loaded.");
             }
             ImGui::Separator();
-
-            // File list
-            if (!state.data.importedCSVFiles.empty()) {
-                ImGui::BeginChild("CSVList", ImVec2(0, 120), true);
-                for (size_t i = 0; i < state.data.importedCSVFiles.size(); i++) {
-                    const auto& csvPath = state.data.importedCSVFiles[i];
-                    std::string filename = std::filesystem::path(csvPath).filename().string();
-
-                    ImGui::PushID(static_cast<int>(i));
-                    bool isSelected = state.data.selectedCSVIndex == static_cast<int>(i);
-                    if (ImGui::Selectable(filename.c_str(), isSelected)) {
-                        state.data.selectedCSVIndex = static_cast<int>(i);
-                        try {
-                            std::ifstream file(csvPath);
-                            if (file) {
-                                std::stringstream buffer;
-                                buffer << file.rdbuf();
-                                std::string content = buffer.str();
-                                ghidra_editor.SetText(content);
-                                state.data.ghidraCSVPath = csvPath;
-                                state.data.ghidraCSVContent = content;
-                            }
-                        } catch (...) {
-                            state.Log("Error reading CSV: " + csvPath);
-                        }
-                    }
-
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", csvPath.c_str());
-                    }
-
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("X")) {
-                        state.data.importedCSVFiles.erase(state.data.importedCSVFiles.begin() + i);
-                        if (state.data.selectedCSVIndex == static_cast<int>(i)) {
-                            state.data.selectedCSVIndex = -1;
-                            ghidra_editor.SetText("");
-                        } else if (state.data.selectedCSVIndex > static_cast<int>(i)) {
-                            state.data.selectedCSVIndex--;
-                        }
-                        ImGui::PopID();
-                        break; // restart iteration next frame
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::EndChild();
-                ImGui::Separator();
-
-                // Show content of selected CSV
-                if (state.data.selectedCSVIndex >= 0 &&
-                    state.data.selectedCSVIndex < static_cast<int>(state.data.importedCSVFiles.size())) {
-                    std::string selFileName = std::filesystem::path(
-                        state.data.importedCSVFiles[state.data.selectedCSVIndex]).filename().string();
-                    ImGui::TextDisabled("Content: %s", selFileName.c_str());
-                    ImGui::Separator();
-                    ghidra_editor.Render("GhidraEditor");
-                }
-            }
-
+            ghidra_editor.Render("GhidraEditor");
             ImGui::EndTabItem();
         }
 
@@ -699,7 +586,6 @@ void GUI::DrawStudio(StudioState& state) {
     // ---- Logs Panel ----
     ImGui::Begin("Logs");
 
-    // Status bar
     {
         std::string currentStatus = state.GetStatus();
         if (state.isBusy.load()) {
@@ -712,7 +598,6 @@ void GUI::DrawStudio(StudioState& state) {
         }
     }
 
-    // Log toolbar - right-aligned
     {
         float btnWidth = ImGui::CalcTextSize("Copy All").x + ImGui::CalcTextSize("Clear").x
                        + ImGui::GetStyle().FramePadding.x * 4 + ImGui::GetStyle().ItemSpacing.x * 2 + 20;
@@ -734,8 +619,6 @@ void GUI::DrawStudio(StudioState& state) {
     }
 
     ImGui::Separator();
-
-    // Log viewer using TextEditor - supports text selection, Ctrl+A, Ctrl+C, mouse drag
     log_editor.Render("LogEditor");
 
     ImGui::End();

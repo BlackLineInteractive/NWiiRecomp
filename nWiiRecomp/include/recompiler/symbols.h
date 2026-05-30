@@ -1,29 +1,23 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <map>
 #include <cstdint>
 
 namespace nwii {
-namespace recompiler {
+namespace recomp {
 
-struct Symbol {
-    std::string name;
-    uint32_t address;
-    uint32_t size;
-    std::string type;
-};
-
-class SymbolMap {
+class SymbolTable {
 public:
-    bool load_ghidra_csv(const std::string& filepath);
+    bool load_csv(const std::string& filepath);
     
-    const Symbol* get_symbol_by_address(uint32_t address) const;
-    const std::vector<Symbol>& get_all_symbols() const { return symbols; }
+    std::string get_symbol(uint32_t address) const;
+    bool has_symbol(uint32_t address) const;
+    void add_symbol(uint32_t address, const std::string& name);
 
 private:
-    std::vector<Symbol> symbols;
+    std::map<uint32_t, std::string> symbols_;
 };
 
-} // namespace recompiler
+} // namespace recomp
 } // namespace nwii

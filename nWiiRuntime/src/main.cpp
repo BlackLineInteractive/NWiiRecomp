@@ -13,3 +13,14 @@ void shutdown() {
 }
 
 } // namespace nwii::runtime
+
+// Default entry point for the standalone Mac application
+int main(int argc, char** argv) {
+    if (!nwii::runtime::init()) return 1;
+    
+    std::cout << "nWiiRecomp: Standalone app started.\n";
+    // TODO: Initialize CPUContext and call the game's entry point here.
+    
+    nwii::runtime::shutdown();
+    return 0;
+}
