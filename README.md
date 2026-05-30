@@ -1,22 +1,19 @@
 # NWiiRecomp
 
-A static recompilation (AOT) tool for Nintendo Wii games. 
+A static recompiler for the Nintendo Wii. 
 
-Inspired by projects like [N64Recomp](https://github.com/Mr-Harvey/N64Recomp) and [PS2Recomp](https://github.com/drewol/PS2Recomp).
+Inspired by [N64Recomp](https://github.com/Mr-Wiseguy/N64Recomp) and [PS2Recomp](https://github.com/Ran-J/PS2Recomp) (shoutout to Ran-J). 
 
-The goal is to translate PowerPC executables (`.dol`, `.elf`, `.rel`) into C++ code that links against a custom cross-platform runtime environment.
+Currently in the early stages of development. The goal is to take Wii executables and recompile them into native C/C++ code, similar to how those projects handle their respective consoles. 
+
+Right now the focus is strictly on the Wii. Wii U support might be considered later.
 
 ## Structure
+- `src/recompiler`: The offline recompiler.
+- `src/runtime`: The runtime library that the recompiled games link against.
 
-* `src/recompiler/` - The offline tool. Parses Wii binaries, decodes PowerPC instructions, and generates C++ code.
-* `src/runtime/` - The cross-platform HLE runtime (OS, GX, input). Links with the generated code.
-* `include/` - Shared headers.
+## Endianness
+The Wii uses a PowerPC CPU, which is big-endian. The recompiled code will handle byte swapping when running on little-endian hosts (like x86/ARM) using intrinsics for performance.
 
-## Build
-
-```sh
-mkdir build
-cd build
-cmake ..
-cmake --build .
-```
+## Building
+Requires CMake.
