@@ -297,11 +297,14 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         ss << "loc_" << std::hex << std::uppercase << target;
         std::string target_lbl = ss.str();
 
-        if (target <= inst.address) {
+        bool is_local = std::find_if(func.instructions.begin(), func.instructions.end(),
+                                     [target](const auto& i) { return i.address == target; }) != func.instructions.end();
+
+        if (target <= inst.address && is_local) {
             out << "    if (++ctx.inst_count > 10000000) { std::cerr << \"SPINLOCK AT 0x" << std::hex << inst.address << "\\n\"; std::exit(1); }\n";
         }
 
-        if (target >= func.start_address && target <= func.instructions.back().address) {
+        if (is_local) {
             if ((bo & 0x14) == 0x14) {
                 out << "    goto " << target_lbl << ";\n";
             } else if ((bo & 0x14) == 0x04) {
@@ -353,8 +356,11 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         std::stringstream ss;
         std::string target_name;
         
-        if (target <= inst.address) {
-            out << "    if (++ctx.inst_count > 10000000) { std::cerr << \"SPINLOCK AT 0x" << std::hex << inst.address << "\\n\"; std::exit(1); }\n";
+        bool is_local = std::find_if(func.instructions.begin(), func.instructions.end(),
+                                     [target](const auto& i) { return i.address == target; }) != func.instructions.end();
+
+        if (target <= inst.address && is_local) {
+            out << "    if (++ctx.inst_count > 1000000) { std::cerr << \"SPINLOCK AT 0x" << std::hex << inst.address << "\\n\"; std::exit(1); }\n";
         }
         
         if (symbols_ && symbols_->has_symbol(target)) {
@@ -367,13 +373,13 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
 
         if (ppc_inst.is_branch_link()) {
             out << "    ctx.lr = 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << "; // save return address\n";
-            if (target >= func.start_address && target <= func.instructions.back().address) {
+            if (is_local) {
                 out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
             } else {
                 out << "    " << target_name << "(ctx);\n";
             }
         } else {
-            if (target >= func.start_address && target <= func.instructions.back().address) {
+            if (is_local) {
                 out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
             } else {
                 out << "    " << target_name << "(ctx); return;\n";
