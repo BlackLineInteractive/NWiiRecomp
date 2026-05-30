@@ -7,12 +7,14 @@ namespace nwii {
 
 template <typename T>
 inline T swap_endian(T u) {
-    if constexpr (sizeof(T) == 2) {
-        return __builtin_bswap16(u);
-    } else if constexpr (sizeof(T) == 4) {
-        return __builtin_bswap32(u);
-    } else if constexpr (sizeof(T) == 8) {
-        return __builtin_bswap64(u);
+    if constexpr (std::endian::native == std::endian::little) {
+        if constexpr (sizeof(T) == 2) {
+            return __builtin_bswap16(u);
+        } else if constexpr (sizeof(T) == 4) {
+            return __builtin_bswap32(u);
+        } else if constexpr (sizeof(T) == 8) {
+            return __builtin_bswap64(u);
+        }
     }
     return u;
 }

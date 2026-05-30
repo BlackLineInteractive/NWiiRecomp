@@ -1,29 +1,34 @@
-![NWiiRecomp Logo](assets/logo_wide.jpg)
-
 # NWiiRecomp
 
 A static recompiler for the Nintendo Wii. 
 
-Inspired by [N64Recomp](https://github.com/Mr-Wiseguy/N64Recomp) and [PS2Recomp](https://github.com/Ran-J/PS2Recomp) (shoutout to Ran-J). 
+Inspired by [N64Recomp](https://github.com/Mr-Wiseguy/N64Recomp) and [PS2Recomp](https://github.com/Ran-J/PS2Recomp) (shoutout to Ran-J btw, working on that with him). 
 
-Currently in the early stages of development. The goal is to take Wii executables and recompile them into native C/C++ code, similar to how those projects handle their respective consoles. 
+Currently in the early stages. The idea is to take Wii executables (DOL/ELF) and recompile them into native C++ code so they can run natively without a traditional emulator. 
 
-Right now the focus is strictly on the Wii. Wii U support might be considered later.
+Right now the focus is strictly on the Wii. Wii U support might come later, but one step at a time.
 
-## Structure
-- `src/recompiler`: The offline recompiler.
-- `src/runtime`: The runtime library that the recompiled games link against.
-
-## GUI Tools & Analysis
-The project will feature graphical tools for recompilation and analysis, built upon the foundations of [ps2xStudio](https://github.com/vovavovchok/ps2xStudio). The UI framework is being rewritten to be fully cross-platform (expanding beyond OpenGL) to ensure broad compatibility.
+## Project Structure
+Kept it similar to PS2Recomp for sanity:
+- `nWiiAnalyzer` - parses the executable, extracts function boundaries and data sections.
+- `nWiiRecomp` - the actual offline recompiler that spits out C++ code.
+- `nWiiRuntime` - cross-platform runtime library that the generated code links against (handles hardware simulation, OS functions, etc).
+- `nWiiLoader` - loads up the original executable and handles memory mapping.
+- `nWiiStudio` - GUI tool to make debugging and testing way easier.
 
 ## Endianness
-The Wii uses a PowerPC CPU, which is big-endian. The recompiled code will handle byte swapping when running on little-endian hosts (like x86/ARM) using intrinsics for performance.
+Since the Wii's CPU (Broadway/PowerPC) is big-endian and we're targeting little-endian hosts (x86_64/ARM64), byte swapping is a major thing. 
+The plan is to handle this mostly in the recompiler directly. When we translate memory loads/stores (`lwz`, `stw`), we'll emit intrinsic byte-swapping instructions (like `bswap` or `__builtin_bswap32`). This keeps the runtime fast. 
+At the C++ level for data structures, we use wrapper types (e.g., `be32_t`) that handle swapping on read/write seamlessly.
 
 ## Building
-Requires CMake.
+Just use CMake. We use Raylib for the UI and window management to keep it simple and cross-platform.
+
+## Documentation
+Helpful docs for Wii/GameCube reverse engineering:
+- [WiiBrew](https://wiibrew.org/)
+- [YAGCD (Yet Another GameCube Documentation)](https://hitmen.c02.at/files/yagcd/)
+- PowerPC Architecture Books
 
 ## Legal
-This project does not contain any copyrighted material, game assets, or proprietary Nintendo SDK code. NWiiRecomp is an independent educational and research project. We do not distribute ROMs, ISOs, or any other copyrighted software. To use this tool, you must provide your own legally dumped game executables from copies you physically own. 
-
-Nintendo, Wii, and Wii U are trademarks of Nintendo Co., Ltd. This project is not affiliated with, authorized, or endorsed by Nintendo in any way.
+No copyrighted stuff here. No ROMs, no Nintendo SDK code. You need to provide your own legally dumped executables.
