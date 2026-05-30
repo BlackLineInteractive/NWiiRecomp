@@ -1,3 +1,5 @@
+![NWiiRecomp Logo](assets/logo_wide.jpg)
+
 # NWiiRecomp
 
 A static recompiler for the Nintendo Wii. 
@@ -11,6 +13,9 @@ Right now the focus is strictly on the Wii. Wii U support might be considered la
 ## Structure
 - `src/recompiler`: The offline recompiler.
 - `src/runtime`: The runtime library that the recompiled games link against.
+
+## GUI Tools & Analysis
+The project will feature graphical tools for recompilation and analysis, built upon the foundations of [ps2xStudio](https://github.com/vovavovchok/ps2xStudio). The UI framework is being rewritten to be fully cross-platform (expanding beyond OpenGL) to ensure broad compatibility.
 
 ## Endianness
 The Wii uses a PowerPC CPU, which is big-endian. The recompiled code will handle byte swapping when running on little-endian hosts (like x86/ARM) using intrinsics for performance.
