@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     std::cout << "Generating CMake Project...\n";
     nwii::recomp::Recompiler recompiler(analyzer, has_symbols ? &symbols : nullptr);
     std::string runtime_path = "/Users/vovavovchok/NWiiRecomp/nWiiRuntime";
-    if (recompiler.generate_cmake_project("export", runtime_path)) {
+    if (recompiler.generate_cmake_project("export", runtime_path, exec.entry_point)) {
         std::cout << "Successfully exported standalone project to 'export' directory!\n";
     } else {
         std::cerr << "Failed to export project.\n";

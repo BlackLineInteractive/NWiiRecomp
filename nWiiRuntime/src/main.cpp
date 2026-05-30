@@ -1,4 +1,5 @@
 #include <iostream>
+#include "runtime/cpu_context.h"
 
 namespace nwii::runtime {
 
@@ -14,12 +15,16 @@ void shutdown() {
 
 } // namespace nwii::runtime
 
+extern "C" void run_game(nwii::runtime::CPUContext& ctx);
+
 // Default entry point for the standalone Mac application
 int main(int argc, char** argv) {
     if (!nwii::runtime::init()) return 1;
     
     std::cout << "nWiiRecomp: Standalone app started.\n";
-    // TODO: Initialize CPUContext and call the game's entry point here.
+    
+    nwii::runtime::CPUContext ctx;
+    run_game(ctx);
     
     nwii::runtime::shutdown();
     return 0;

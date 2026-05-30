@@ -1,0 +1,31 @@
+# Build directories
+build/
+export/
+test_export/
+out/
+bin/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# User-specific testing paths
+NO_GitHub/
+*.dol
+*.iso
+*.wbfs
+
+# CMake
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+Testing
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/

@@ -32,7 +32,4 @@ void OSInit(CPUContext& ctx) {
     std::cout << "[OSInit] System initialized." << std::endl;
 }
 
-void OSAllocFromHeap(CPUContext& ctx) {
-    std::cout << "[OSAllocFromHeap] Stubbed." << std::endl;
-    ctx.gpr[3] = 0; // Return NULL
-}
+

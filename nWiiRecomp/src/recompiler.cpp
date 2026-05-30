@@ -22,7 +22,7 @@ static bool is_hle_function(const std::string& name) {
     return false;
 }
 
-bool Recompiler::generate_cpp(const std::string& output_path) {
+bool Recompiler::generate_cpp(const std::string& output_path, uint32_t entry_point) {
     std::ofstream out(output_path);
     if (!out.is_open()) {
         std::cerr << "Failed to open output file: " << output_path << std::endl;
@@ -32,8 +32,12 @@ bool Recompiler::generate_cpp(const std::string& output_path) {
     // Emit headers
     out << "#include \"runtime/cpu_context.h\"\n";
     out << "#include <stdint.h>\n";
-    out << "#include <bit>\n\n";
+    out << "#include <bit>\n";
+    out << "#include <cmath>\n\n";
     out << "using namespace nwii::runtime;\n\n";
+
+    std::set<std::string> emitted_names;
+    std::set<std::string> emitted_names_impl;
 
     out << "// --- Forward Declarations ---\n";
     for (const auto& [start_addr, func] : analyzer_.get_functions()) {
@@ -45,6 +49,15 @@ bool Recompiler::generate_cpp(const std::string& output_path) {
             ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
             func_name = ss.str();
         }
+        
+        // Ensure uniqueness
+        if (emitted_names.count(func_name)) {
+            std::stringstream ss;
+            ss << func_name << "_" << std::hex << std::uppercase << start_addr;
+            func_name = ss.str();
+        }
+        emitted_names.insert(func_name);
+        
         out << "void " << func_name << "(CPUContext& ctx);\n";
     }
     out << "\n// --- Function Bodies ---\n";
@@ -58,20 +71,52 @@ bool Recompiler::generate_cpp(const std::string& output_path) {
                 continue;
             }
         }
-        emit_function(out, func);
+        
+        std::string func_name;
+        if (symbols_ && symbols_->has_symbol(start_addr)) {
+            func_name = symbols_->get_symbol(start_addr);
+        } else {
+            std::stringstream ss;
+            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
+            func_name = ss.str();
+        }
+        
+        // Match uniqueness
+        if (emitted_names_impl.count(func_name)) {
+            std::stringstream ss;
+            ss << func_name << "_" << std::hex << std::uppercase << start_addr;
+            func_name = ss.str();
+        }
+        emitted_names_impl.insert(func_name);
+        
+        emit_function(out, func, func_name);
     }
+
+    std::string entry_func;
+    if (symbols_ && symbols_->has_symbol(entry_point)) {
+        entry_func = symbols_->get_symbol(entry_point);
+    } else {
+        std::stringstream ss;
+        ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << entry_point;
+        entry_func = ss.str();
+    }
+    
+    out << "\n// --- Entry Point Wrapper ---\n";
+    out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
+    out << "    " << entry_func << "(ctx);\n";
+    out << "}\n";
 
     return true;
 }
 
-bool Recompiler::generate_cmake_project(const std::string& output_dir, const std::string& runtime_source_path) {
+bool Recompiler::generate_cmake_project(const std::string& output_dir, const std::string& runtime_source_path, uint32_t entry_point) {
     if (!std::filesystem::exists(output_dir)) {
         std::filesystem::create_directories(output_dir);
     }
     
     // 1. Generate output.cpp
     std::string cpp_path = output_dir + "/output.cpp";
-    if (!generate_cpp(cpp_path)) {
+    if (!generate_cpp(cpp_path, entry_point)) {
         return false;
     }
     
@@ -92,31 +137,40 @@ bool Recompiler::generate_cmake_project(const std::string& output_dir, const std
     
     out << "cmake_minimum_required(VERSION 3.20)\n";
     out << "project(RecompiledGame LANGUAGES CXX)\n\n";
+    out << "set(CMAKE_POLICY_VERSION_MINIMUM 3.5)\n";
     out << "set(CMAKE_CXX_STANDARD 20)\n";
     out << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
+    out << "include(FetchContent)\n";
+    out << "FetchContent_Declare(\n";
+    out << "    raylib\n";
+    out << "    URL https://github.com/raysan5/raylib/archive/refs/tags/5.0.tar.gz\n";
+    out << ")\n";
+    out << "FetchContent_MakeAvailable(raylib)\n\n";
+    
     out << "add_subdirectory(nWiiRuntime)\n\n";
     out << "add_executable(RecompiledGame output.cpp)\n";
-    out << "target_link_libraries(RecompiledGame PRIVATE nwiiruntime)\n";
+    out << "target_link_libraries(RecompiledGame PRIVATE nwiiruntime raylib)\n";
     
     return true;
 }
 
 std::string Recompiler::generate_function_cpp(const analyzer::Function& func) {
     std::stringstream ss;
-    emit_function(ss, func);
-    return ss.str();
-}
-
-void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func) {
+    
     std::string func_name;
     if (symbols_ && symbols_->has_symbol(func.start_address)) {
         func_name = symbols_->get_symbol(func.start_address);
     } else {
-        std::stringstream ss;
-        ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << func.start_address;
-        func_name = ss.str();
+        std::stringstream ss_name;
+        ss_name << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << func.start_address;
+        func_name = ss_name.str();
     }
+    
+    emit_function(ss, func, func_name);
+    return ss.str();
+}
 
+void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func, const std::string& func_name) {
     out << "void " << func_name << "(CPUContext& ctx) {\n";
 
     for (const auto& inst : func.instructions) {
@@ -129,7 +183,7 @@ void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func
 void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction& inst, const analyzer::Function& func) {
     ppc::Instruction ppc_inst(inst.opcode);
     
-    out << "loc_" << std::hex << std::uppercase << inst.address << std::dec << ":\n";
+    out << "loc_" << std::hex << std::uppercase << inst.address << std::dec << ": ;\n";
     out << "    // 0x" << std::hex << std::setfill('0') << std::setw(8) << inst.address << ": ";
     out << std::setfill('0') << std::setw(8) << inst.opcode << std::dec << "\n";
 
@@ -184,11 +238,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         uint32_t rA = ppc_inst.ra();
         uint32_t rB = ppc_inst.rb();
         
-        out << "    int32_t cmp_val_A = (int32_t)ctx.gpr[" << rA << "];\n";
-        out << "    int32_t cmp_val_B = (int32_t)ctx.gpr[" << rB << "];\n";
-        out << "    ctx.cr[" << crD << "].lt = (cmp_val_A < cmp_val_B);\n";
-        out << "    ctx.cr[" << crD << "].gt = (cmp_val_A > cmp_val_B);\n";
-        out << "    ctx.cr[" << crD << "].eq = (cmp_val_A == cmp_val_B);\n";
+        out << "    ctx.cr[" << crD << "].lt = ((int32_t)ctx.gpr[" << rA << "] < (int32_t)ctx.gpr[" << rB << "]);\n";
+        out << "    ctx.cr[" << crD << "].gt = ((int32_t)ctx.gpr[" << rA << "] > (int32_t)ctx.gpr[" << rB << "]);\n";
+        out << "    ctx.cr[" << crD << "].eq = ((int32_t)ctx.gpr[" << rA << "] == (int32_t)ctx.gpr[" << rB << "]);\n";
     } else if (ppc_inst.opcode() == 32) {
         // LWZ: rD = read32(rA + SIMM)
         uint32_t rD = ppc_inst.rd();
@@ -243,15 +295,32 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         ss << "loc_" << std::hex << std::uppercase << target;
         std::string target_lbl = ss.str();
 
-        // Simple BO decodes:
-        if ((bo & 0x14) == 0x04) {
-            // Branch if condition false (e.g. bne is 'branch if not equal')
-            out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << "; // bne/blt/bgt false\n";
-        } else if ((bo & 0x14) == 0x0C) {
-            // Branch if condition true (e.g. beq is 'branch if equal')
-            out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << "; // beq/blt/bgt true\n";
+        if (target >= func.start_address && target < func.end_address) {
+            // Simple BO decodes:
+            if ((bo & 0x14) == 0x04) {
+                out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x0C) {
+                out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
+            } else {
+                out << "    // TODO: implement complex branch conditional BO=" << bo << "\n";
+            }
         } else {
-            out << "    // TODO: implement complex branch conditional BO=" << bo << "\n";
+            // Branch outside function bounds (tail call / cross-function)
+            std::string ext_name;
+            if (symbols_ && symbols_->has_symbol(target)) {
+                ext_name = symbols_->get_symbol(target);
+            } else {
+                std::stringstream ss;
+                ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << target;
+                ext_name = ss.str();
+            }
+            if ((bo & 0x14) == 0x04) {
+                out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
+            } else if ((bo & 0x14) == 0x0C) {
+                out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
+            } else {
+                out << "    // TODO: implement cross-function complex branch BO=" << bo << "\n";
+            }
         }
     } else if (ppc_inst.opcode() == 18) {
         // b, bl, ba, bla
@@ -269,8 +338,11 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.lr = 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << "; // save return address\n";
             out << "    " << target_name << "(ctx);\n";
         } else {
-            // unconditional jump
-            out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
+            if (target >= func.start_address && target < func.end_address) {
+                out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
+            } else {
+                out << "    " << target_name << "(ctx); return;\n";
+            }
         }
     } else if (ppc_inst.opcode() == 48) {
         // lfs
@@ -305,6 +377,8 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA << "] - ctx.fpr[" << fB << "]); // fsubs f" << fD << ", f" << fA << ", f" << fB << "\n";
         } else if (xo == 25) {
             out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA << "] * ctx.fpr[" << fC << "]); // fmuls f" << fD << ", f" << fA << ", f" << fC << "\n";
+        } else if (xo == 18) {
+            out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA << "] / ctx.fpr[" << fB << "]); // fdivs f" << fD << ", f" << fA << ", f" << fB << "\n";
         } else {
             out << "    // TODO: implement Opcode 59 XO " << xo << "\n";
         }
@@ -312,8 +386,15 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         uint32_t xo = (ppc_inst.value() >> 1) & 0x3FF;
         uint32_t fD = ppc_inst.rd();
         uint32_t fB = ppc_inst.rb();
+        uint32_t fA = ppc_inst.ra();
         if (xo == 72) {
             out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fB << "]; // fmr f" << fD << ", f" << fB << "\n";
+        } else if (xo == 0 || xo == 32) { // fcmpu or fcmpo
+            uint32_t crfD = fD >> 2;
+            out << "    ctx.cr[" << crfD << "].lt = (ctx.fpr[" << fA << "] < ctx.fpr[" << fB << "]);\n";
+            out << "    ctx.cr[" << crfD << "].gt = (ctx.fpr[" << fA << "] > ctx.fpr[" << fB << "]);\n";
+            out << "    ctx.cr[" << crfD << "].eq = (ctx.fpr[" << fA << "] == ctx.fpr[" << fB << "]);\n";
+            out << "    ctx.cr[" << crfD << "].so = std::isnan(ctx.fpr[" << fA << "]) || std::isnan(ctx.fpr[" << fB << "]);\n";
         } else {
             out << "    // TODO: implement Opcode 63 XO " << xo << "\n";
         }
@@ -386,6 +467,68 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         } else {
             out << "    // TODO: implement opcode 31 xo " << xo << "\n";
         }
+    } else if (ppc_inst.opcode() == 24) { // ori
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] | " << ppc_inst.uimm() << "; // ori\n";
+    } else if (ppc_inst.opcode() == 25) { // oris
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] | " << (ppc_inst.uimm() << 16) << "; // oris\n";
+    } else if (ppc_inst.opcode() == 26) { // xori
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] ^ " << ppc_inst.uimm() << "; // xori\n";
+    } else if (ppc_inst.opcode() == 27) { // xoris
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] ^ " << (ppc_inst.uimm() << 16) << "; // xoris\n";
+    } else if (ppc_inst.opcode() == 28) { // andi.
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] & " << ppc_inst.uimm() << "; // andi.\n";
+    } else if (ppc_inst.opcode() == 29) { // andis.
+        out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] & " << (ppc_inst.uimm() << 16) << "; // andis.\n";
+    } else if (ppc_inst.opcode() == 7) { // mulli
+        out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)((int32_t)ctx.gpr[" << ppc_inst.ra() << "] * " << ppc_inst.simm() << "); // mulli\n";
+    } else if (ppc_inst.opcode() == 8) { // subfic
+        out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)(" << ppc_inst.simm() << " - (int32_t)ctx.gpr[" << ppc_inst.ra() << "]); // subfic\n";
+    } else if (ppc_inst.opcode() == 12) { // addic
+        out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << ppc_inst.ra() << "] + " << ppc_inst.simm() << "; // addic\n";
+    } else if (ppc_inst.opcode() == 13) { // addic.
+        out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << ppc_inst.ra() << "] + " << ppc_inst.simm() << "; // addic.\n";
+    } else if (ppc_inst.opcode() == 15) { // addis
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.gpr[" << ppc_inst.rd() << "] = " << (ppc_inst.simm() << 16) << "; // lis\n";
+        else out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << rA << "] + " << (ppc_inst.simm() << 16) << "; // addis\n";
+    } else if (ppc_inst.opcode() == 10) { // cmpli
+        uint32_t crD = ppc_inst.rd() >> 2;
+        out << "    ctx.cr[" << crD << "].lt = (ctx.gpr[" << ppc_inst.ra() << "] < " << ppc_inst.uimm() << ");\n";
+        out << "    ctx.cr[" << crD << "].gt = (ctx.gpr[" << ppc_inst.ra() << "] > " << ppc_inst.uimm() << ");\n";
+        out << "    ctx.cr[" << crD << "].eq = (ctx.gpr[" << ppc_inst.ra() << "] == " << ppc_inst.uimm() << ");\n";
+    } else if (ppc_inst.opcode() == 11) { // cmpi
+        uint32_t crD = ppc_inst.rd() >> 2;
+        out << "    ctx.cr[" << crD << "].lt = ((int32_t)ctx.gpr[" << ppc_inst.ra() << "] < " << ppc_inst.simm() << ");\n";
+        out << "    ctx.cr[" << crD << "].gt = ((int32_t)ctx.gpr[" << ppc_inst.ra() << "] > " << ppc_inst.simm() << ");\n";
+        out << "    ctx.cr[" << crD << "].eq = ((int32_t)ctx.gpr[" << ppc_inst.ra() << "] == " << ppc_inst.simm() << ");\n";
+    } else if (ppc_inst.opcode() == 34) { // lbz
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read8(" << ppc_inst.simm() << "); // lbz\n";
+        else out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read8(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << "); // lbz\n";
+    } else if (ppc_inst.opcode() == 38) { // stb
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.mmu.write8(" << ppc_inst.simm() << ", (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]); // stb\n";
+        else out << "    ctx.mmu.write8(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << ", (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]); // stb\n";
+    } else if (ppc_inst.opcode() == 40) { // lhz
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(" << ppc_inst.simm() << "); // lhz\n";
+        else out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << "); // lhz\n";
+    } else if (ppc_inst.opcode() == 42) { // lha
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(" << ppc_inst.simm() << "); // lha\n";
+        else out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << "); // lha\n";
+    } else if (ppc_inst.opcode() == 44) { // sth
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.mmu.write16(" << ppc_inst.simm() << ", (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sth\n";
+        else out << "    ctx.mmu.write16(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << ", (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sth\n";
+    } else if (ppc_inst.opcode() == 50) { // lfd
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.fpr[" << ppc_inst.rd() << "] = ctx.mmu.read_f64(" << ppc_inst.simm() << "); // lfd\n";
+        else out << "    ctx.fpr[" << ppc_inst.rd() << "] = ctx.mmu.read_f64(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << "); // lfd\n";
+    } else if (ppc_inst.opcode() == 54) { // stfd
+        uint32_t rA = ppc_inst.ra();
+        if (rA == 0) out << "    ctx.mmu.write_f64(" << ppc_inst.simm() << ", ctx.fpr[" << ppc_inst.rs() << "]); // stfd\n";
+        else out << "    ctx.mmu.write_f64(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << ", ctx.fpr[" << ppc_inst.rs() << "]); // stfd\n";
     } else {
         out << "    // TODO: implement opcode " << ppc_inst.opcode() << "\n";
     }

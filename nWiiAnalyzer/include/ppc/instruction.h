@@ -40,8 +40,22 @@ public:
     bool is_branch_to_lr() const {
         // Opcode 19, Extended Opcode 16
         if (opcode() != 19) return false;
-        uint32_t xo = (value_ >> 1) & 0x3FF;
+        uint32_t xo = extended_opcode();
         return xo == 16;
+    }
+
+    // Is it an unconditional indirect branch that terminates a block? (e.g. blr, bctr)
+    bool is_unconditional_indirect_branch() const {
+        if (opcode() != 19) return false;
+        uint32_t xo = extended_opcode();
+        // 16 = bclr (blr), 528 = bcctr (bctr), 50 = rfi
+        if (xo == 16 || xo == 528 || xo == 50) {
+            if (xo == 50) return true; // rfi is always unconditional
+            // BO field determines if it's conditional. 
+            // Branch always if BO[0] (16) and BO[2] (4) are set.
+            return (bo() & 0x14) == 0x14;
+        }
+        return false;
     }
 
     // Get branch target address
@@ -55,6 +69,20 @@ public:
             offset <<= 2; // multiply by 4
 
             bool aa = (value_ >> 1) & 1; // Absolute address bit
+            if (aa) {
+                return static_cast<uint32_t>(offset);
+            } else {
+                return current_pc + offset;
+            }
+        }
+        if (opcode() == 16) {
+            // bc, bca, bcl, bcla (conditional branches)
+            uint32_t bd = (value_ >> 2) & 0x3FFF; // 14 bits
+            // sign extend to 32 bits
+            int32_t offset = (bd & 0x2000) ? (bd | 0xFFFFC000) : bd;
+            offset <<= 2;
+            
+            bool aa = (value_ >> 1) & 1;
             if (aa) {
                 return static_cast<uint32_t>(offset);
             } else {

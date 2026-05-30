@@ -263,7 +263,7 @@ public:
                 nwii::recomp::Recompiler recompiler(*data.analyzer, &symbolTable);
                 std::string out_dir = GetEffectiveOutputPath();
                 std::string runtime_src = "/Users/vovavovchok/NWiiRecomp/nWiiRuntime"; // Hardcoded for this development environment
-                if (recompiler.generate_cmake_project(out_dir, runtime_src)) {
+                if (recompiler.generate_cmake_project(out_dir, runtime_src, data.executable->entry_point)) {
                     SetStatus("C++ Generation Complete");
                     Log("Successfully generated standalone CMake project at: " + out_dir);
                 } else {

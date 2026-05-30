@@ -24,6 +24,28 @@ At the C++ level for data structures, we use wrapper types (e.g., `be32_t`) that
 ## Building
 Just use CMake. We use Raylib for the UI and window management to keep it simple and cross-platform.
 
+```bash
+cmake -B build
+cmake --build build -j10
+```
+
+## Running the Recompiler
+
+You can use the command-line interface to analyze and recompile an unpacked Wii game:
+
+```bash
+# Generate a native C++ standalone CMake project for the game
+./build/nWiiRecomp/nwiirecomp path/to/unpacked_game/ path/to/symbols.csv
+
+# Build the recompiled game
+cd export
+cmake -B build
+cmake --build build -j10
+
+# Run it!
+./build/RecompiledGame
+```
+
 ## Documentation
 Helpful docs for Wii/GameCube reverse engineering:
 - [WiiBrew](https://wiibrew.org/)

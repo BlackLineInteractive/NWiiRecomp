@@ -267,7 +267,7 @@ void GUI::DrawStudio(StudioState& state) {
             if (ImGui::MenuItem("Open Unpacked Game...", "Ctrl+O")) {
                 IGFD::FileDialogConfig config;
                 config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Directory", nullptr, config);
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Executable (main.dol)", ".dol", config);
             }
             if (ImGui::MenuItem("Set Output Directory...")) {
                 IGFD::FileDialogConfig config;
@@ -323,7 +323,7 @@ void GUI::DrawStudio(StudioState& state) {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) {
                 IGFD::FileDialogConfig config;
                 config.path = ".";
-                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Directory", nullptr, config);
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose Game Executable (main.dol)", ".dol", config);
             }
             bool busy = state.isBusy.load();
             if (ImGui::IsKeyPressed(ImGuiKey_F5) && !busy && state.data.executable != nullptr) {

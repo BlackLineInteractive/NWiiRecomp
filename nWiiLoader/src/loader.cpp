@@ -1,6 +1,7 @@
 #include "loader/loader.h"
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
 namespace nwii {
 namespace loader {
@@ -70,17 +71,22 @@ bool Executable::load_dol(const std::string& path) {
     return true;
 }
 
-bool Executable::load_unpacked_game(const std::string& directory_path) {
-    // Usually unpacked Wii games have the executable at sys/main.dol
-    std::string dol_path = directory_path + "/sys/main.dol";
-    
-    // Fallback: maybe they just passed the root folder and it's named main.dol
-    std::ifstream file(dol_path);
-    if (!file.good()) {
-        dol_path = directory_path + "/main.dol";
-        std::ifstream file_fallback(dol_path);
-        if (!file_fallback.good()) {
-            std::cerr << "Could not find main.dol in " << directory_path << " or " << directory_path << "/sys/" << std::endl;
+bool Executable::load_unpacked_game(const std::string& path) {
+    std::string dol_path = path;
+
+    if (std::filesystem::is_directory(path)) {
+        dol_path = path + "/sys/main.dol";
+        if (!std::filesystem::exists(dol_path)) {
+            dol_path = path + "/main.dol";
+        }
+        if (!std::filesystem::exists(dol_path)) {
+            std::cerr << "Could not find main.dol in " << path << " or " << path << "/sys/" << std::endl;
+            return false;
+        }
+    } else {
+        // Assume the user directly provided the path to a .dol file
+        if (!std::filesystem::exists(dol_path)) {
+            std::cerr << "File does not exist: " << dol_path << std::endl;
             return false;
         }
     }

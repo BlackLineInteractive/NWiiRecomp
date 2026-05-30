@@ -76,7 +76,7 @@ int main() {
     nwii::recomp::Recompiler recompiler(analyzer, &symbols);
     
     std::string test_output_dir = "test_export";
-    if (recompiler.generate_cmake_project(test_output_dir, "/Users/vovavovchok/NWiiRecomp/nWiiRuntime")) {
+    if (recompiler.generate_cmake_project(test_output_dir, "/Users/vovavovchok/NWiiRecomp/nWiiRuntime", exec.entry_point)) {
         std::cout << "Recompiler generated C++ successfully.\n\n";
     } else {
         std::cerr << "Recompiler failed!\n";
