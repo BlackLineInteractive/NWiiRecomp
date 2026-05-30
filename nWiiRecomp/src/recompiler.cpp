@@ -297,54 +297,150 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         ss << "loc_" << std::hex << std::uppercase << target;
         std::string target_lbl = ss.str();
 
-        if (target >= func.start_address && target < func.end_address) {
-            // Simple BO decodes:
-            if ((bo & 0x14) == 0x04) {
+        if (target <= inst.address) {
+            out << "    if (++ctx.inst_count > 10000000) { std::cerr << \"SPINLOCK AT 0x" << std::hex << inst.address << "\\n\"; std::exit(1); }\n";
+        }
+
+        if (target >= func.start_address && target <= func.instructions.back().address) {
+            if ((bo & 0x14) == 0x14) {
+                out << "    goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x04) {
                 out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
             } else if ((bo & 0x14) == 0x0C) {
                 out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x10) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0) goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x12) {
+                out << "    ctx.ctr--; if (ctx.ctr == 0) goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x00) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && !ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
+            } else if ((bo & 0x14) == 0x08) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && ctx.cr[" << cr_idx << "]." << cond_field << ") goto " << target_lbl << ";\n";
             } else {
-                out << "    // TODO: implement complex branch conditional BO=" << bo << "\n";
+                out << "    std::cerr << \"UNIMPLEMENTED BC BO=\" << " << bo << " << \"\\n\"; std::exit(1);\n";
             }
         } else {
             // Branch outside function bounds (tail call / cross-function)
             std::string ext_name;
             if (symbols_ && symbols_->has_symbol(target)) {
-                ext_name = symbols_->get_symbol(target);
+                ext_name = symbols_->get_symbol(target); if (ext_name.find("loc_") == 0) ext_name.replace(0, 4, "func_");
             } else {
                 std::stringstream ss;
                 ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << target;
                 ext_name = ss.str();
             }
-            if ((bo & 0x14) == 0x04) {
+            if ((bo & 0x14) == 0x14) {
+                out << "    " << ext_name << "(ctx); return;\n";
+            } else if ((bo & 0x14) == 0x04) {
                 out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
             } else if ((bo & 0x14) == 0x0C) {
                 out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
+            } else if ((bo & 0x14) == 0x10) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0) { " << ext_name << "(ctx); return; }\n";
+            } else if ((bo & 0x14) == 0x12) {
+                out << "    ctx.ctr--; if (ctx.ctr == 0) { " << ext_name << "(ctx); return; }\n";
+            } else if ((bo & 0x14) == 0x00) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && !ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
+            } else if ((bo & 0x14) == 0x08) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && ctx.cr[" << cr_idx << "]." << cond_field << ") { " << ext_name << "(ctx); return; }\n";
             } else {
-                out << "    // TODO: implement cross-function complex branch BO=" << bo << "\n";
+                out << "    std::cerr << \"UNIMPLEMENTED CROSS-FUNC BC BO=\" << " << bo << " << \"\\n\"; std::exit(1);\n";
             }
         }
     } else if (ppc_inst.opcode() == 18) {
         // b, bl, ba, bla
         uint32_t target = ppc_inst.branch_target(inst.address);
+        std::stringstream ss;
         std::string target_name;
+        
+        if (target <= inst.address) {
+            out << "    if (++ctx.inst_count > 10000000) { std::cerr << \"SPINLOCK AT 0x" << std::hex << inst.address << "\\n\"; std::exit(1); }\n";
+        }
+        
         if (symbols_ && symbols_->has_symbol(target)) {
-            target_name = symbols_->get_symbol(target);
+            target_name = symbols_->get_symbol(target); if (target_name.find("loc_") == 0) target_name.replace(0, 4, "func_");
         } else {
-            std::stringstream ss;
-            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << target;
-            target_name = ss.str();
+            std::stringstream ss_name;
+            ss_name << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << target;
+            target_name = ss_name.str();
         }
 
         if (ppc_inst.is_branch_link()) {
             out << "    ctx.lr = 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << "; // save return address\n";
-            out << "    " << target_name << "(ctx);\n";
+            if (target >= func.start_address && target <= func.instructions.back().address) {
+                out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
+            } else {
+                out << "    " << target_name << "(ctx);\n";
+            }
         } else {
-            if (target >= func.start_address && target < func.end_address) {
+            if (target >= func.start_address && target <= func.instructions.back().address) {
                 out << "    goto loc_" << std::hex << std::uppercase << target << ";\n";
             } else {
                 out << "    " << target_name << "(ctx); return;\n";
             }
+        }
+    } else if (ppc_inst.opcode() == 19) {
+        uint32_t xo = ppc_inst.extended_opcode();
+        if (xo == 16 || xo == 528) { // BCLR (16) and BCCTR (528)
+            uint32_t bo = ppc_inst.bo();
+            uint32_t bi = ppc_inst.bi();
+            uint32_t cr_idx = bi / 4;
+            uint32_t cr_bit = bi % 4;
+            
+            std::string cond_field;
+            if (cr_bit == 0) cond_field = "lt";
+            else if (cr_bit == 1) cond_field = "gt";
+            else if (cr_bit == 2) cond_field = "eq";
+            else cond_field = "so";
+            
+            std::string target_reg = (xo == 16) ? "ctx.lr" : "ctx.ctr";
+            
+            if ((bo & 0x14) == 0x14) { // branch unconditionally
+                out << "    // Unconditional branch to " << target_reg << "\n";
+                out << "    // TODO: Dynamic dispatch to " << target_reg << "\n";
+                out << "    return; // returning to dispatcher\n";
+            } else if ((bo & 0x14) == 0x04) {
+                out << "    if (!ctx.cr[" << cr_idx << "]." << cond_field << ") { /* TODO: dynamic dispatch to " << target_reg << " */ return; }\n";
+            } else if ((bo & 0x14) == 0x0C) {
+                out << "    if (ctx.cr[" << cr_idx << "]." << cond_field << ") { /* TODO: dynamic dispatch to " << target_reg << " */ return; }\n";
+            } else if ((bo & 0x14) == 0x10) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0) { /* TODO dynamic dispatch */ return; }\n";
+            } else if ((bo & 0x14) == 0x12) {
+                out << "    ctx.ctr--; if (ctx.ctr == 0) { /* TODO dynamic dispatch */ return; }\n";
+            } else if ((bo & 0x14) == 0x00) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && !ctx.cr[" << cr_idx << "]." << cond_field << ") { /* TODO dispatch */ return; }\n";
+            } else if ((bo & 0x14) == 0x08) {
+                out << "    ctx.ctr--; if (ctx.ctr != 0 && ctx.cr[" << cr_idx << "]." << cond_field << ") { /* TODO dispatch */ return; }\n";
+            } else {
+                out << "    std::cerr << \"UNIMPLEMENTED BCLR BO=\" << " << bo << " << \"\\n\"; std::exit(1);\n";
+            }
+        } else if (xo == 257 || xo == 129 || xo == 289 || xo == 225 || xo == 33 || xo == 449 || xo == 417 || xo == 193) {
+            uint32_t crbD = ppc_inst.rd();
+            uint32_t crbA = ppc_inst.ra();
+            uint32_t crbB = ppc_inst.rb();
+            
+            auto get_cr_bit_str = [](uint32_t bit_idx) {
+                std::string field = "ctx.cr[" + std::to_string(bit_idx / 4) + "]";
+                uint32_t bit = bit_idx % 4;
+                if (bit == 0) return field + ".lt";
+                if (bit == 1) return field + ".gt";
+                if (bit == 2) return field + ".eq";
+                return field + ".so";
+            };
+            
+            std::string op;
+            if (xo == 257) op = get_cr_bit_str(crbA) + " & " + get_cr_bit_str(crbB); // crand
+            else if (xo == 129) op = get_cr_bit_str(crbA) + " & !" + get_cr_bit_str(crbB); // crandc
+            else if (xo == 289) op = get_cr_bit_str(crbA) + " == " + get_cr_bit_str(crbB); // creqv
+            else if (xo == 225) op = "!(" + get_cr_bit_str(crbA) + " & " + get_cr_bit_str(crbB) + ")"; // crnand
+            else if (xo == 33) op = "!(" + get_cr_bit_str(crbA) + " | " + get_cr_bit_str(crbB) + ")"; // crnor
+            else if (xo == 449) op = get_cr_bit_str(crbA) + " | " + get_cr_bit_str(crbB); // cror
+            else if (xo == 417) op = get_cr_bit_str(crbA) + " | !" + get_cr_bit_str(crbB); // crorc
+            else if (xo == 193) op = get_cr_bit_str(crbA) + " ^ " + get_cr_bit_str(crbB); // crxor
+            
+            out << "    " << get_cr_bit_str(crbD) << " = " << op << ";\n";
+        } else {
+            out << "    std::cerr << \"UNIMPLEMENTED OPCODE 19 XO \" << " << xo << " << \" at 0x" << std::hex << inst.address << std::dec << "\\n\"; std::exit(1);\n";
         }
     } else if (ppc_inst.opcode() == 48) {
         // lfs

@@ -30,6 +30,8 @@ struct MMU {
     std::vector<uint8_t> mem1;
     std::vector<uint8_t> mem2;
     
+    uint64_t inst_count = 0;
+    
     MMU() {
         mem1.resize(24 * 1024 * 1024); // 24MB MEM1
         mem2.resize(64 * 1024 * 1024); // 64MB MEM2
@@ -160,6 +162,7 @@ struct CPUContext {
     
     // Default constructor to zero init
     CPUContext() : gpr{0}, fpr{0.0}, pc(0), lr(0), ctr(0), xer(0), fpscr(0) {}
+    uint64_t inst_count = 0;
 };
 
 } // namespace runtime
