@@ -4,7 +4,7 @@
 namespace nwii::runtime {
 
 bool init() {
-    std::cout << "init runtime\n";
+    std::cout << "init runtime" << std::endl;
     // TODO: setup hle, gfx, input
     return true;
 }
@@ -21,7 +21,7 @@ extern "C" void run_game(nwii::runtime::CPUContext& ctx);
 int main(int argc, char** argv) {
     if (!nwii::runtime::init()) return 1;
     
-    std::cout << "nWiiRecomp: Standalone app started.\n";
+    std::cout << "nWiiRecomp: Standalone app started." << std::endl;
     
     nwii::runtime::CPUContext ctx;
     run_game(ctx);
