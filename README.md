@@ -17,3 +17,8 @@ The Wii uses a PowerPC CPU, which is big-endian. The recompiled code will handle
 
 ## Building
 Requires CMake.
+
+## Legal
+This project does not contain any copyrighted material, game assets, or proprietary Nintendo SDK code. NWiiRecomp is an independent educational and research project. We do not distribute ROMs, ISOs, or any other copyrighted software. To use this tool, you must provide your own legally dumped game executables from copies you physically own. 
+
+Nintendo, Wii, and Wii U are trademarks of Nintendo Co., Ltd. This project is not affiliated with, authorized, or endorsed by Nintendo in any way.
