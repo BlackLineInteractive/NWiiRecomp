@@ -33,7 +33,9 @@ bool Recompiler::generate_cpp(const std::string& output_path, uint32_t entry_poi
     out << "#include \"runtime/cpu_context.h\"\n";
     out << "#include <stdint.h>\n";
     out << "#include <bit>\n";
-    out << "#include <cmath>\n\n";
+    out << "#include <cmath>\n";
+    out << "#include <iostream>\n";
+    out << "#include <cstdlib>\n\n";
     out << "using namespace nwii::runtime;\n\n";
 
     std::set<std::string> emitted_names;
@@ -530,7 +532,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         if (rA == 0) out << "    ctx.mmu.write_f64(" << ppc_inst.simm() << ", ctx.fpr[" << ppc_inst.rs() << "]); // stfd\n";
         else out << "    ctx.mmu.write_f64(ctx.gpr[" << rA << "] + " << ppc_inst.simm() << ", ctx.fpr[" << ppc_inst.rs() << "]); // stfd\n";
     } else {
-        out << "    // TODO: implement opcode " << ppc_inst.opcode() << "\n";
+        out << "    std::cerr << \"UNIMPLEMENTED OPCODE " << ppc_inst.opcode() << " at 0x" << std::hex << inst.address << std::dec << "\\n\"; std::exit(1);\n";
     }
 }
 
