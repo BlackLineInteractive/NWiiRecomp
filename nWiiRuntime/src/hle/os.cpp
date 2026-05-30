@@ -15,7 +15,7 @@ static std::string read_guest_string(CPUContext& ctx, uint32_t addr) {
     return str;
 }
 
-// OSReport is the standard Nintendo SDK print function.
+// OSReport  is the standard Nintendo SDK print function.
 // Signature: void OSReport(const char* msg, ...);
 // The format string address is passed in r3 (gpr[3]).
 void OSReport(CPUContext& ctx) {
