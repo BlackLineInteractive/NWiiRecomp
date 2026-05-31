@@ -57,18 +57,22 @@ NWiiRecomp/
   - SPR access: `mfspr` / `mtspr` (LR, CTR, XER, SRR0, SRR1, HID0, HID2, WPAR, L2CR, GQR)
   - CR operations: `crand`, `crandc`, `cror`, `crorc`, `crxor`, `crnand`, `crnor`, `creqv`, `mcrf`, `mfcr`, `mtcrf`
   - System: `sc` (syscall), `rfi`, `sync`, `isync`, `eieio`, `dcbf`, `dcbst`, `dcbi`, `dcbz`, `icbi`
-  - Paired-singles (GC/Wii SIMD extension): `psq_l`, `psq_st`, `ps_add`, `ps_sub`, `ps_mul`, `ps_div`, `ps_madd`, `ps_msub`, `ps_merge00/01/10/11`, `ps_sum0/1`, `ps_muls0/1`, `ps_nmadd/nmsub`, `ps_abs`, `ps_neg`, `ps_res`, `ps_rsqrte`, `ps_cmpu0/1`, `ps_cmpo0/1`
+  - Paired-singles (GC/Wii SIMD extension): Full support for `ps_add`, `ps_sub`, `ps_mul`, `ps_madd`, `ps_merge`, etc. High-accuracy implementation of `psq_l` and `psq_st` utilizing GQR-based quantization scales directly into C++ intrinsic floats.
 - Tail-call detection and correct `goto`-based inlining for local branches
 - LK-bit handling: `ctx.lr` is set correctly before all call-type branches
 - Mid-function entry point dispatch: functions with internal call/return targets expose a `switch(ctx.pc)` → `goto` prologue, allowing `run_game` to resume execution at any instruction after a return
 
 ### Runtime (`nWiiRuntime`)
-- `CPUContext`: GPR[32], FPR[32], PS[32] (paired-singles), CR[8], LR, CTR, XER, SRR0/1, pc, FPSCR
+- **TOML Configuration**: A fully integrated `tomlplusplus` config setup allows dynamic targeting of the host platform (`GameCube` or `Wii`), graphical toggles, and bypassing of OS sub-systems.
+- **Zero-Latency Gamepad Input**: Native integration with modern gamepads (Xbox/PlayStation) via Raylib Gamepad APIs. By mimicking the GameCube `PADStatus` polling directly from memory, the engine experiences literal zero-lag inputs and sidesteps Wiimote requirements for compatible games.
+- **GX Graphics FIFO**: Accurate structure tracking and ring-buffer streaming from `WGPIPE` memory bounds for Display List reconstruction.
+- `CPUContext`: GPR[32], FPR[32], PS[32] (paired-singles), CR[8], LR, CTR, XER, SRR0/1, pc, FPSCR, GQR[8].
 - DOL loader: maps all text/data sections into host memory at the correct virtual addresses
 - HLE stubs implemented:
   - **OSInit**, **OSReport**, **OSHalt**, **OSDisableInterrupts**, **OSEnableInterrupts**, **OSGetTime**, **OSCreateThread**, **OSResumeThread**
   - **GXInit**, **GXSetViewport**, **GXSetScissor**, **GXSetCullMode**, **GXSetZMode**, **GXSetBlendMode**, **GXSetColorUpdate**, **GXBegin**, **GXEnd**, **GXPosition3f32**, **GXColor4u8**
   - **PADInit**, **PADRead**, **WPADInit**, **WPADRead**
+  - **IOS subsystem** (dynamically bypassed on GameCube targets)
   - **MEMAllocFromMEMHeap**, **MEMFreeToMEMHeap**, memory arena management
 
 ### Studio (`nWiiStudio`)
@@ -84,10 +88,8 @@ NWiiRecomp/
 
 - **More HLE coverage** — DVD, AX (audio), VI (video interface), EXI, SI
 - **Memory model** — proper Wii ARAM / MEM1 / MEM2 layout, correct address translation
-- **Paired-singles accuracy** — full GQR-based quantization for `psq_l`/`psq_st`
 - **Exception vectors** — proper rfi/srr0 dispatch for interrupt handlers
 - **Symbol import** — CSV/ELF symbol map support to name functions in output
-- **GameCube support** — Broadway is Gekko overclocked; the ISA is identical, so GC `.dol` support is a natural follow-up
 - **Wii U research** — longer term, not a priority
 
 ---
