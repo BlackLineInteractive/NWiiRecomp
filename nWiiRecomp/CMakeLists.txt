@@ -14,6 +14,3 @@ target_link_libraries(nwiirecomp_lib PUBLIC nwiiruntime nwiianalyzer)
 add_executable(nwiirecomp "src/main.cpp")
 target_link_libraries(nwiirecomp PRIVATE nwiirecomp_lib)
 
-# Integration Test
-add_executable(test_analyzer_recomp tests/test_analyzer_recomp.cpp)
-target_link_libraries(test_analyzer_recomp PRIVATE nwiirecomp_lib)

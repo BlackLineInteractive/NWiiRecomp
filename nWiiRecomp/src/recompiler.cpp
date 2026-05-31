@@ -282,6 +282,8 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.gpr[" << rD << "] = ctx.srr0; // mfsrr0 r" << rD << "\n";
         } else if (spr == 27) {
             out << "    ctx.gpr[" << rD << "] = ctx.srr1; // mfsrr1 r" << rD << "\n";
+        } else if (spr >= 912 && spr <= 919) {
+            out << "    ctx.gpr[" << rD << "] = ctx.gqr[" << (spr - 912) << "]; // mfgqr" << (spr - 912) << " r" << rD << "\n";
         } else {
             out << "    // TODO: mfspr r" << rD << ", " << spr << "\n";
         }
@@ -299,6 +301,8 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.srr0 = ctx.gpr[" << rS << "]; // mtsrr0 r" << rS << "\n";
         } else if (spr == 27) {
             out << "    ctx.srr1 = ctx.gpr[" << rS << "]; // mtsrr1 r" << rS << "\n";
+        } else if (spr >= 912 && spr <= 919) {
+            out << "    ctx.gqr[" << (spr - 912) << "] = ctx.gpr[" << rS << "]; // mtgqr" << (spr - 912) << " r" << rS << "\n";
         } else {
             out << "    // TODO: mtspr " << spr << ", r" << rS << "\n";
         }
@@ -933,30 +937,38 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
     } else if (ppc_inst.opcode() == 56) { // psq_l
         uint32_t frD = (inst.opcode >> 21) & 0x1F;
         uint32_t rA = (inst.opcode >> 16) & 0x1F;
+        uint32_t W = (inst.opcode >> 15) & 0x1;
+        uint32_t I = (inst.opcode >> 12) & 0x7;
         int16_t d = inst.opcode & 0xFFF;
         if (d & 0x800) d |= 0xF000;
-        if (rA == 0) out << "    ctx.fpr[" << frD << "] = ctx.mmu.read_f32(" << d << "); // psq_l\n";
-        else out << "    ctx.fpr[" << frD << "] = ctx.mmu.read_f32(ctx.gpr[" << rA << "] + " << d << "); // psq_l\n";
+        if (rA == 0) out << "    ctx.psq_load(" << frD << ", " << d << ", " << W << ", " << I << "); // psq_l\n";
+        else out << "    ctx.psq_load(" << frD << ", ctx.gpr[" << rA << "] + " << d << ", " << W << ", " << I << "); // psq_l\n";
     } else if (ppc_inst.opcode() == 57) { // psq_lu
         uint32_t frD = (inst.opcode >> 21) & 0x1F;
         uint32_t rA = (inst.opcode >> 16) & 0x1F;
+        uint32_t W = (inst.opcode >> 15) & 0x1;
+        uint32_t I = (inst.opcode >> 12) & 0x7;
         int16_t d = inst.opcode & 0xFFF;
         if (d & 0x800) d |= 0xF000;
-        out << "    ctx.fpr[" << frD << "] = ctx.mmu.read_f32(ctx.gpr[" << rA << "] + " << d << "); // psq_lu\n";
+        out << "    ctx.psq_load(" << frD << ", ctx.gpr[" << rA << "] + " << d << ", " << W << ", " << I << "); // psq_lu\n";
         out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << d << ";\n";
     } else if (ppc_inst.opcode() == 60) { // psq_st
         uint32_t frS = (inst.opcode >> 21) & 0x1F;
         uint32_t rA = (inst.opcode >> 16) & 0x1F;
+        uint32_t W = (inst.opcode >> 15) & 0x1;
+        uint32_t I = (inst.opcode >> 12) & 0x7;
         int16_t d = inst.opcode & 0xFFF;
         if (d & 0x800) d |= 0xF000;
-        if (rA == 0) out << "    ctx.mmu.write_f32(" << d << ", ctx.fpr[" << frS << "]); // psq_st\n";
-        else out << "    ctx.mmu.write_f32(ctx.gpr[" << rA << "] + " << d << ", ctx.fpr[" << frS << "]); // psq_st\n";
+        if (rA == 0) out << "    ctx.psq_store(" << frS << ", " << d << ", " << W << ", " << I << "); // psq_st\n";
+        else out << "    ctx.psq_store(" << frS << ", ctx.gpr[" << rA << "] + " << d << ", " << W << ", " << I << "); // psq_st\n";
     } else if (ppc_inst.opcode() == 61) { // psq_stu
         uint32_t frS = (inst.opcode >> 21) & 0x1F;
         uint32_t rA = (inst.opcode >> 16) & 0x1F;
+        uint32_t W = (inst.opcode >> 15) & 0x1;
+        uint32_t I = (inst.opcode >> 12) & 0x7;
         int16_t d = inst.opcode & 0xFFF;
         if (d & 0x800) d |= 0xF000;
-        out << "    ctx.mmu.write_f32(ctx.gpr[" << rA << "] + " << d << ", ctx.fpr[" << frS << "]); // psq_stu\n";
+        out << "    ctx.psq_store(" << frS << ", ctx.gpr[" << rA << "] + " << d << ", " << W << ", " << I << "); // psq_stu\n";
         out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << d << ";\n";
     } else {
         out << "    std::cerr << \"UNIMPLEMENTED OPCODE " << ppc_inst.opcode() << " at 0x" << std::hex << inst.address << std::dec << "\\n\"; std::exit(1);\n";

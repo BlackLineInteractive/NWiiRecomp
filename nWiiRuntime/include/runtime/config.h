@@ -1,0 +1,31 @@
+#pragma once
+#include <string>
+
+namespace nwii {
+namespace runtime {
+
+enum class Platform {
+    Wii,
+    GameCube
+};
+
+class Config {
+public:
+    static Config& get() {
+        static Config instance;
+        return instance;
+    }
+
+    void load(const std::string& filepath);
+
+    Platform platform = Platform::Wii;
+    bool enable_vsync = true;
+    int window_width = 640;
+    int window_height = 480;
+
+private:
+    Config() = default;
+};
+
+} // namespace runtime
+} // namespace nwii

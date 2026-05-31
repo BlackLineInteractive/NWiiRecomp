@@ -1,4 +1,5 @@
 #include "runtime/cpu_context.h"
+#include "runtime/config.h"
 #include <iostream>
 #include <string>
 
@@ -9,6 +10,10 @@ extern "C" {
 // IOS IPC Stubs for Wii compatibility (not strictly needed for GameCube)
 
 void IOS_Open(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1; // Return error or unsupported
+        return;
+    }
     // r3 = filepath pointer
     // r4 = mode
     uint32_t path_ptr = ctx.gpr[3];
@@ -29,12 +34,20 @@ void IOS_Open(CPUContext& ctx) {
 }
 
 void IOS_Close(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
     uint32_t fd = ctx.gpr[3];
     std::cout << "[HLE IOS] IOS_Close: fd=" << fd << std::endl;
     ctx.gpr[3] = 0; // Success
 }
 
 void IOS_Read(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
     uint32_t fd = ctx.gpr[3];
     uint32_t buf_ptr = ctx.gpr[4];
     uint32_t length = ctx.gpr[5];
@@ -44,6 +57,10 @@ void IOS_Read(CPUContext& ctx) {
 }
 
 void IOS_Write(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
     uint32_t fd = ctx.gpr[3];
     uint32_t buf_ptr = ctx.gpr[4];
     uint32_t length = ctx.gpr[5];
@@ -53,6 +70,10 @@ void IOS_Write(CPUContext& ctx) {
 }
 
 void IOS_Ioctl(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
     uint32_t fd = ctx.gpr[3];
     uint32_t ioctl_cmd = ctx.gpr[4];
     
@@ -61,6 +82,10 @@ void IOS_Ioctl(CPUContext& ctx) {
 }
 
 void IOS_Ioctlv(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
     uint32_t fd = ctx.gpr[3];
     uint32_t ioctl_cmd = ctx.gpr[4];
     

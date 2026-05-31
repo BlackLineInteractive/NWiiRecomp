@@ -170,7 +170,61 @@ struct CPUContext {
     MMU mmu;
 
     // Default constructor to zero init
-    CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), fpscr(0), srr0(0), srr1(0), gqr{0} {}    uint64_t inst_count = 0;
+    CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), fpscr(0), srr0(0), srr1(0), gqr{0} {}
+    uint64_t inst_count = 0;
+
+    // Paired Single Quantized Load
+    void psq_load(uint32_t frD, uint32_t addr, uint32_t W, uint32_t I) {
+        uint32_t gqr_val = gqr[I];
+        uint32_t ld_type = (gqr_val >> 16) & 0x7;
+        uint32_t ld_scale = (gqr_val >> 24) & 0x3F;
+        float scale = std::pow(2.0f, -((int)ld_scale));
+        
+        auto load_element = [&](uint32_t a) -> double {
+            switch(ld_type) {
+                case 0: return mmu.read_f32(a);
+                case 4: return mmu.read8(a) * scale;
+                case 5: return mmu.read16(a) * scale;
+                case 6: return (int8_t)mmu.read8(a) * scale;
+                case 7: return (int16_t)mmu.read16(a) * scale;
+                default: return 0.0;
+            }
+        };
+
+        uint32_t elem_size = (ld_type == 0) ? 4 : ((ld_type == 4 || ld_type == 6) ? 1 : 2);
+
+        fpr[frD] = load_element(addr);
+        if (W == 0) { // W=0 means 2 elements
+            ps1[frD] = load_element(addr + elem_size);
+        } else { // W=1 means 1 element, ps1 gets 1.0
+            ps1[frD] = 1.0;
+        }
+    }
+
+    // Paired Single Quantized Store
+    void psq_store(uint32_t frS, uint32_t addr, uint32_t W, uint32_t I) {
+        uint32_t gqr_val = gqr[I];
+        uint32_t st_type = gqr_val & 0x7;
+        uint32_t st_scale = (gqr_val >> 8) & 0x3F;
+        float scale = std::pow(2.0f, (int)st_scale);
+        
+        auto store_element = [&](uint32_t a, double val) {
+            switch(st_type) {
+                case 0: mmu.write_f32(a, (float)val); break;
+                case 4: mmu.write8(a, (uint8_t)(val * scale)); break;
+                case 5: mmu.write16(a, (uint16_t)(val * scale)); break;
+                case 6: mmu.write8(a, (int8_t)(val * scale)); break;
+                case 7: mmu.write16(a, (int16_t)(val * scale)); break;
+            }
+        };
+
+        uint32_t elem_size = (st_type == 0) ? 4 : ((st_type == 4 || st_type == 6) ? 1 : 2);
+
+        store_element(addr, fpr[frS]);
+        if (W == 0) {
+            store_element(addr + elem_size, ps1[frS]);
+        }
+    }
 };
 
 } // namespace runtime

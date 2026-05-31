@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 add_library(nwiiruntime STATIC
     src/main.cpp
     src/loader.cpp
+    src/config.cpp
     src/hle/os.cpp
     src/hle/memory.cpp
     src/hle/gx.cpp
@@ -12,7 +13,7 @@ add_library(nwiiruntime STATIC
     src/hle/ios.cpp
 )
 
-target_link_libraries(nwiiruntime PUBLIC raylib)
+target_link_libraries(nwiiruntime PUBLIC raylib tomlplusplus::tomlplusplus)
 
 target_include_directories(nwiiruntime PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include

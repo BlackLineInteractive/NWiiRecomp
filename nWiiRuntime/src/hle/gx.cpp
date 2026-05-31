@@ -133,23 +133,40 @@ void GXSetVtxAttrFmt(CPUContext& ctx) {
     // Stub
 }
 
+static void push_fifo(uint8_t* data, size_t size) {
+    if (g_cpu_fifo.base == 0) return;
+    
+    // In a real implementation we would write to MMU and wrap around
+    // For now, we simulate the write pointer advancing
+    g_cpu_fifo.wr_ptr += size;
+    if (g_cpu_fifo.wr_ptr >= g_cpu_fifo.top) {
+        g_cpu_fifo.wr_ptr = g_cpu_fifo.base;
+    }
+    // Also increase count, though HLE might not need strict accounting unless polled
+    g_cpu_fifo.count += size;
+}
+
 void GX_WGPIPE_Write8(uint8_t val) {
+    push_fifo(&val, 1);
     if (!g_in_begin) return;
     // Assume 8-bit writes are colors (usually 4 bytes for RGBA)
     // For simplicity, we just skip handling individual byte colors here unless fully tracked.
 }
 
 void GX_WGPIPE_Write16(uint16_t val) {
+    push_fifo((uint8_t*)&val, 2);
     if (!g_in_begin) return;
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
+    push_fifo((uint8_t*)&val, 4);
     if (!g_in_begin) return;
     // Usually a 32-bit integer write is an RGBA8 color
     rlColor4ub((val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF);
 }
 
 void GX_WGPIPE_WriteF32(float val) {
+    push_fifo((uint8_t*)&val, 4);
     if (!g_in_begin) return;
     
     g_vtx[g_vtx_idx++] = val;

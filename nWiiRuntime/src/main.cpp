@@ -1,10 +1,12 @@
 #include <iostream>
 #include "runtime/cpu_context.h"
+#include "runtime/config.h"
 
 namespace nwii::runtime {
 
 bool init() {
     std::cout << "init runtime" << std::endl;
+    Config::get().load("config.toml");
     // TODO: setup hle, gfx, input
     return true;
 }
