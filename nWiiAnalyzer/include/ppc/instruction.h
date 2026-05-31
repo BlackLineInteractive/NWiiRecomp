@@ -26,9 +26,12 @@ public:
     uint16_t uimm() const { return static_cast<uint16_t>(value_ & 0xFFFF); }
     uint32_t extended_opcode() const { return (value_ >> 1) & 0x3FF; }
 
-    // Is it a branch and link? (e.g. bl)
+    // LK bit (bit 31)
+    bool lk() const { return (value_ & 1) != 0; }
+
+    // Is it a branch and link? (e.g. bl, bcl, bctrl, bclrl)
     bool is_branch_link() const {
-        return (opcode() == 18) && (value_ & 1); // LK bit is 1
+        return (opcode() == 18 || opcode() == 16 || opcode() == 19) && lk();
     }
 
     // Is it an unconditional branch? (e.g. b, bl)

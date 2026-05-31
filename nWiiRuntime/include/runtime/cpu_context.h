@@ -157,12 +157,14 @@ struct CPUContext {
     uint32_t ctr;   // Count Register
     uint32_t xer;   // Fixed-Point Exception Register
     uint32_t fpscr; // Floating-Point Status and Control Register
+    uint32_t srr0;  // Save/Restore Register 0
+    uint32_t srr1;  // Save/Restore Register 1
     
     // Memory Management Unit
     MMU mmu;
     
     // Default constructor to zero init
-    CPUContext() : gpr{0}, fpr{0.0}, pc(0), lr(0), ctr(0), xer(0), fpscr(0) {}
+    CPUContext() : gpr{0}, fpr{0.0}, pc(0), lr(0), ctr(0), xer(0), fpscr(0), srr0(0), srr1(0) {}
     uint64_t inst_count = 0;
 };
 

@@ -48,6 +48,13 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
         return vi_vblank_counter;
     }
     
+    // EXI (Expansion Interface) Registers
+    if ((addr & 0xFFFFFF00) == 0xCC005000) {
+        static uint32_t exi_seed = 1;
+        exi_seed = exi_seed * 1664525 + 1013904223;
+        return exi_seed;
+    }
+    
     // DI (DVD Interface) Registers
     if (addr == 0xCC006000) {
         // Status register. Return 0 for success / ready.

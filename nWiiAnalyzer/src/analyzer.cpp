@@ -26,6 +26,15 @@ bool Analyzer::read_instruction(uint32_t address, uint32_t& out_inst) const {
     return false;
 }
 
+bool Analyzer::is_text_address(uint32_t address) const {
+    for (const auto& section : executable_.sections) {
+        if (section.is_text && address >= section.address && address < section.address + section.size) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Analyzer::analyze() {
     std::queue<uint32_t> function_queue;
     std::set<uint32_t> known_functions;
@@ -33,6 +42,30 @@ void Analyzer::analyze() {
     if (executable_.entry_point != 0) {
         function_queue.push(executable_.entry_point);
         known_functions.insert(executable_.entry_point);
+    }
+    
+    // Hardcoded dynamic dispatch entry points (OS functions computed via lis/addi)
+    std::vector<uint32_t> hints = {0x80218070, 0x802180F0};
+    for (uint32_t hint : hints) {
+        if (is_text_address(hint) && known_functions.find(hint) == known_functions.end()) {
+            known_functions.insert(hint);
+            function_queue.push(hint);
+        }
+    }
+    
+    // Scan data sections for potential function pointers
+    for (const auto& section : executable_.sections) {
+        if (!section.is_text) {
+            for (size_t i = 0; i + 4 <= section.data.size(); i += 4) {
+                uint32_t ptr;
+                std::memcpy(&ptr, section.data.data() + i, 4);
+                ptr = swap_endian(ptr);
+                if (is_text_address(ptr) && known_functions.find(ptr) == known_functions.end()) {
+                    known_functions.insert(ptr);
+                    function_queue.push(ptr);
+                }
+            }
+        }
     }
 
     while (!function_queue.empty()) {

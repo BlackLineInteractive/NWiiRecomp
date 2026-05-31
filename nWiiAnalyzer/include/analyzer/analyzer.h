@@ -31,6 +31,7 @@ public:
 
 private:
     bool read_instruction(uint32_t address, uint32_t& out_inst) const;
+    bool is_text_address(uint32_t address) const;
 
     const loader::Executable& executable_;
     
