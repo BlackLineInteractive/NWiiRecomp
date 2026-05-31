@@ -23,7 +23,14 @@ extern "C" void run_game(nwii::runtime::CPUContext& ctx);
 
 // Default entry point for the standalone Mac application
 int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <path_to_unpacked_game_dir>\n";
+        return 1;
+    }
+
     if (!nwii::runtime::init()) return 1;
+    
+    nwii::runtime::Config::get().game_dir = argv[1];
     
     std::cout << "nWiiRecomp: Standalone app started." << std::endl;
     
@@ -31,8 +38,8 @@ int main(int argc, char** argv) {
     
     // Load DOL
     nwii::loader::Executable exe;
-    if (!exe.load_unpacked_game("../NO_GitHub/Recomp_game(NO_PUBLIK)/SHSM-Extract")) {
-        std::cerr << "Failed to load game DOL\n";
+    if (!exe.load_unpacked_game(argv[1])) {
+        std::cerr << "Failed to load game DOL from " << argv[1] << "\n";
         return 1;
     }
     
