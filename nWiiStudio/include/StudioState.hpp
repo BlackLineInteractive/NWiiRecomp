@@ -27,7 +27,7 @@ enum class ThemeMode {
 };
 
 struct AppSettings {
-    ThemeMode theme = ThemeMode::Dark;
+    ThemeMode theme = ThemeMode::Nintendo;
     float fontSize = 15.0f;
     float uiScale = 1.0f;
     std::string selectedFont = "Font_1.ttf";

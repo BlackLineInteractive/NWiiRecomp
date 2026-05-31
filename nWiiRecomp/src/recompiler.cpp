@@ -335,28 +335,18 @@ void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func
     }
 
     // Mid-function entry point switch
-    std::set<uint32_t> return_addrs;
-    for (const auto& inst : func.instructions) {
-        ppc::Instruction ppc_inst(inst.opcode);
-        if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
-            uint32_t ret_addr = inst.address + 4;
-            if (valid_addrs.count(ret_addr)) {
-                return_addrs.insert(ret_addr);
-            }
-        }
-    }
-    
-    if (!return_addrs.empty()) {
+    if (valid_addrs.size() > 1) {
         out << "    if (ctx.pc != 0x" << std::hex << std::uppercase << func.start_address << std::dec << ") {\n";
         out << "        switch (ctx.pc) {\n";
-        for (uint32_t ret_addr : return_addrs) {
-            out << "            case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": goto loc_" << std::hex << std::uppercase << ret_addr << std::dec << ";\n";
+        for (uint32_t addr : valid_addrs) {
+            if (addr != func.start_address) {
+                out << "            case 0x" << std::hex << std::uppercase << addr << std::dec << ": goto loc_" << std::hex << std::uppercase << addr << std::dec << ";\n";
+            }
         }
         out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO 0x\" << std::hex << ctx.pc << \"\\n\"; std::exit(1);\n";
         out << "        }\n";
         out << "    }\n";
     }
-
     for (const auto& inst : func.instructions) {
         emit_instruction(out, inst, func);
     }
