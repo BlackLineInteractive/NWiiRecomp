@@ -30,3 +30,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps/
 log.txt
+
+# Configuration files
+*.toml
+recomp_config.toml

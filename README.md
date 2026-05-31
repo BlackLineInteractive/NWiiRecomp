@@ -81,6 +81,14 @@ NWiiRecomp/
 - Function list panel with address and instruction count
 - Disassembly viewer (raw PPC hex + decoded mnemonic)
 - Basic memory map view
+- **Settings & Config Integration**: Direct integration with `recomp_config.toml` to manage paths cleanly.
+- **Premium Themes**: Includes "Nintendo" theme (GameCube Indigo / Wii aesthetic) for a polished user experience.
+
+<p align="center">
+  <img src="nWiiStudio/assets/gui_1.png" alt="NWiiStudio Disassembly" width="45%"/>
+  &nbsp;
+  <img src="nWiiStudio/assets/gui_2.png" alt="NWiiStudio Settings" width="45%"/>
+</p>
 
 ---
 
