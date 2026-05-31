@@ -121,7 +121,6 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "    while (ctx.pc != 0) {\n";
         out << "        uint32_t target = ctx.pc;\n";
         out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "        ctx.pc = 0;\n";
         out << "        try {\n";
         out << "            switch (target) {\n";
         
@@ -133,7 +132,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
             
             if (emitted_cases.insert(start_addr).second) {
-                out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                if (is_hle) {
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); throw (uint32_t)ctx.lr;\n";
+                } else {
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                }
             }
             
             if (!is_hle) {
@@ -213,7 +216,6 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "    while (ctx.pc != 0) {\n";
         out << "        uint32_t target = ctx.pc;\n";
         out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "        ctx.pc = 0;\n";
         out << "        try {\n";
         out << "            switch (target) {\n";
         
@@ -225,7 +227,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
             
             if (emitted_cases.insert(start_addr).second) {
-                out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                if (is_hle) {
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); throw (uint32_t)ctx.lr;\n";
+                } else {
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                }
             }
             
             if (!is_hle) {
