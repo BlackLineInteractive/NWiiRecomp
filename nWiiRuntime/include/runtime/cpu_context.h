@@ -138,6 +138,7 @@ struct MMU {
         std::memcpy(&val, &value, 8);
         write64(addr, val);
     }
+    
 };
 
 struct CPUContext {

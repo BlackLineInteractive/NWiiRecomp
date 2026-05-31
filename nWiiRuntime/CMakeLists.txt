@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 add_library(nwiiruntime STATIC
     src/main.cpp
+    src/loader.cpp
     src/hle/os.cpp
     src/hle/memory.cpp
     src/hle/gx.cpp

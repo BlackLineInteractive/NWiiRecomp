@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_subdirectory(nWiiLoader)
 add_subdirectory(nWiiAnalyzer)
 add_subdirectory(nWiiRecomp)
 add_subdirectory(nWiiRuntime)

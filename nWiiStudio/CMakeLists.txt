@@ -114,7 +114,6 @@ add_executable(nWiiStudio ${STUDIO_SOURCES} ${STUDIO_HEADERS})
 target_include_directories(nWiiStudio PRIVATE 
     include
     ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiAnalyzer/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiLoader/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiRecomp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiRuntime/include
 )
@@ -128,7 +127,7 @@ target_link_libraries(nWiiStudio PRIVATE
     imgui_filedialog_lib
     nwiirecomp_lib
     nwiianalyzer
-    nwiiloader
+    nwiiruntime
 )
 
 if (WIN32)

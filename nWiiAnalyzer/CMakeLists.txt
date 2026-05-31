@@ -6,8 +6,8 @@ add_library(nwiianalyzer STATIC ${SRC_FILES})
 
 target_include_directories(nwiianalyzer PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiLoader/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiRuntime/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../nWiiRecomp/include
 )
 
-target_link_libraries(nwiianalyzer PRIVATE nwiiloader)
+target_link_libraries(nwiianalyzer PRIVATE nwiiruntime)
