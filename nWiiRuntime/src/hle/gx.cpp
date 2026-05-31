@@ -5,7 +5,67 @@
 
 using namespace nwii::runtime;
 
+// GX FIFO structure representing the Graphics FIFO
+struct GXFifoObj {
+    uint32_t base;
+    uint32_t top;
+    uint32_t size;
+    uint32_t count;
+    uint32_t rd_ptr;
+    uint32_t wr_ptr;
+};
+
+static GXFifoObj g_cpu_fifo = {0};
+static GXFifoObj g_gp_fifo = {0};
+
 extern "C" {
+
+void GXInitFifoBase(CPUContext& ctx) {
+    uint32_t fifo_ptr = ctx.gpr[3];
+    uint32_t base = ctx.gpr[4];
+    uint32_t size = ctx.gpr[5];
+    
+    // Simulate writing to the GXFifoObj structure in guest memory
+    ctx.mmu.write32(fifo_ptr + 0, base);
+    ctx.mmu.write32(fifo_ptr + 4, base + size);
+    ctx.mmu.write32(fifo_ptr + 8, size);
+    ctx.mmu.write32(fifo_ptr + 12, 0);
+    ctx.mmu.write32(fifo_ptr + 16, base);
+    ctx.mmu.write32(fifo_ptr + 20, base);
+    
+    std::cout << "[HLE GX] GXInitFifoBase: fifo_ptr=" << std::hex << fifo_ptr 
+              << ", base=" << base << ", size=" << std::dec << size << std::endl;
+}
+
+void GXInitFifoPtrs(CPUContext& ctx) {
+    uint32_t fifo_ptr = ctx.gpr[3];
+    uint32_t rd_ptr = ctx.gpr[4];
+    uint32_t wr_ptr = ctx.gpr[5];
+    
+    ctx.mmu.write32(fifo_ptr + 16, rd_ptr);
+    ctx.mmu.write32(fifo_ptr + 20, wr_ptr);
+}
+
+void GXSetCPUFifo(CPUContext& ctx) {
+    uint32_t fifo_ptr = ctx.gpr[3];
+    
+    g_cpu_fifo.base = ctx.mmu.read32(fifo_ptr + 0);
+    g_cpu_fifo.top = ctx.mmu.read32(fifo_ptr + 4);
+    g_cpu_fifo.size = ctx.mmu.read32(fifo_ptr + 8);
+    g_cpu_fifo.count = ctx.mmu.read32(fifo_ptr + 12);
+    g_cpu_fifo.rd_ptr = ctx.mmu.read32(fifo_ptr + 16);
+    g_cpu_fifo.wr_ptr = ctx.mmu.read32(fifo_ptr + 20);
+    
+    std::cout << "[HLE GX] GXSetCPUFifo: base=" << std::hex << g_cpu_fifo.base << std::endl;
+}
+
+void GXGetCPUFifo(CPUContext& ctx) {
+    // Return a dummy pointer or the one previously set
+    // For simplicity, we just return a pointer to an internal dummy if needed,
+    // but typically it returns a ptr to the active GXFifoObj.
+    // Let's assume we allocated a dummy object in high memory or just return 0.
+    ctx.gpr[3] = 0; // Stub
+}
 
 void VIInit(CPUContext& ctx) {
     std::cout << "[HLE GX] VIInit: Initializing Video Interface" << std::endl;

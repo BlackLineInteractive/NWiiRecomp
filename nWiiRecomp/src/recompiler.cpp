@@ -13,7 +13,7 @@ Recompiler::Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* sy
     : analyzer_(analyzer), symbols_(symbols) {}
 
 static bool is_hle_function(const std::string& name) {
-    const char* prefixes[] = {"OS", "GX", "DVD", "VI", "WPAD", "AX", "EXI", "PAD", "mtx_", "vec_"};
+    const char* prefixes[] = {"OS", "GX", "DVD", "VI", "WPAD", "AX", "EXI", "PAD", "IOS", "mtx_", "vec_"};
     for (const char* prefix : prefixes) {
         if (name.starts_with(prefix)) {
             return true;
@@ -836,9 +836,36 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
     } else if (ppc_inst.opcode() == 17) { // sc
         out << "    // sc (System Call) - NOOP for now\n";
     } else if (ppc_inst.opcode() == 4) { // ps_*
-        uint32_t frD = (inst.opcode >> 21) & 0x1F;
-        out << "    // TODO: implement opcode 4 (ps_*)\n";
-        out << "    ctx.fpr[" << frD << "] = 0.0;\n";
+        uint32_t xo = (inst.opcode >> 1) & 0x1F;
+        uint32_t xo_10 = (inst.opcode >> 1) & 0x3FF;
+        uint32_t frD = ppc_inst.rd();
+        uint32_t frA = ppc_inst.ra();
+        uint32_t frB = ppc_inst.rb();
+        uint32_t frC = ppc_inst.rc();
+        
+        if (xo == 21) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] + ctx.fpr[" << frB << "]; // ps_add f" << frD << ", f" << frA << ", f" << frB << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] + ctx.ps1[" << frB << "];\n";
+        } else if (xo == 20) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] - ctx.fpr[" << frB << "]; // ps_sub f" << frD << ", f" << frA << ", f" << frB << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] - ctx.ps1[" << frB << "];\n";
+        } else if (xo == 25) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] * ctx.fpr[" << frC << "]; // ps_mul f" << frD << ", f" << frA << ", f" << frC << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] * ctx.ps1[" << frC << "];\n";
+        } else if (xo == 29) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] * ctx.fpr[" << frC << "] + ctx.fpr[" << frB << "]; // ps_madd f" << frD << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] * ctx.ps1[" << frC << "] + ctx.ps1[" << frB << "];\n";
+        } else if (xo == 18) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] / ctx.fpr[" << frB << "]; // ps_div f" << frD << ", f" << frA << ", f" << frB << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] / ctx.ps1[" << frB << "];\n";
+        } else if (xo_10 == 72) {
+            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frB << "]; // ps_mr f" << frD << ", f" << frB << "\n";
+            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frB << "];\n";
+        } else {
+            out << "    // TODO: implement opcode 4 (ps_*) xo=" << xo << ", xo_10=" << xo_10 << "\n";
+            out << "    ctx.fpr[" << frD << "] = 0.0;\n";
+            out << "    ctx.ps1[" << frD << "] = 0.0;\n";
+        }
     } else if (ppc_inst.opcode() == 10) { // cmpli
         uint32_t crD = ppc_inst.rd() >> 2;
         out << "    ctx.cr[" << crD << "].lt = (ctx.gpr[" << ppc_inst.ra() << "] < " << ppc_inst.uimm() << ");\n";

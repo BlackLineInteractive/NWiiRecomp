@@ -9,6 +9,7 @@ add_library(nwiiruntime STATIC
     src/hle/pad.cpp
     src/hle/dvd.cpp
     src/hle/ax.cpp
+    src/hle/ios.cpp
 )
 
 target_link_libraries(nwiiruntime PUBLIC raylib)

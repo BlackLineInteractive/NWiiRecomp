@@ -145,12 +145,15 @@ struct CPUContext {
     // General Purpose Registers (r0-r31)
     std::array<uint32_t, 32> gpr;
     
-    // Floating Point Registers (f0-f31)
+    // Floating Point Registers (f0-f31, which act as ps0 for Paired Singles)
     std::array<double, 32> fpr;
+
+    // Paired Single 1 Registers (ps1) - second half of the 64-bit paired single
+    std::array<double, 32> ps1;
 
     // Condition Registers (cr0-cr7)
     std::array<ConditionField, 8> cr;
-    
+
     // Special Purpose Registers
     uint32_t pc;    // Program Counter
     uint32_t lr;    // Link Register
@@ -159,13 +162,15 @@ struct CPUContext {
     uint32_t fpscr; // Floating-Point Status and Control Register
     uint32_t srr0;  // Save/Restore Register 0
     uint32_t srr1;  // Save/Restore Register 1
-    
+
+    // Graphics Quantization Registers (GQR0-GQR7) for Paired Singles Load/Store
+    std::array<uint32_t, 8> gqr;
+
     // Memory Management Unit
     MMU mmu;
-    
+
     // Default constructor to zero init
-    CPUContext() : gpr{0}, fpr{0.0}, pc(0), lr(0), ctr(0), xer(0), fpscr(0), srr0(0), srr1(0) {}
-    uint64_t inst_count = 0;
+    CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), fpscr(0), srr0(0), srr1(0), gqr{0} {}    uint64_t inst_count = 0;
 };
 
 } // namespace runtime
