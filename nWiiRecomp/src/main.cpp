@@ -4,18 +4,31 @@
 #include "analyzer/analyzer.h"
 #include "recompiler/recompiler.h"
 
+#include <toml++/toml.hpp>
+
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: nwiirecomp <unpacked_game_dir> [symbols.csv]\n";
+    std::string config_path = (argc >= 2) ? argv[1] : "recomp_config.toml";
+    
+    nwii::recomp::RecompilerConfig config;
+    try {
+        auto tbl = toml::parse_file(config_path);
+        config.project_name = tbl["project_name"].value_or("RecompiledGame");
+        config.input_game_dir = tbl["input_game_dir"].value_or(".");
+        config.output_dir = tbl["output_dir"].value_or("export");
+        config.runtime_source_dir = tbl["runtime_source_dir"].value_or("../nWiiRuntime");
+        config.symbols_csv = tbl["symbols_csv"].value_or("");
+        
+        config.split_output = tbl["split_output"].value_or(false);
+        config.instructions_per_file = tbl["instructions_per_file"].value_or(20000);
+        std::cout << "Loaded config from " << config_path << "\n";
+    } catch (const toml::parse_error& err) {
+        std::cerr << "Config file " << config_path << " not found or invalid.\n";
         return 1;
     }
 
-    std::string input_dir = argv[1];
-    std::string symbols_path = (argc >= 3) ? argv[2] : "";
-    std::cout << "NWiiRecomp: loading game from " << input_dir << "\n";
-
+    std::cout << "NWiiRecomp: loading game from " << config.input_game_dir << "\n";
     nwii::loader::Executable exec;
-    if (!exec.load_unpacked_game(input_dir)) {
+    if (!exec.load_unpacked_game(config.input_game_dir)) {
         std::cerr << "Failed to load executable.\n";
         return 1;
     }
@@ -31,19 +44,11 @@ int main(int argc, char** argv) {
     const auto& functions = analyzer.get_functions();
     std::cout << "Analysis complete. Discovered " << functions.size() << " functions.\n";
 
-    // Uncomment to print all functions (can be very long)
-    /*
-    for (const auto& [start_addr, func] : functions) {
-        std::cout << "Function at 0x" << std::hex << start_addr 
-                  << " to 0x" << func.end_address << std::dec << "\n";
-    }
-    */
-
     nwii::recomp::SymbolTable symbols;
     bool has_symbols = false;
-    if (!symbols_path.empty()) {
-        std::cout << "Loading symbols from " << symbols_path << "...\n";
-        if (symbols.load_csv(symbols_path)) {
+    if (!config.symbols_csv.empty()) {
+        std::cout << "Loading symbols from " << config.symbols_csv << "...\n";
+        if (symbols.load_csv(config.symbols_csv)) {
             std::cout << "Symbols loaded successfully.\n";
             has_symbols = true;
         } else {
@@ -52,10 +57,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Generating CMake Project...\n";
-    nwii::recomp::Recompiler recompiler(analyzer, has_symbols ? &symbols : nullptr);
-    std::string runtime_path = "/Users/vovavovchok/NWiiRecomp/nWiiRuntime";
-    if (recompiler.generate_cmake_project("export", runtime_path, exec.entry_point)) {
-        std::cout << "Successfully exported standalone project to 'export' directory!\n";
+    nwii::recomp::Recompiler recompiler(analyzer, has_symbols ? &symbols : nullptr, config);
+    if (recompiler.generate_cmake_project(exec.entry_point)) {
+        std::cout << "Successfully exported standalone project to '" << config.output_dir << "' directory!\n";
     } else {
         std::cerr << "Failed to export project.\n";
     }

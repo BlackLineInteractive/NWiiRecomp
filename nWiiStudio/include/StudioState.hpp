@@ -16,13 +16,14 @@
 #include "analyzer/analyzer.h"
 #include "recompiler/recompiler.h"
 #include "recompiler/symbols.h"
+#include <toml++/toml.hpp>
 
 enum class OverrideStatus {
     Default, Stub, Skip, ForceRecompile
 };
 
 enum class ThemeMode {
-    Dark, Light, Custom
+    Dark, Light, Nintendo, Custom
 };
 
 struct AppSettings {
@@ -260,10 +261,21 @@ public:
 
         workerThread = std::async(std::launch::async, [this]() {
             try {
-                nwii::recomp::Recompiler recompiler(*data.analyzer, &symbolTable);
-                std::string out_dir = GetEffectiveOutputPath();
-                std::string runtime_src = "/Users/vovavovchok/NWiiRecomp/nWiiRuntime"; // Hardcoded for this development environment
-                if (recompiler.generate_cmake_project(out_dir, runtime_src, data.executable->entry_point)) {
+                nwii::recomp::RecompilerConfig config;
+                try {
+                    auto tbl = toml::parse(data.configTomlContent);
+                    config.project_name = tbl["project_name"].value_or("RecompiledGame");
+                    config.input_game_dir = tbl["input_game_dir"].value_or(data.unpackedGamePath);
+                    config.output_dir = tbl["output_dir"].value_or(GetEffectiveOutputPath());
+                    config.runtime_source_dir = tbl["runtime_source_dir"].value_or("../nWiiRuntime");
+                    config.symbols_csv = tbl["symbols_csv"].value_or(symbolsPath);
+                    config.split_output = tbl["split_output"].value_or(false);
+                    config.instructions_per_file = tbl["instructions_per_file"].value_or(20000);
+                } catch(...) {}
+
+                nwii::recomp::Recompiler recompiler(*data.analyzer, &symbolTable, config);
+                std::string out_dir = config.output_dir;
+                if (recompiler.generate_cmake_project(data.executable->entry_point)) {
                     SetStatus("C++ Generation Complete");
                     Log("Successfully generated standalone CMake project at: " + out_dir);
                 } else {
@@ -288,19 +300,53 @@ public:
     }
 
     void LoadConfigToml() {
-        // Minimal stub
+        configTomlPath = "recomp_config.toml";
+        try {
+            if (std::filesystem::exists(configTomlPath)) {
+                std::ifstream ifs(configTomlPath);
+                if (ifs.good()) {
+                    std::stringstream buffer;
+                    buffer << ifs.rdbuf();
+                    data.configTomlContent = buffer.str();
+                    
+                    // Also populate paths from TOML
+                    auto tbl = toml::parse(data.configTomlContent);
+                    data.unpackedGamePath = tbl["input_game_dir"].value_or("");
+                    data.customOutputPath = tbl["output_dir"].value_or("");
+                    symbolsPath = tbl["symbols_csv"].value_or("");
+                    return;
+                }
+            }
+        } catch(...) {}
+        CreateDefaultConfig();
     }
 
     void CreateDefaultConfig() {
-        // Minimal stub
+        data.configTomlContent = "project_name = \"RecompiledGame\"\n"
+                                 "input_game_dir = \"\"\n"
+                                 "output_dir = \"export\"\n"
+                                 "runtime_source_dir = \"../nWiiRuntime\"\n"
+                                 "symbols_csv = \"\"\n\n"
+                                 "split_output = true\n"
+                                 "instructions_per_file = 20000\n";
     }
 
     void SaveConfigTOML() {
-        // Minimal stub
+        SaveConfigTomlFromEditor(data.configTomlContent);
     }
 
     void SaveConfigTomlFromEditor(const std::string& newContent) {
-        // Minimal stub
+        data.configTomlContent = newContent;
+        configTomlPath = "recomp_config.toml";
+        try {
+            std::ofstream ofs(configTomlPath);
+            if (ofs.good()) {
+                ofs << newContent;
+                Log("Saved config to " + configTomlPath);
+            }
+        } catch (const std::exception& e) {
+            Log(std::string("Error saving config: ") + e.what());
+        }
     }
 
     std::string GetEffectiveOutputPath() const {

@@ -7,15 +7,26 @@
 namespace nwii {
 namespace recomp {
 
+struct RecompilerConfig {
+    std::string project_name = "RecompiledGame";
+    std::string input_game_dir = "";
+    std::string output_dir = "export";
+    std::string runtime_source_dir = "../nWiiRuntime";
+    std::string symbols_csv = "";
+    
+    bool split_output = false;
+    int instructions_per_file = 20000;
+};
+
 class Recompiler {
 public:
-    Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* symbols = nullptr);
+    Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* symbols = nullptr, const RecompilerConfig& config = RecompilerConfig());
 
-    // Generates the C++ output and writes to the given path
-    bool generate_cpp(const std::string& output_path, uint32_t entry_point);
+    // Generates the C++ output and returns a list of generated .cpp filenames
+    std::vector<std::string> generate_cpp(uint32_t entry_point);
     
     // Generates a standalone CMake project containing the C++ output and the runtime
-    bool generate_cmake_project(const std::string& output_dir, const std::string& runtime_source_path, uint32_t entry_point);
+    bool generate_cmake_project(uint32_t entry_point);
     
     // Generates C++ output for a single function
     std::string generate_function_cpp(const analyzer::Function& func);
@@ -26,6 +37,7 @@ private:
 
     const analyzer::Analyzer& analyzer_;
     const SymbolTable* symbols_;
+    RecompilerConfig config_;
 };
 
 } // namespace recomp

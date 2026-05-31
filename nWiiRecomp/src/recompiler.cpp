@@ -9,8 +9,8 @@
 namespace nwii {
 namespace recomp {
 
-Recompiler::Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* symbols) 
-    : analyzer_(analyzer), symbols_(symbols) {}
+Recompiler::Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* symbols, const RecompilerConfig& config) 
+    : analyzer_(analyzer), symbols_(symbols), config_(config) {}
 
 static bool is_hle_function(const std::string& name) {
     const char* prefixes[] = {"OS", "GX", "DVD", "VI", "WPAD", "AX", "EXI", "PAD", "IOS", "mtx_", "vec_"};
@@ -22,161 +22,246 @@ static bool is_hle_function(const std::string& name) {
     return false;
 }
 
-bool Recompiler::generate_cpp(const std::string& output_path, uint32_t entry_point) {
-    std::ofstream out(output_path);
-    if (!out.is_open()) {
-        std::cerr << "Failed to open output file: " << output_path << std::endl;
-        return false;
-    }
+std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
+    std::vector<std::string> generated_files;
+    
+    auto emit_headers = [](std::ostream& out) {
+        out << "#include \"runtime/cpu_context.h\"\n";
+        out << "#include <stdint.h>\n";
+        out << "#include <bit>\n";
+        out << "#include <cmath>\n";
+        out << "#include <iostream>\n";
+        out << "#include <cstdlib>\n\n";
+        out << "using namespace nwii::runtime;\n\n";
+    };
 
-    // Emit headers
-    out << "#include \"runtime/cpu_context.h\"\n";
-    out << "#include <stdint.h>\n";
-    out << "#include <bit>\n";
-    out << "#include <cmath>\n";
-    out << "#include <iostream>\n";
-    out << "#include <cstdlib>\n\n";
-    out << "using namespace nwii::runtime;\n\n";
-
-    std::set<std::string> emitted_names;
-    std::set<std::string> emitted_names_impl;
-
-    out << "// --- Forward Declarations ---\n";
-    for (const auto& [start_addr, func] : analyzer_.get_functions()) {
-        std::string func_name;
-        if (symbols_ && symbols_->has_symbol(start_addr)) {
-            func_name = symbols_->get_symbol(start_addr);
-        } else {
-            std::stringstream ss;
-            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
-            func_name = ss.str();
-        }
+    if (config_.split_output) {
+        // Generate functions.h
+        std::string header_path = config_.output_dir + "/functions.h";
+        std::ofstream hout(header_path);
+        hout << "#pragma once\n";
+        hout << "#include \"runtime/cpu_context.h\"\n\n";
         
-        // Ensure uniqueness
-        if (emitted_names.count(func_name)) {
-            std::stringstream ss;
-            ss << func_name << "_" << std::hex << std::uppercase << start_addr;
-            func_name = ss.str();
-        }
-        emitted_names.insert(func_name);
+        std::set<std::string> emitted_names;
+        std::vector<std::string> all_func_names;
         
-        out << "void " << func_name << "(CPUContext& ctx);\n";
-    }
-    out << "\n// --- Function Bodies ---\n";
-
-    // Emit all functions
-    for (const auto& [start_addr, func] : analyzer_.get_functions()) {
-        if (symbols_ && symbols_->has_symbol(start_addr)) {
-            std::string name = symbols_->get_symbol(start_addr);
-            if (is_hle_function(name)) {
-                out << "// [HLE Hook] Skipping generation for " << name << "\n\n";
-                continue;
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            std::string func_name;
+            if (symbols_ && symbols_->has_symbol(start_addr)) {
+                func_name = symbols_->get_symbol(start_addr);
+            } else {
+                std::stringstream ss;
+                ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
+                func_name = ss.str();
+            }
+            if (emitted_names.count(func_name)) {
+                std::stringstream ss;
+                ss << func_name << "_" << std::hex << std::uppercase << start_addr;
+                func_name = ss.str();
+            }
+            emitted_names.insert(func_name);
+            all_func_names.push_back(func_name);
+            
+            hout << "void " << func_name << "(nwii::runtime::CPUContext& ctx);\n";
+        }
+        hout.close();
+        
+        // Generate output_X.cpp files
+        int file_idx = 0;
+        int count_in_current_file = 0;
+        std::ofstream out;
+        
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            if (count_in_current_file == 0) {
+                if (out.is_open()) out.close();
+                std::stringstream ss;
+                ss << "output_" << file_idx++ << ".cpp";
+                std::string fname = ss.str();
+                generated_files.push_back(fname);
+                out.open(config_.output_dir + "/" + fname);
+                emit_headers(out);
+                out << "#include \"functions.h\"\n\n";
+            }
+            
+            std::string func_name = all_func_names[func_idx++];
+            
+            if (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr))) {
+                out << "// [HLE Hook] Skipping generation for " << func_name << "\n\n";
+            } else {
+                emit_function(out, func, func_name);
+            }
+            
+            count_in_current_file += func.instructions.size();
+            if (count_in_current_file >= config_.instructions_per_file) {
+                count_in_current_file = 0;
             }
         }
+        if (out.is_open()) out.close();
         
-        std::string func_name;
-        if (symbols_ && symbols_->has_symbol(start_addr)) {
-            func_name = symbols_->get_symbol(start_addr);
+        // Generate main_output.cpp
+        std::string main_name = "main_output.cpp";
+        generated_files.push_back(main_name);
+        out.open(config_.output_dir + "/" + main_name);
+        emit_headers(out);
+        out << "#include \"functions.h\"\n\n";
+        
+        std::string entry_func;
+        if (symbols_ && symbols_->has_symbol(entry_point)) {
+            entry_func = symbols_->get_symbol(entry_point);
         } else {
             std::stringstream ss;
-            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
-            func_name = ss.str();
+            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << entry_point;
+            entry_func = ss.str();
         }
         
-        // Match uniqueness
-        if (emitted_names_impl.count(func_name)) {
-            std::stringstream ss;
-            ss << func_name << "_" << std::hex << std::uppercase << start_addr;
-            func_name = ss.str();
-        }
-        emitted_names_impl.insert(func_name);
-        
-        emit_function(out, func, func_name);
-    }
-
-    std::string entry_func;
-    if (symbols_ && symbols_->has_symbol(entry_point)) {
-        entry_func = symbols_->get_symbol(entry_point);
-    } else {
-        std::stringstream ss;
-        ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << entry_point;
-        entry_func = ss.str();
-    }
-    
-    out << "\n// --- Entry Point Wrapper ---\n";
-    out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
-    out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
-    out << "    while (ctx.pc != 0) {\n";
-    out << "        uint32_t target = ctx.pc;\n";
-    out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-    out << "        ctx.pc = 0;\n";
-    out << "        try {\n";
-    out << "            switch (target) {\n";
-    for (const auto& [start_addr, func] : analyzer_.get_functions()) {
-        std::string func_name;
-        if (symbols_ && symbols_->has_symbol(start_addr)) {
-            func_name = symbols_->get_symbol(start_addr);
-        } else {
-            std::stringstream ss;
-            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
-            func_name = ss.str();
-        }
-        
-        // HLE hooks don't need mid-function entries because they are C++ only
-        bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
-        
-        out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
-        
-        if (!is_hle) {
-            for (const auto& inst : func.instructions) {
-                ppc::Instruction ppc_inst(inst.opcode);
-                if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
-                    // Instruction after bl, bcl, bctrl, bclrl, sc, or rfi can be a return target
-                    uint32_t ret_addr = inst.address + 4;
-                    out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+        out << "// --- Entry Point Wrapper ---\n";
+        out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
+        out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
+        out << "    while (ctx.pc != 0) {\n";
+        out << "        uint32_t target = ctx.pc;\n";
+        out << "        if (target < 0x80000000) target |= 0x80000000;\n";
+        out << "        ctx.pc = 0;\n";
+        out << "        try {\n";
+        out << "            switch (target) {\n";
+        func_idx = 0;
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            std::string func_name = all_func_names[func_idx++];
+            bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
+            
+            out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+            if (!is_hle) {
+                for (const auto& inst : func.instructions) {
+                    ppc::Instruction ppc_inst(inst.opcode);
+                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
+                        uint32_t ret_addr = inst.address + 4;
+                        out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                    }
                 }
             }
         }
+        out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
+        out << "            }\n";
+        out << "        } catch (uint32_t new_pc) {\n";
+        out << "            ctx.pc = new_pc;\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n";
+        out.close();
+        
+    } else {
+        // Monolithic generation
+        std::string fname = "output.cpp";
+        generated_files.push_back(fname);
+        std::ofstream out(config_.output_dir + "/" + fname);
+        emit_headers(out);
+        
+        std::set<std::string> emitted_names;
+        std::vector<std::string> all_func_names;
+        
+        out << "// --- Forward Declarations ---\n";
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            std::string func_name;
+            if (symbols_ && symbols_->has_symbol(start_addr)) {
+                func_name = symbols_->get_symbol(start_addr);
+            } else {
+                std::stringstream ss;
+                ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << start_addr;
+                func_name = ss.str();
+            }
+            if (emitted_names.count(func_name)) {
+                std::stringstream ss;
+                ss << func_name << "_" << std::hex << std::uppercase << start_addr;
+                func_name = ss.str();
+            }
+            emitted_names.insert(func_name);
+            all_func_names.push_back(func_name);
+            out << "void " << func_name << "(CPUContext& ctx);\n";
+        }
+        
+        out << "\n// --- Function Bodies ---\n";
+        int func_idx = 0;
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            std::string func_name = all_func_names[func_idx++];
+            if (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr))) {
+                out << "// [HLE Hook] Skipping generation for " << func_name << "\n\n";
+            } else {
+                emit_function(out, func, func_name);
+            }
+        }
+        
+        std::string entry_func;
+        if (symbols_ && symbols_->has_symbol(entry_point)) {
+            entry_func = symbols_->get_symbol(entry_point);
+        } else {
+            std::stringstream ss;
+            ss << "func_" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << entry_point;
+            entry_func = ss.str();
+        }
+        
+        out << "\n// --- Entry Point Wrapper ---\n";
+        out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
+        out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
+        out << "    while (ctx.pc != 0) {\n";
+        out << "        uint32_t target = ctx.pc;\n";
+        out << "        if (target < 0x80000000) target |= 0x80000000;\n";
+        out << "        ctx.pc = 0;\n";
+        out << "        try {\n";
+        out << "            switch (target) {\n";
+        func_idx = 0;
+        for (const auto& [start_addr, func] : analyzer_.get_functions()) {
+            std::string func_name = all_func_names[func_idx++];
+            bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
+            out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+            if (!is_hle) {
+                for (const auto& inst : func.instructions) {
+                    ppc::Instruction ppc_inst(inst.opcode);
+                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
+                        uint32_t ret_addr = inst.address + 4;
+                        out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                    }
+                }
+            }
+        }
+        out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
+        out << "            }\n";
+        out << "        } catch (uint32_t new_pc) {\n";
+        out << "            ctx.pc = new_pc;\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n";
     }
-    out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
-    out << "            }\n";
-    out << "        } catch (uint32_t new_pc) {\n";
-    out << "            ctx.pc = new_pc;\n";
-    out << "        }\n";
-    out << "    }\n";
-    out << "}\n";
 
-    return true;
+    return generated_files;
 }
 
-bool Recompiler::generate_cmake_project(const std::string& output_dir, const std::string& runtime_source_path, uint32_t entry_point) {
-    if (!std::filesystem::exists(output_dir)) {
-        std::filesystem::create_directories(output_dir);
+bool Recompiler::generate_cmake_project(uint32_t entry_point) {
+    if (!std::filesystem::exists(config_.output_dir)) {
+        std::filesystem::create_directories(config_.output_dir);
     }
     
-    // 1. Generate output.cpp
-    std::string cpp_path = output_dir + "/output.cpp";
-    if (!generate_cpp(cpp_path, entry_point)) {
+    // 1. Generate output.cpp(s)
+    std::vector<std::string> generated_files = generate_cpp(entry_point);
+    if (generated_files.empty()) {
         return false;
     }
     
     // 2. Copy nWiiRuntime
-    std::string runtime_dest = output_dir + "/nWiiRuntime";
+    std::string runtime_dest = config_.output_dir + "/nWiiRuntime";
     try {
-        std::filesystem::copy(runtime_source_path, runtime_dest, 
+        std::filesystem::copy(config_.runtime_source_dir, runtime_dest, 
             std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
     } catch (const std::exception& e) {
-        std::cerr << "Failed to copy runtime: " << e.what() << "\n";
+        std::cerr << "Failed to copy runtime from " << config_.runtime_source_dir << ": " << e.what() << "\n";
         return false;
     }
     
     // 3. Generate CMakeLists.txt
-    std::string cmake_path = output_dir + "/CMakeLists.txt";
+    std::string cmake_path = config_.output_dir + "/CMakeLists.txt";
     std::ofstream out(cmake_path);
     if (!out.is_open()) return false;
     
     out << "cmake_minimum_required(VERSION 3.20)\n";
-    out << "project(RecompiledGame LANGUAGES CXX)\n\n";
+    out << "project(" << config_.project_name << " LANGUAGES CXX)\n\n";
     out << "set(CMAKE_POLICY_VERSION_MINIMUM 3.5)\n";
     out << "set(CMAKE_CXX_STANDARD 20)\n";
     out << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
@@ -188,8 +273,14 @@ bool Recompiler::generate_cmake_project(const std::string& output_dir, const std
     out << "FetchContent_MakeAvailable(raylib)\n\n";
     
     out << "add_subdirectory(nWiiRuntime)\n\n";
-    out << "add_executable(RecompiledGame output.cpp)\n";
-    out << "target_link_libraries(RecompiledGame PRIVATE nwiiruntime raylib)\n";
+    
+    out << "add_executable(" << config_.project_name << "";
+    for (const auto& file : generated_files) {
+        out << " " << file;
+    }
+    out << ")\n";
+    
+    out << "target_link_libraries(" << config_.project_name << " PRIVATE nwiiruntime raylib)\n";
     
     return true;
 }

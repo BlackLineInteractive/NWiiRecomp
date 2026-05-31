@@ -79,9 +79,9 @@ static void DrawSettingsWindow(StudioState& state) {
     if (ImGui::Begin("Settings", &show_settings_window)) {
 
         if (ImGui::CollapsingHeader("Theme", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* themes[] = { "Dark", "Light", "Custom" };
+            const char* themes[] = { "Dark", "Light", "Nintendo", "Custom" };
             int current = static_cast<int>(state.settings.theme);
-            if (ImGui::Combo("Theme Mode", &current, themes, 3)) {
+            if (ImGui::Combo("Theme Mode", &current, themes, 4)) {
                 state.settings.theme = static_cast<ThemeMode>(current);
                 StyleManager::ApplyTheme(state.settings.theme, state.settings);
             }
