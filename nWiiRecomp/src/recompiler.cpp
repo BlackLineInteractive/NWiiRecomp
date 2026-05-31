@@ -124,18 +124,26 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "        ctx.pc = 0;\n";
         out << "        try {\n";
         out << "            switch (target) {\n";
+        
+        std::set<uint32_t> emitted_cases;
+        
         func_idx = 0;
         for (const auto& [start_addr, func] : analyzer_.get_functions()) {
             std::string func_name = all_func_names[func_idx++];
             bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) && is_hle_function(symbols_->get_symbol(start_addr)));
             
-            out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+            if (emitted_cases.insert(start_addr).second) {
+                out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+            }
+            
             if (!is_hle) {
                 for (const auto& inst : func.instructions) {
                     ppc::Instruction ppc_inst(inst.opcode);
                     if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
                         uint32_t ret_addr = inst.address + 4;
-                        out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                        if (emitted_cases.insert(ret_addr).second) {
+                            out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                        }
                     }
                 }
             }
@@ -314,12 +322,21 @@ std::string Recompiler::generate_function_cpp(const analyzer::Function& func) {
 void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func, const std::string& func_name) {
     out << "void " << func_name << "(CPUContext& ctx) {\n";
 
+    // Map all instruction addresses in this function
+    std::set<uint32_t> valid_addrs;
+    for (const auto& inst : func.instructions) {
+        valid_addrs.insert(inst.address);
+    }
+
     // Mid-function entry point switch
-    std::vector<uint32_t> return_addrs;
+    std::set<uint32_t> return_addrs;
     for (const auto& inst : func.instructions) {
         ppc::Instruction ppc_inst(inst.opcode);
         if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
-            return_addrs.push_back(inst.address + 4);
+            uint32_t ret_addr = inst.address + 4;
+            if (valid_addrs.count(ret_addr)) {
+                return_addrs.insert(ret_addr);
+            }
         }
     }
     
