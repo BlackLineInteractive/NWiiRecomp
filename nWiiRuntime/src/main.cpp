@@ -43,15 +43,38 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    uint32_t arena_lo = 0x80000000;
     for (const auto& sec : exe.sections) {
+        uint32_t end_addr = sec.address + sec.size;
+        if (end_addr > arena_lo) {
+            arena_lo = end_addr;
+        }
         if (sec.is_bss) continue; // BSS is already zeroed in MMU
         for (size_t i = 0; i < sec.size; ++i) {
             ctx.mmu.write8(sec.address + i, sec.data[i]);
         }
     }
-    std::cout << "DOL loaded into memory." << std::endl;
     
-    // Initialize OS Globals (Core / Bus Frequency)
+    // Align ArenaLo to 32 bytes
+    arena_lo = (arena_lo + 31) & ~31;
+    
+    std::cout << "DOL loaded into memory. ArenaLo: 0x" << std::hex << arena_lo << std::dec << std::endl;
+    
+    // Initialize OS Globals (MEM1)
+    // 0x80000028 = Physical Memory Size (24MB)
+    ctx.mmu.write32(0x80000028, 24 * 1024 * 1024);
+    // 0x80000030 = ArenaLo
+    ctx.mmu.write32(0x80000030, arena_lo);
+    // 0x80000034 = ArenaHi (End of 24MB MEM1)
+    ctx.mmu.write32(0x80000034, 0x81800000);
+    
+    // Initialize OS Globals (MEM2) for Wii
+    // 0x80000310 = Physical MEM2 Size (64MB)
+    ctx.mmu.write32(0x80000310, 64 * 1024 * 1024);
+    // 0x80000314 = MEM2 ArenaLo
+    ctx.mmu.write32(0x80000314, 0x90000000);
+    // 0x80000318 = MEM2 ArenaHi
+    ctx.mmu.write32(0x80000318, 0x94000000);
     // Bus Frequency = 243 MHz
     ctx.mmu.write32(0x800000F8, 243000000);
     // CPU Frequency = 729 MHz
