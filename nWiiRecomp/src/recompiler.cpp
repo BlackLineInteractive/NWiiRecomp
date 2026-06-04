@@ -408,8 +408,10 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.gpr[" << rD << "] = ctx.srr1; // mfsrr1 r" << rD << "\n";
         } else if (spr >= 912 && spr <= 919) {
             out << "    ctx.gpr[" << rD << "] = ctx.gqr[" << (spr - 912) << "]; // mfgqr" << (spr - 912) << " r" << rD << "\n";
+        } else if (spr == 1) {
+            out << "    ctx.gpr[" << rD << "] = ctx.xer; // mfxer r" << rD << "\n";
         } else {
-            out << "    // TODO: mfspr r" << rD << ", " << spr << "\n";
+            out << "    std::cerr << \"UNIMPLEMENTED mfspr r\" << " << rD << " << \", \" << " << spr << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
         }
     } else if (ppc_inst.opcode() == 31 && ppc_inst.extended_opcode() == 467) {
         // mtspr
@@ -427,8 +429,10 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.srr1 = ctx.gpr[" << rS << "]; // mtsrr1 r" << rS << "\n";
         } else if (spr >= 912 && spr <= 919) {
             out << "    ctx.gqr[" << (spr - 912) << "] = ctx.gpr[" << rS << "]; // mtgqr" << (spr - 912) << " r" << rS << "\n";
+        } else if (spr == 1) {
+            out << "    ctx.xer = ctx.gpr[" << rS << "]; // mtxer r" << rS << "\n";
         } else {
-            out << "    // TODO: mtspr " << spr << ", r" << rS << "\n";
+            out << "    // unhandled mtspr " << spr << "\n"; // Usually safe to ignore unknown MTSPRs for now
         }
     } else if (ppc_inst.opcode() == 31 && ppc_inst.extended_opcode() == 0) {
         // CMPW crD, rA, rB
@@ -779,7 +783,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         } else if (xo == 18) {
             out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA << "] / ctx.fpr[" << fB << "]); // fdivs f" << fD << ", f" << fA << ", f" << fB << "\n";
         } else {
-            out << "    // TODO: implement Opcode 59 XO " << xo << "\n";
+            out << "    std::cerr << \"UNIMPLEMENTED Opcode 59 XO \" << " << xo << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
         }
     } else if (ppc_inst.opcode() == 63) {
         uint32_t xo = (ppc_inst.value() >> 1) & 0x3FF;
@@ -795,7 +799,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.cr[" << crfD << "].eq = (ctx.fpr[" << fA << "] == ctx.fpr[" << fB << "]);\n";
             out << "    ctx.cr[" << crfD << "].so = std::isnan(ctx.fpr[" << fA << "]) || std::isnan(ctx.fpr[" << fB << "]);\n";
         } else {
-            out << "    // TODO: implement Opcode 63 XO " << xo << "\n";
+            out << "    std::cerr << \"UNIMPLEMENTED Opcode 63 XO \" << " << xo << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
         }
     } else if (ppc_inst.opcode() == 20) {
         // rlwimi
@@ -856,13 +860,13 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.cr[" << crfD << "].lt = ((int32_t)ctx.gpr[" << rA << "] < (int32_t)ctx.gpr[" << rB << "]);\n";
             out << "    ctx.cr[" << crfD << "].gt = ((int32_t)ctx.gpr[" << rA << "] > (int32_t)ctx.gpr[" << rB << "]);\n";
             out << "    ctx.cr[" << crfD << "].eq = (ctx.gpr[" << rA << "] == ctx.gpr[" << rB << "]);\n";
-            out << "    ctx.cr[" << crfD << "].so = false;\n"; // TODO: xer_so
+            out << "    ctx.cr[" << crfD << "].so = (ctx.xer >> 31) & 1;\n";
         } else if (xo == 32) { // cmplw
             uint32_t crfD = rD >> 2;
             out << "    ctx.cr[" << crfD << "].lt = (ctx.gpr[" << rA << "] < ctx.gpr[" << rB << "]);\n";
             out << "    ctx.cr[" << crfD << "].gt = (ctx.gpr[" << rA << "] > ctx.gpr[" << rB << "]);\n";
             out << "    ctx.cr[" << crfD << "].eq = (ctx.gpr[" << rA << "] == ctx.gpr[" << rB << "]);\n";
-            out << "    ctx.cr[" << crfD << "].so = false;\n"; // TODO: xer_so
+            out << "    ctx.cr[" << crfD << "].so = (ctx.xer >> 31) & 1;\n";
         } else if (xo == 11) { // mulhwu
             out << "    ctx.gpr[" << rD << "] = (uint32_t)(((uint64_t)ctx.gpr[" << rA << "] * (uint64_t)ctx.gpr[" << rB << "]) >> 32); // mulhwu\n";
             if (ppc_inst.value() & 1) { // Rc
@@ -941,50 +945,74 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 out << "    ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
             }
         } else if (xo == 10) { // addc
-            out << "    uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)ctx.gpr[" << rB << "];\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)ctx.gpr[" << rB << "];\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 8) { // subfc
-            out << "    uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)ctx.gpr[" << rB << "] + 1;\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)ctx.gpr[" << rB << "] + 1;\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 266) { // add
             out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
             if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
         } else if (xo == 138) { // adde
-            out << "    uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)ctx.gpr[" << rB << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)ctx.gpr[" << rB << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 136) { // subfe
-            out << "    uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)ctx.gpr[" << rB << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)ctx.gpr[" << rB << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 202) { // addze
-            out << "    uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 200) { // subfze
-            out << "    uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 234) { // addme
-            out << "    uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
         } else if (xo == 232) { // subfme
-            out << "    uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)res;\n";
-            out << "    ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
-            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    {\n";
+            out << "        uint64_t res = (uint64_t)(~ctx.gpr[" << rA << "]) + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
+            out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+            out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // Set CA bit\n";
+            if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+            out << "    }\n";
+        } else if (xo == 83) { // mfmsr
+            out << "    {\n";
+            out << "        ctx.gpr[" << ppc_inst.rd() << "] = 0; // mfmsr stub\n";
+            out << "    }\n";
+        } else if (xo == 146) { // mtmsr
+            out << "    {\n";
+            out << "        // mtmsr stub (ignore)\n";
+            out << "    }\n";
         } else {
-            out << "    // TODO: implement opcode 31 xo " << xo << "\n";
+            out << "    std::cerr << \"UNIMPLEMENTED Opcode 31 XO \" << " << xo << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
         }
     } else if (ppc_inst.opcode() == 24) { // ori
         out << "    ctx.gpr[" << ppc_inst.ra() << "] = ctx.gpr[" << ppc_inst.rs() << "] | " << ppc_inst.uimm() << "; // ori\n";
@@ -1083,7 +1111,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         } else if (xo_10 == 96) {
             out << "    ctx.ps_cmpo1(" << (frD >> 2) << ", " << frA << ", " << frB << ");\n";
         } else {
-            out << "    // TODO: implement opcode 4 (ps_*) xo=" << xo << ", xo_10=" << xo_10 << "\n";
+            out << "    std::cerr << \"UNIMPLEMENTED Opcode 4 (ps_*) XO \" << " << xo << " << \" XO_10 \" << " << xo_10 << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
             out << "    ctx.fpr[" << frD << "] = 0.0;\n";
             out << "    ctx.ps1[" << frD << "] = 0.0;\n";
         }
