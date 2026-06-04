@@ -50,7 +50,7 @@ uint32_t Analyzer::read_data32(uint32_t address) const {
     return 0;
 }
 
-void Analyzer::analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uint32_t>& insts, std::queue<uint32_t>& block_queue) {
+void Analyzer::analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uint32_t>& insts, std::queue<uint32_t>& block_queue, std::set<uint32_t>& jump_targets) {
     // Scan backwards from bctr_pc to find mtctr
     int32_t mtctr_reg = -1;
     uint32_t curr_pc = bctr_pc - 4;
@@ -128,6 +128,7 @@ void Analyzer::analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uin
             if (std::abs(diff) > 0x100000) break;
             
             block_queue.push(ptr);
+            jump_targets.insert(ptr);
             valid_targets++;
             scan_addr += 4;
             
@@ -190,6 +191,7 @@ void Analyzer::analyze() {
         std::map<uint32_t, uint32_t> insts;
         std::queue<uint32_t> block_queue;
         std::set<uint32_t> visited_blocks;
+        std::set<uint32_t> local_jump_targets;
         
         block_queue.push(func_start);
 
@@ -220,7 +222,7 @@ void Analyzer::analyze() {
                 } else if (inst.is_unconditional_indirect_branch()) {
                     // It's a bctr or bclr
                     if (inst.opcode() == 19 && inst.extended_opcode() == 528) { // bctr
-                        analyze_jump_table(current_pc, insts, block_queue);
+                        analyze_jump_table(current_pc, insts, block_queue, local_jump_targets);
                     }
                     break;
                 } else if (inst.is_unconditional_branch()) {
@@ -258,9 +260,10 @@ void Analyzer::analyze() {
         func.start_address = min_pc;
         func.end_address = max_pc + 4;
         
-        for (auto const& [addr, raw] : insts) {
-            func.instructions.push_back({addr, raw});
+        for (const auto& [addr, op] : insts) {
+            func.instructions.push_back({addr, op});
         }
+        func.jump_table_targets = local_jump_targets;
         
         functions_[func_start] = func;
 

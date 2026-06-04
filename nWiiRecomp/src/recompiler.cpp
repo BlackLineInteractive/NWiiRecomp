@@ -126,12 +126,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "// --- Entry Point Wrapper ---\n";
         out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
-        out << "    int jmp_val = setjmp(ctx.jump_env);\n";
-        out << "    if (jmp_val != 0) { ctx.pc = ctx.exception_pc; }\n";
         out << "    while (ctx.pc != 0) {\n";
-        out << "        uint32_t target = ctx.pc;\n";
-        out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "            switch (target) {\n";
+        out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
+        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << "Dispatcher PC: 0x" << std::hex << target << std::endl;\n";
+        out << "        switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
         
@@ -142,26 +140,31 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             
             if (emitted_cases.insert(start_addr).second) {
                 if (is_hle) {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.exception_pc = ctx.lr; longjmp(ctx.jump_env, 1);\n";
+                    out << "            case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.pc = ctx.lr; break;\n";
                 } else {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                    out << "            case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                 }
             }
             
             if (!is_hle) {
                 for (const auto& inst : func.instructions) {
                     ppc::Instruction ppc_inst(inst.opcode);
-                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
+                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17) {
                         uint32_t ret_addr = inst.address + 4;
                         if (emitted_cases.insert(ret_addr).second) {
-                            out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                            out << "            case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                         }
+                    }
+                }
+                for (uint32_t jump_target : func.jump_table_targets) {
+                    if (emitted_cases.insert(jump_target).second) {
+                        out << "            case 0x" << std::hex << std::uppercase << jump_target << std::dec << ": " << func_name << "(ctx); break;\n";
                     }
                 }
             }
         }
-        out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
-        out << "            }\n";
+        out << "            default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
+        out << "        }\n";
         out << "    }\n";
         out << "}\n";
         out.close();
@@ -219,12 +222,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "\n// --- Entry Point Wrapper ---\n";
         out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
-        out << "    int jmp_val = setjmp(ctx.jump_env);\n";
-        out << "    if (jmp_val != 0) { ctx.pc = ctx.exception_pc; }\n";
         out << "    while (ctx.pc != 0) {\n";
-        out << "        uint32_t target = ctx.pc;\n";
-        out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "            switch (target) {\n";
+        out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
+        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << "Dispatcher PC: 0x" << std::hex << target << std::endl;\n";
+        out << "        switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
         
@@ -235,26 +236,31 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             
             if (emitted_cases.insert(start_addr).second) {
                 if (is_hle) {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.exception_pc = ctx.lr; longjmp(ctx.jump_env, 1);\n";
+                    out << "            case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.pc = ctx.lr; break;\n";
                 } else {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                    out << "            case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                 }
             }
             
             if (!is_hle) {
                 for (const auto& inst : func.instructions) {
                     ppc::Instruction ppc_inst(inst.opcode);
-                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17 || (ppc_inst.opcode() == 19 && ppc_inst.extended_opcode() == 50)) {
+                    if (ppc_inst.is_branch_link() || ppc_inst.opcode() == 17) {
                         uint32_t ret_addr = inst.address + 4;
                         if (emitted_cases.insert(ret_addr).second) {
-                            out << "                case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
+                            out << "            case 0x" << std::hex << std::uppercase << ret_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                         }
+                    }
+                }
+                for (uint32_t jump_target : func.jump_table_targets) {
+                    if (emitted_cases.insert(jump_target).second) {
+                        out << "            case 0x" << std::hex << std::uppercase << jump_target << std::dec << ": " << func_name << "(ctx); break;\n";
                     }
                 }
             }
         }
-        out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
-        out << "            }\n";
+        out << "            default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
+        out << "        }\n";
         out << "    }\n";
         out << "}\n";
     }
@@ -532,7 +538,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                                      [target](const auto& i) { return i.address == target; }) != func.instructions.end();
 
         if (target <= inst.address && is_local) {
-            out << "    ++ctx.inst_count;\n";
+            out << "    ++ctx.inst_count;\n"; out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << \"Spinning at PC: 0x\" << std::hex << 0x" << std::uppercase << std::hex << inst.address << std::dec << " << std::endl; }\n";
         }
 
         std::string ext_name;
@@ -592,9 +598,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 }
             } else {
                 if (cond_expr == "true") {
-                    out << "    ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1);\n";
+                    out << "    ctx.pc = 0x" << std::hex << target << std::dec << "; return;\n";
                 } else {
-                    out << "    if (" << cond_expr << ") { ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1); }\n";
+                    out << "    if (" << cond_expr << ") { ctx.pc = 0x" << std::hex << target << std::dec << "; return; }\n";
                 }
             }
         }
@@ -608,7 +614,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                                      [target](const auto& i) { return i.address == target; }) != func.instructions.end();
 
         if (target <= inst.address && is_local) {
-            out << "    ++ctx.inst_count;\n";
+            out << "    ++ctx.inst_count;\n"; out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << \"Spinning at PC: 0x\" << std::hex << 0x" << std::uppercase << std::hex << inst.address << std::dec << " << std::endl; }\n";
         }
         
         if (symbols_ && symbols_->has_symbol(target)) {
@@ -631,10 +637,12 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                     }
                 }
                 if (is_mapped) {
+                    bool target_is_hle = (symbols_ && symbols_->has_symbol(target) && is_hle_function(symbols_->get_symbol(target)));
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << target_name << "(ctx);\n";
+                    if (target_is_hle) out << "    ctx.pc = ctx.lr;\n";
+                    out << "    if (ctx.pc != 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << ") return;\n";
                 } else {
-                    out << "    ctx.pc = 0x" << std::hex << target << std::dec << ";\n";
-                    out << "    ctx.exception_pc = ctx.pc; longjmp(ctx.jump_env, 1); // bl to unmapped target\n";
+                    out << "    ctx.pc = 0x" << std::hex << target << std::dec << "; return; // bl to unmapped target\n";
                 }
             }
         } else {
@@ -650,7 +658,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 if (is_mapped) {
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << target_name << "(ctx); return;\n";
                 } else {
-                    out << "    ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1);\n";
+                    out << "    ctx.pc = 0x" << std::hex << target << std::dec << "; return;\n";
                 }
             }
         }
@@ -659,7 +667,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         if (xo == 150) { // isync
             out << "    // isync\n";
         } else if (xo == 50) { // rfi
-            out << "    ctx.exception_pc = ctx.srr0; longjmp(ctx.jump_env, 1); // rfi\n";
+            out << "    ctx.pc = ctx.srr0; return; // rfi\n";
         } else if (xo == 16 || xo == 528) { // BCLR (16) and BCCTR (528)
             uint32_t bo = ppc_inst.bo();
             uint32_t bi = ppc_inst.bi();
@@ -703,9 +711,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             if (ppc_inst.lk()) out << "    ctx.lr = 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << "; // save return address\n";
 
             if (cond_expr == "true") {
-                out << "    ctx.exception_pc = " << target_reg << "; longjmp(ctx.jump_env, 1);\n";
+                out << "    ctx.pc = " << target_reg << "; return;\n";
             } else {
-                out << "    if (" << cond_expr << ") { ctx.exception_pc = " << target_reg << "; longjmp(ctx.jump_env, 1); }\n";
+                out << "    if (" << cond_expr << ") { ctx.pc = " << target_reg << "; return; }\n";
             }
         } else if (xo == 257 || xo == 129 || xo == 289 || xo == 225 || xo == 33 || xo == 449 || xo == 417 || xo == 193) {
             uint32_t crbD = ppc_inst.rd();
@@ -891,28 +899,40 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             else out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.gpr[" << rS << "]); // stwx\n";
         } else if (xo == 40) {
             out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << rB << "] - ctx.gpr[" << rA << "]; // subf\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
         } else if (xo == 235) {
             out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << rA << "] * ctx.gpr[" << rB << "]; // mullw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
         } else if (xo == 491) {
             out << "    if (ctx.gpr[" << rB << "] != 0) ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA << "] / (int32_t)ctx.gpr[" << rB << "]); // divw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
         } else if (xo == 459) {
             out << "    if (ctx.gpr[" << rB << "] != 0) ctx.gpr[" << rD << "] = ctx.gpr[" << rA << "] / ctx.gpr[" << rB << "]; // divwu\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
         } else if (xo == 954) {
             out << "    ctx.gpr[" << rA << "] = (uint32_t)(int32_t)(int8_t)ctx.gpr[" << rS << "]; // extsb\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 922) {
             out << "    ctx.gpr[" << rA << "] = (uint32_t)(int32_t)(int16_t)ctx.gpr[" << rS << "]; // extsh\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 28) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] & ctx.gpr[" << rB << "]; // and\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 60) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] & ~ctx.gpr[" << rB << "]; // andc\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 316) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] ^ ctx.gpr[" << rB << "]; // xor\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 24) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] << (ctx.gpr[" << rB << "] & 0x1F); // slw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 536) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] >> (ctx.gpr[" << rB << "] & 0x1F); // srw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 792) {
             out << "    ctx.gpr[" << rA << "] = (uint32_t)((int32_t)ctx.gpr[" << rS << "] >> (ctx.gpr[" << rB << "] & 0x1F)); // sraw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n"; }
         } else if (xo == 26) {
             out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] == 0 ? 32 : std::countl_zero(ctx.gpr[" << rS << "]); // cntlzw\n";
             if (ppc_inst.value() & 1) { // Rc bit
