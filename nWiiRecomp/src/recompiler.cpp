@@ -794,8 +794,46 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         uint32_t fB = ppc_inst.rb();
         uint32_t fA = ppc_inst.ra();
         if (xo == 72) {
-            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fB << "]; // fmr f" << fD << ", f" << fB << "\n";
-        } else if (xo == 0 || xo == 32) { // fcmpu or fcmpo
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fB << "]; // fmr\n";
+        } else if (xo == 40) { // fneg
+            out << "    ctx.fpr[" << fD << "] = -ctx.fpr[" << fB << "]; // fneg\n";
+        } else if (xo == 264) { // fabs
+            out << "    ctx.fpr[" << fD << "] = std::fabs(ctx.fpr[" << fB << "]); // fabs\n";
+        } else if (xo == 136) { // fnabs
+            out << "    ctx.fpr[" << fD << "] = -std::fabs(ctx.fpr[" << fB << "]); // fnabs\n";
+        } else if (xo == 12) { // frsp - round to single
+            out << "    ctx.fpr[" << fD << "] = (double)(float)ctx.fpr[" << fB << "]; // frsp\n";
+        } else if (xo == 15) { // fctiwz
+            out << "    ctx.fpr[" << fD << "] = (double)(int32_t)ctx.fpr[" << fB << "]; // fctiwz\n";
+        } else if (xo == 14) { // fctiw
+            out << "    ctx.fpr[" << fD << "] = (double)(int32_t)std::nearbyint(ctx.fpr[" << fB << "]); // fctiw\n";
+        } else if (xo == 583) { // mffs
+            out << "    ctx.fpr[" << fD << "] = 0.0; // mffs stub\n";
+        } else if (xo == 711) { // mtfsf
+            out << "    // mtfsf stub (ignore FPSCR write)\n";
+        } else if (xo == 26) { // frsqrte
+            out << "    ctx.fpr[" << fD << "] = 1.0 / std::sqrt(ctx.fpr[" << fB << "]); // frsqrte\n";
+        } else if (xo == 24) { // fre
+            out << "    ctx.fpr[" << fD << "] = 1.0 / ctx.fpr[" << fB << "]; // fre\n";
+        } else if (xo == 18) { // fdiv
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] / ctx.fpr[" << fB << "]; // fdiv\n";
+        } else if (xo == 20) { // fsub
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] - ctx.fpr[" << fB << "]; // fsub\n";
+        } else if (xo == 21) { // fadd
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] + ctx.fpr[" << fB << "]; // fadd\n";
+        } else if (xo == 25) { // fmul
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "]; // fmul\n";
+        } else if (xo == 29) { // fmadd
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] + ctx.fpr[" << fB << "]; // fmadd\n";
+        } else if (xo == 28) { // fmsub
+            out << "    ctx.fpr[" << fD << "] = ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] - ctx.fpr[" << fB << "]; // fmsub\n";
+        } else if (xo == 31) { // fnmadd
+            out << "    ctx.fpr[" << fD << "] = -(ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] + ctx.fpr[" << fB << "]); // fnmadd\n";
+        } else if (xo == 30) { // fnmsub
+            out << "    ctx.fpr[" << fD << "] = -(ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] - ctx.fpr[" << fB << "]); // fnmsub\n";
+        } else if (xo == 23) { // fsel
+            out << "    ctx.fpr[" << fD << "] = (ctx.fpr[" << fA << "] >= 0.0) ? ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] : ctx.fpr[" << fB << "]; // fsel\n";
+        } else if (xo == 0 || xo == 32) { // fcmpu / fcmpo
             uint32_t crfD = fD >> 2;
             out << "    ctx.cr[" << crfD << "].lt = (ctx.fpr[" << fA << "] < ctx.fpr[" << fB << "]);\n";
             out << "    ctx.cr[" << crfD << "].gt = (ctx.fpr[" << fA << "] > ctx.fpr[" << fB << "]);\n";
@@ -1007,13 +1045,96 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             if (ppc_inst.value() & 1) { out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
             out << "    }\n";
         } else if (xo == 83) { // mfmsr
-            out << "    {\n";
-            out << "        ctx.gpr[" << ppc_inst.rd() << "] = 0; // mfmsr stub\n";
-            out << "    }\n";
+            out << "    ctx.gpr[" << ppc_inst.rd() << "] = 0; // mfmsr stub\n";
         } else if (xo == 146) { // mtmsr
-            out << "    {\n";
-            out << "        // mtmsr stub (ignore)\n";
-            out << "    }\n";
+            out << "    // mtmsr stub (ignore)\n";
+        } else if (xo == 124) { // nor
+            out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] | ctx.gpr[" << rB << "]); // nor\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 476) { // nand
+            out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] & ctx.gpr[" << rB << "]); // nand\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 284) { // eqv
+            out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] ^ ctx.gpr[" << rB << "]); // eqv\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 412) { // orc
+            out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << rA << "] | ~ctx.gpr[" << rB << "]; // orc\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 20) { // lwarx
+            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lwarx\n";
+        } else if (xo == 150) { // stwcx
+            out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.gpr[" << ppc_inst.rs() << "]); // stwcx\n";
+            out << "    ctx.cr[0].eq = true; ctx.cr[0].lt = false; ctx.cr[0].gt = false; // always succeed\n";
+        } else if (xo == 119) { // lbzux
+            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read8(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lbzux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 311) { // lhzux
+            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhzux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 343) { // lhax
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhax\n";
+        } else if (xo == 375) { // lhaux
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhaux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 247) { // stbux
+            out << "    ctx.mmu.write8(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]); // stbux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 439) { // sthux
+            out << "    ctx.mmu.write16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sthux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 792) { // sraw
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA << "] >> ctx.gpr[" << rB << "]); // sraw\n";
+        } else if (xo == 824) { // srawi
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA << "] >> " << ((ppc_inst.value() >> 11) & 0x1F) << "); // srawi\n";
+        } else if (xo == 922) { // extsh
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.gpr[" << rA << "]; // extsh\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 954) { // extsb
+            out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int8_t)ctx.gpr[" << rA << "]; // extsb\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 1019) { // divw
+            out << "    ctx.gpr[" << rD << "] = (ctx.gpr[" << rB << "] != 0) ? (uint32_t)((int32_t)ctx.gpr[" << rA << "] / (int32_t)ctx.gpr[" << rB << "]) : 0; // divw\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 491) { // divwu
+            out << "    ctx.gpr[" << rD << "] = (ctx.gpr[" << rB << "] != 0) ? ctx.gpr[" << rA << "] / ctx.gpr[" << rB << "] : 0; // divwu\n";
+            if (ppc_inst.value() & 1) { out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n"; }
+        } else if (xo == 535) { // lfsx
+            uint32_t frD2 = ppc_inst.rd();
+            out << "    ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfsx\n";
+        } else if (xo == 567) { // lfsux
+            uint32_t frD2 = ppc_inst.rd();
+            out << "    ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfsux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 599) { // lfdx
+            uint32_t frD2 = ppc_inst.rd();
+            out << "    ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfdx\n";
+        } else if (xo == 631) { // lfdux
+            uint32_t frD2 = ppc_inst.rd();
+            out << "    ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfdux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 663) { // stfsx
+            out << "    ctx.mmu.write_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (float)ctx.fpr[" << ppc_inst.rs() << "]); // stfsx\n";
+        } else if (xo == 695) { // stfsux
+            out << "    ctx.mmu.write_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (float)ctx.fpr[" << ppc_inst.rs() << "]); // stfsux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 727) { // stfdx
+            out << "    ctx.mmu.write_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.fpr[" << ppc_inst.rs() << "]); // stfdx\n";
+        } else if (xo == 759) { // stfdux
+            out << "    ctx.mmu.write_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.fpr[" << ppc_inst.rs() << "]); // stfdux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+        } else if (xo == 983) { // stfiwx - store float as int word
+            out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (uint32_t)(int32_t)ctx.fpr[" << ppc_inst.rs() << "]); // stfiwx\n";
+        } else if (xo == 790) { // lhbrx - load halfword byte-reversed
+            out << "    { uint16_t v = ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); ctx.gpr[" << rD << "] = ((v&0xFF)<<8)|((v>>8)&0xFF); } // lhbrx\n";
+        } else if (xo == 534) { // lwbrx - load word byte-reversed
+            out << "    { uint32_t v = ctx.mmu.read32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); ctx.gpr[" << rD << "] = __builtin_bswap32(v); } // lwbrx\n";
+        } else if (xo == 662) { // stwbrx
+            out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], __builtin_bswap32(ctx.gpr[" << ppc_inst.rs() << "])); // stwbrx\n";
+        } else if (xo == 1014) { // dcbz
+            out << "    // dcbz (data cache block zero) - stub\n";
+        } else if (xo == 55) { // lwzux
+            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lwzux\n";
+            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
         } else {
             out << "    std::cerr << \"UNIMPLEMENTED Opcode 31 XO \" << " << xo << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
         }
