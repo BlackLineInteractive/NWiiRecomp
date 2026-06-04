@@ -23,6 +23,8 @@ static TextEditor code_editor;
 static TextEditor config_editor;
 static TextEditor ghidra_editor;
 static TextEditor log_editor;  // TextEditor for logs - supports text selection
+static TextEditor runtime_log_editor;
+static std::string last_runtime_log;
 static bool editors_initialized = false;
 static bool show_settings_window = false;
 static bool config_editor_needs_sync = false;
@@ -140,14 +142,29 @@ static void DrawSettingsWindow(StudioState& state) {
         }
 
         if (ImGui::CollapsingHeader("Manual (Documentation)", ImGuiTreeNodeFlags_None)) {
-            ImGui::TextWrapped("NWiiRecomp Studio Professional Workflow:");
-            ImGui::BulletText("Step 1: Use 'Open Unpacked Game' to load a dump with a valid main.dol.");
-            ImGui::BulletText("Step 2: Optionally provide a Ghidra symbols CSV in the Workspace tab.");
-            ImGui::BulletText("Step 3: Wait for the Static Analyzer to identify all PowerPC functions.");
-            ImGui::BulletText("Step 4: Use 'Generate C++ Project' to transpile the game to native code.");
-            ImGui::BulletText("Step 5: Navigate to the 'Runtime' tab to compile and launch the game natively.");
+            ImGui::TextColored(ImVec4(0.0f, 0.6f, 1.0f, 1.0f), "NWiiRecomp Studio - User Manual");
+            ImGui::Separator();
             ImGui::Spacing();
-            ImGui::TextWrapped("The Runtime engine uses HLE (High Level Emulation) for OS, GX, and AX subsystems. You can view the memory allocations directly in the Runtime logs.");
+
+            if (ImGui::TreeNode("1. Project Setup & Analysis")) {
+                ImGui::BulletText("Load Executable: Use File -> Open Unpacked Game to select a directory containing main.dol.");
+                ImGui::BulletText("Symbol Mapping: Supply a Ghidra-exported CSV to map memory addresses to function names.");
+                ImGui::BulletText("Static Analysis: Press F5 or 'Run Analysis' to disassemble PowerPC instructions and generate the Control Flow Graph (CFG).");
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("2. High Level Emulation (HLE)")) {
+                ImGui::BulletText("OS Subsystem: Automatically intercepts OSInit, OSAlloc, and thread management to prevent infinite lock loops.");
+                ImGui::BulletText("Memory Arena: The internal memory manager handles standard MEM1/MEM2 allocations automatically.");
+                ImGui::BulletText("Graphics (GX): Display lists sent to the FIFO at 0xCC008000 are captured for backend rendering.");
+                ImGui::BulletText("Audio (AX): DSP interrupts are stubbed to prevent audio thread hangs.");
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("3. Recompilation & Execution")) {
+                ImGui::BulletText("Generate C++: Press F6 to emit native C++ code for all identified PPC functions.");
+                ImGui::BulletText("Runtime: Navigate to the 'Runtime' workspace tab to compile the CMake project and launch the standalone engine.");
+                ImGui::TreePop();
+            }
+            ImGui::Spacing();
         }
 
         ImGui::Spacing();
@@ -190,6 +207,10 @@ void GUI::DrawStudio(StudioState& state) {
         log_editor.SetPalette(TextEditor::GetDarkPalette());
         log_editor.SetReadOnly(true);
         log_editor.SetShowWhitespaces(false);
+
+        runtime_log_editor.SetPalette(TextEditor::GetDarkPalette());
+        runtime_log_editor.SetReadOnly(true);
+        runtime_log_editor.SetShowWhitespaces(false);
 
         mem_edit.ReadOnly = true;
         mem_edit.OptShowAscii = true;
@@ -608,10 +629,36 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::Spacing();
             if (ImGui::Button("Build & Launch Game", ImVec2(250, 40))) {
                 state.Log("Starting Recompiled Game in background...");
-                // Note: The path here might need adjustment based on user environment
-                std::system("cd export/build && cmake .. && make -j8 && ./RecompiledGame \"../../NO_GitHub/Recomp_game(NO_PUBLIK)/SHSM-Extract\" &");
+                // Launch the game and pipe output to a file that we can read.
+                std::system("cd export/build && cmake .. && make -j8 && ./RecompiledGame \"../../NO_GitHub/Recomp_game(NO_PUBLIK)/SHSM-Extract\" > output.log 2>&1 &");
             }
             ShowTooltip("Compiles the generated C++ project and starts the game engine natively.", state);
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.4f, 1.0f), "Runtime Output Logs:");
+            ImGui::Spacing();
+
+            // Auto-refresh the runtime log
+            static float timer = 0.0f;
+            timer += ImGui::GetIO().DeltaTime;
+            if (timer > 1.0f) {
+                timer = 0.0f;
+                std::ifstream ifs("export/build/output.log");
+                if (ifs.good()) {
+                    std::stringstream buffer;
+                    buffer << ifs.rdbuf();
+                    std::string content = buffer.str();
+                    if (content != last_runtime_log) {
+                        last_runtime_log = content;
+                        runtime_log_editor.SetText(content);
+                        // Auto-scroll to bottom functionality could go here if the TextEditor supported it easily.
+                    }
+                }
+            }
+
+            runtime_log_editor.Render("RuntimeLogEditor");
+
             ImGui::EndTabItem();
         }
 
@@ -660,6 +707,8 @@ void GUI::DrawStudio(StudioState& state) {
 
     ImGui::End();
 
-    // Watermark
-    ImGui::GetForegroundDrawList()->AddText(ImVec2(ImGui::GetIO().DisplaySize.x - 220, ImGui::GetIO().DisplaySize.y - 30), IM_COL32(180, 180, 180, 150), "Made by BlackLine Interactive");
+    // Stylish Watermark
+    ImVec2 w_pos = ImVec2(ImGui::GetIO().DisplaySize.x - 260, ImGui::GetIO().DisplaySize.y - 35);
+    ImGui::GetForegroundDrawList()->AddText(ImVec2(w_pos.x+1, w_pos.y+1), IM_COL32(0, 0, 0, 200), "Made by Blackline Interactive");
+    ImGui::GetForegroundDrawList()->AddText(w_pos, IM_COL32(200, 200, 200, 150), "Made by Blackline Interactive");
 }

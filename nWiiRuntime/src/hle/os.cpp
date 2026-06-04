@@ -86,4 +86,58 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
 
 } // extern "C"
 
+#include <chrono>
+
+static uint64_t get_os_time() {
+    auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+}
+
+extern "C" {
+
+// Interrupt Management
+uint32_t OSDisableInterrupts(CPUContext& ctx) {
+    uint32_t old_msr = ctx.msr;
+    ctx.msr &= ~(1 << 15); // Clear EE (External Interrupt Enable) bit
+    ctx.gpr[3] = old_msr;
+    return old_msr;
+}
+
+uint32_t OSEnableInterrupts(CPUContext& ctx) {
+    uint32_t old_msr = ctx.msr;
+    ctx.msr |= (1 << 15); // Set EE bit
+    ctx.gpr[3] = old_msr;
+    return old_msr;
+}
+
+uint32_t OSRestoreInterrupts(CPUContext& ctx) {
+    uint32_t prev_state = ctx.gpr[3];
+    uint32_t old_msr = ctx.msr;
+    if (prev_state & (1 << 15)) {
+        ctx.msr |= (1 << 15);
+    } else {
+        ctx.msr &= ~(1 << 15);
+    }
+    ctx.gpr[3] = old_msr;
+    return old_msr;
+}
+
+// Timer Management
+void OSGetTime(CPUContext& ctx) {
+    uint64_t t = get_os_time();
+    // Return 64-bit time: r3 = upper 32 bits, r4 = lower 32 bits
+    ctx.gpr[3] = (uint32_t)(t >> 32);
+    ctx.gpr[4] = (uint32_t)(t & 0xFFFFFFFF);
+}
+
+void OSTicksToMilliseconds(CPUContext& ctx) {
+    uint64_t ticks = ((uint64_t)ctx.gpr[3] << 32) | ctx.gpr[4];
+    // In Gekko, timebase ticks at 1/4 of bus speed (Bus = 162 MHz -> TB = 40.5 MHz)
+    // 40,500 ticks per millisecond
+    uint64_t ms = ticks / 40500;
+    ctx.gpr[3] = (uint32_t)(ms >> 32);
+    ctx.gpr[4] = (uint32_t)(ms & 0xFFFFFFFF);
+}
+
+} // extern "C"
 

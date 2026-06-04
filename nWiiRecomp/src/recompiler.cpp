@@ -128,7 +128,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
         out << "    while (ctx.pc != 0) {\n";
         out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
-        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << "Dispatcher PC: 0x" << std::hex << target << std::endl;\n";
+        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << target << std::endl;\n";
         out << "        switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
@@ -224,7 +224,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
         out << "    while (ctx.pc != 0) {\n";
         out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
-        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << "Dispatcher PC: 0x" << std::hex << target << std::endl;\n";
+        out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % 100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << target << std::endl;\n";
         out << "        switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
