@@ -410,8 +410,11 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.gpr[" << rD << "] = ctx.gqr[" << (spr - 912) << "]; // mfgqr" << (spr - 912) << " r" << rD << "\n";
         } else if (spr == 1) {
             out << "    ctx.gpr[" << rD << "] = ctx.xer; // mfxer r" << rD << "\n";
+        } else if (spr >= 920 && spr <= 924) {
+            out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID " << spr << "\n";
         } else {
-            out << "    std::cerr << \"UNIMPLEMENTED mfspr r\" << " << rD << " << \", \" << " << spr << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; std::exit(1);\n";
+            out << "    std::cerr << \"[WARN] mfspr r\" << " << rD << " << \" spr=\" << " << spr << " << \" (stub=0)\\n\";\n";
+            out << "    ctx.gpr[" << rD << "] = 0; // unknown spr stub\n";
         }
     } else if (ppc_inst.opcode() == 31 && ppc_inst.extended_opcode() == 467) {
         // mtspr
