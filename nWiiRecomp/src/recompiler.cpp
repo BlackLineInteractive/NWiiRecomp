@@ -833,6 +833,10 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.fpr[" << fD << "] = -(ctx.fpr[" << fA << "] * ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] - ctx.fpr[" << fB << "]); // fnmsub\n";
         } else if (xo == 23) { // fsel
             out << "    ctx.fpr[" << fD << "] = (ctx.fpr[" << fA << "] >= 0.0) ? ctx.fpr[" << ((ppc_inst.value() >> 6) & 0x1F) << "] : ctx.fpr[" << fB << "]; // fsel\n";
+        } else if (xo == 38 || xo == 70) { // mtfsb1 / mtfsb0 - set/clear FPSCR bit stub
+            out << "    // mtfsb1/mtfsb0 stub (FPSCR ignored)\n";
+        } else if (xo == 64) { // mcrfs - move FPSCR field to CR stub
+            out << "    // mcrfs stub\n";
         } else if (xo == 0 || xo == 32) { // fcmpu / fcmpo
             uint32_t crfD = fD >> 2;
             out << "    ctx.cr[" << crfD << "].lt = (ctx.fpr[" << fA << "] < ctx.fpr[" << fB << "]);\n";
