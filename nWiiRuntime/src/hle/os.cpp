@@ -75,6 +75,15 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     return 0;
 }
 
+void HW_Reg_Write16(uint32_t addr, uint16_t val) {
+    HW_Reg_Write32(addr, val);
+}
+
+void HW_Reg_Write32(uint32_t addr, uint32_t val) {
+    // Ignore writes to hardware registers for now,
+    // to prevent crashes, unless they are specific handled registers.
+}
+
 } // extern "C"
 
 

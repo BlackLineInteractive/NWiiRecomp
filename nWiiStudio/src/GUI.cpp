@@ -10,6 +10,13 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+
+static void ShowTooltip(const char* text, StudioState& state) {
+    if (state.settings.showTooltips && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", text);
+    }
+}
 
 static MemoryEditor mem_edit;
 static TextEditor code_editor;
@@ -126,6 +133,21 @@ static void DrawSettingsWindow(StudioState& state) {
             ImGui::Checkbox("Start Maximized", &state.settings.maximized);
             ImGui::SliderInt("Default Width", &state.settings.windowWidth, 800, 3840);
             ImGui::SliderInt("Default Height", &state.settings.windowHeight, 600, 2160);
+        }
+
+        if (ImGui::CollapsingHeader("Features", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Show Tooltips (First Launch)", &state.settings.showTooltips);
+        }
+
+        if (ImGui::CollapsingHeader("Manual (Documentation)", ImGuiTreeNodeFlags_None)) {
+            ImGui::TextWrapped("NWiiRecomp Studio Professional Workflow:");
+            ImGui::BulletText("Step 1: Use 'Open Unpacked Game' to load a dump with a valid main.dol.");
+            ImGui::BulletText("Step 2: Optionally provide a Ghidra symbols CSV in the Workspace tab.");
+            ImGui::BulletText("Step 3: Wait for the Static Analyzer to identify all PowerPC functions.");
+            ImGui::BulletText("Step 4: Use 'Generate C++ Project' to transpile the game to native code.");
+            ImGui::BulletText("Step 5: Navigate to the 'Runtime' tab to compile and launch the game natively.");
+            ImGui::Spacing();
+            ImGui::TextWrapped("The Runtime engine uses HLE (High Level Emulation) for OS, GX, and AX subsystems. You can view the memory allocations directly in the Runtime logs.");
         }
 
         ImGui::Spacing();
@@ -429,6 +451,7 @@ void GUI::DrawStudio(StudioState& state) {
             if (ImGui::Button("Run Analysis", ImVec2(120, 30))) {
                 state.StartAnalysis();
             }
+            ShowTooltip("Start scanning the DOL file for PowerPC functions and references.", state);
         }
     }
     ImGui::End();
@@ -567,6 +590,7 @@ void GUI::DrawStudio(StudioState& state) {
                 config.path = ".";
                 ImGuiFileDialog::Instance()->OpenDialog("ChooseGhidraCSV", "Choose Ghidra CSV", ".csv", config);
             }
+            ShowTooltip("Import Ghidra symbol table for function names.", state);
             ImGui::SameLine();
             if (!state.symbolsPath.empty()) {
                 ImGui::TextDisabled("Loaded: %s", state.symbolsPath.c_str());
@@ -575,6 +599,19 @@ void GUI::DrawStudio(StudioState& state) {
             }
             ImGui::Separator();
             ghidra_editor.Render("GhidraEditor");
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("  Runtime  ")) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Manage and execute the Recompiled Game runtime.");
+            ImGui::Spacing();
+            if (ImGui::Button("Build & Launch Game", ImVec2(250, 40))) {
+                state.Log("Starting Recompiled Game in background...");
+                // Note: The path here might need adjustment based on user environment
+                std::system("cd export/build && cmake .. && make -j8 && ./RecompiledGame \"../../NO_GitHub/Recomp_game(NO_PUBLIK)/SHSM-Extract\" &");
+            }
+            ShowTooltip("Compiles the generated C++ project and starts the game engine natively.", state);
             ImGui::EndTabItem();
         }
 
@@ -622,4 +659,7 @@ void GUI::DrawStudio(StudioState& state) {
     log_editor.Render("LogEditor");
 
     ImGui::End();
+
+    // Watermark
+    ImGui::GetForegroundDrawList()->AddText(ImVec2(ImGui::GetIO().DisplaySize.x - 220, ImGui::GetIO().DisplaySize.y - 30), IM_COL32(180, 180, 180, 150), "Made by BlackLine Interactive");
 }

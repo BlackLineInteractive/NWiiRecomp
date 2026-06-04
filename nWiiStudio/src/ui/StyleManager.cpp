@@ -24,15 +24,21 @@ void SetupFonts(AppSettings& settings) {
     ImFont* loadedFont = nullptr;
 
     if (settings.selectedFont != "Default" && std::filesystem::exists(fontPath)) {
-        loadedFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), safeFontSize);
+        ImFontConfig config;
+        config.OversampleH = 3; // High quality horizontal oversampling
+        config.OversampleV = 2; // Vertical oversampling
+        config.PixelSnapH = true;
+        loadedFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), safeFontSize, &config);
         if (!loadedFont) {
             // TTF loading failed, use default
-            ImFontConfig config;
             config.SizePixels = safeFontSize;
             loadedFont = io.Fonts->AddFontDefault(&config);
         }
     } else {
         ImFontConfig config;
+        config.OversampleH = 3;
+        config.OversampleV = 2;
+        config.PixelSnapH = true;
         config.SizePixels = safeFontSize;
         loadedFont = io.Fonts->AddFontDefault(&config);
     }

@@ -38,6 +38,10 @@ struct AppSettings {
     // Custom theme colors
     float customBgBase[4] = {0.08f, 0.08f, 0.08f, 1.00f};
     float customAccent[4] = {0.00f, 0.48f, 0.80f, 1.00f};
+
+    // UI Features
+    bool showTooltips = true;
+    bool isFirstLaunch = true;
 };
 
 class StreamRedirector : public std::stringbuf {
@@ -167,11 +171,51 @@ public:
     }
 
     void LoadSettings() {
-        // Simple loading logic
+        try {
+            if (std::filesystem::exists("studio_settings.toml")) {
+                auto tbl = toml::parse_file("studio_settings.toml");
+                settings.theme = static_cast<ThemeMode>(tbl["theme"].value_or(static_cast<int>(ThemeMode::Nintendo)));
+                settings.fontSize = tbl["font_size"].value_or(15.0f);
+                settings.uiScale = tbl["ui_scale"].value_or(1.0f);
+                settings.selectedFont = tbl["selected_font"].value_or("Font_1.ttf");
+                settings.windowWidth = tbl["window_width"].value_or(1280);
+                settings.windowHeight = tbl["window_height"].value_or(720);
+                settings.maximized = tbl["maximized"].value_or(true);
+                
+                settings.isFirstLaunch = tbl["is_first_launch"].value_or(true);
+                settings.showTooltips = tbl["show_tooltips"].value_or(settings.isFirstLaunch);
+
+                if (settings.isFirstLaunch) {
+                    settings.isFirstLaunch = false; // Next time it won't be the first launch
+                }
+            } else {
+                settings.isFirstLaunch = true;
+                settings.showTooltips = true;
+            }
+        } catch(...) {
+            settings.isFirstLaunch = true;
+            settings.showTooltips = true;
+        }
     }
 
     void SaveSettings() {
-        // Simple saving logic
+        try {
+            toml::table tbl;
+            tbl.insert("theme", static_cast<int>(settings.theme));
+            tbl.insert("font_size", settings.fontSize);
+            tbl.insert("ui_scale", settings.uiScale);
+            tbl.insert("selected_font", settings.selectedFont);
+            tbl.insert("window_width", settings.windowWidth);
+            tbl.insert("window_height", settings.windowHeight);
+            tbl.insert("maximized", settings.maximized);
+            tbl.insert("is_first_launch", false); // Save false for subsequent launches
+            tbl.insert("show_tooltips", settings.showTooltips);
+
+            std::ofstream ofs("studio_settings.toml");
+            if (ofs.good()) {
+                ofs << tbl;
+            }
+        } catch(...) {}
     }
 
     void LoadUnpackedGame(const std::string& path) {

@@ -25,6 +25,8 @@ static bool is_hle_function(const std::string& name) {
 std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     std::vector<std::string> generated_files;
     
+    std::cout << "[Recompiler] Starting C++ generation. Total functions to emit: " << analyzer_.get_functions().size() << "\n";
+
     auto emit_headers = [](std::ostream& out) {
         out << "#include \"runtime/cpu_context.h\"\n";
         out << "#include <stdint.h>\n";
@@ -74,7 +76,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         
         for (const auto& [start_addr, func] : analyzer_.get_functions()) {
             if (count_in_current_file == 0) {
-                if (out.is_open()) out.close();
+                if (out.is_open()) {
+                    out.close();
+                    std::cout << "[Recompiler] Generated " << generated_files.back() << "\n";
+                }
                 std::stringstream ss;
                 ss << "output_" << file_idx++ << ".cpp";
                 std::string fname = ss.str();
@@ -97,7 +102,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
                 count_in_current_file = 0;
             }
         }
-        if (out.is_open()) out.close();
+        if (out.is_open()) {
+            out.close();
+            std::cout << "[Recompiler] Generated " << generated_files.back() << "\n";
+        }
         
         // Generate main_output.cpp
         std::string main_name = "main_output.cpp";
@@ -118,10 +126,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "// --- Entry Point Wrapper ---\n";
         out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
+        out << "    int jmp_val = setjmp(ctx.jump_env);\n";
+        out << "    if (jmp_val != 0) { ctx.pc = ctx.exception_pc; }\n";
         out << "    while (ctx.pc != 0) {\n";
         out << "        uint32_t target = ctx.pc;\n";
         out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "        try {\n";
         out << "            switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
@@ -133,7 +142,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             
             if (emitted_cases.insert(start_addr).second) {
                 if (is_hle) {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); throw (uint32_t)ctx.lr;\n";
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.exception_pc = ctx.lr; longjmp(ctx.jump_env, 1);\n";
                 } else {
                     out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                 }
@@ -153,13 +162,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         }
         out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
         out << "            }\n";
-        out << "        } catch (uint32_t new_pc) {\n";
-        out << "            ctx.pc = new_pc;\n";
-        out << "        }\n";
         out << "    }\n";
         out << "}\n";
         out.close();
-        
+        std::cout << "[Recompiler] Generated " << main_name << "\n";
     } else {
         // Monolithic generation
         std::string fname = "output.cpp";
@@ -213,10 +219,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         out << "\n// --- Entry Point Wrapper ---\n";
         out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
         out << "    ctx.pc = 0x" << std::hex << std::uppercase << entry_point << std::dec << ";\n";
+        out << "    int jmp_val = setjmp(ctx.jump_env);\n";
+        out << "    if (jmp_val != 0) { ctx.pc = ctx.exception_pc; }\n";
         out << "    while (ctx.pc != 0) {\n";
         out << "        uint32_t target = ctx.pc;\n";
         out << "        if (target < 0x80000000) target |= 0x80000000;\n";
-        out << "        try {\n";
         out << "            switch (target) {\n";
         
         std::set<uint32_t> emitted_cases;
@@ -228,7 +235,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             
             if (emitted_cases.insert(start_addr).second) {
                 if (is_hle) {
-                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); throw (uint32_t)ctx.lr;\n";
+                    out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); ctx.exception_pc = ctx.lr; longjmp(ctx.jump_env, 1);\n";
                 } else {
                     out << "                case 0x" << std::hex << std::uppercase << start_addr << std::dec << ": " << func_name << "(ctx); break;\n";
                 }
@@ -248,9 +255,6 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         }
         out << "                default: std::cerr << \"UNKNOWN DISPATCH TO 0x\" << std::hex << target << \"\\n\"; std::exit(1);\n";
         out << "            }\n";
-        out << "        } catch (uint32_t new_pc) {\n";
-        out << "            ctx.pc = new_pc;\n";
-        out << "        }\n";
         out << "    }\n";
         out << "}\n";
     }
@@ -582,15 +586,15 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             }
             if (is_mapped) {
                 if (cond_expr == "true") {
-                    out << "    " << ext_name << "(ctx); return;\n";
+                    out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << ext_name << "(ctx); return;\n";
                 } else {
-                    out << "    if (" << cond_expr << ") { " << ext_name << "(ctx); return; }\n";
+                    out << "    if (" << cond_expr << ") { ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << ext_name << "(ctx); return; }\n";
                 }
             } else {
                 if (cond_expr == "true") {
-                    out << "    throw (uint32_t)0x" << std::hex << target << std::dec << ";\n";
+                    out << "    ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1);\n";
                 } else {
-                    out << "    if (" << cond_expr << ") { throw (uint32_t)0x" << std::hex << target << std::dec << "; }\n";
+                    out << "    if (" << cond_expr << ") { ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1); }\n";
                 }
             }
         }
@@ -627,10 +631,10 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                     }
                 }
                 if (is_mapped) {
-                    out << "    " << target_name << "(ctx);\n";
+                    out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << target_name << "(ctx);\n";
                 } else {
                     out << "    ctx.pc = 0x" << std::hex << target << std::dec << ";\n";
-                    out << "    throw (uint32_t)ctx.pc; // bl to unmapped target\n";
+                    out << "    ctx.exception_pc = ctx.pc; longjmp(ctx.jump_env, 1); // bl to unmapped target\n";
                 }
             }
         } else {
@@ -644,9 +648,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                     }
                 }
                 if (is_mapped) {
-                    out << "    " << target_name << "(ctx); return;\n";
+                    out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; " << target_name << "(ctx); return;\n";
                 } else {
-                    out << "    throw (uint32_t)0x" << std::hex << target << std::dec << ";\n";
+                    out << "    ctx.exception_pc = 0x" << std::hex << target << std::dec << "; longjmp(ctx.jump_env, 1);\n";
                 }
             }
         }
@@ -655,7 +659,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         if (xo == 150) { // isync
             out << "    // isync\n";
         } else if (xo == 50) { // rfi
-            out << "    throw (uint32_t)ctx.srr0; // rfi\n";
+            out << "    ctx.exception_pc = ctx.srr0; longjmp(ctx.jump_env, 1); // rfi\n";
         } else if (xo == 16 || xo == 528) { // BCLR (16) and BCCTR (528)
             uint32_t bo = ppc_inst.bo();
             uint32_t bi = ppc_inst.bi();
@@ -699,9 +703,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             if (ppc_inst.lk()) out << "    ctx.lr = 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << "; // save return address\n";
 
             if (cond_expr == "true") {
-                out << "    ctx.pc = " << target_reg << "; return;\n";
+                out << "    ctx.exception_pc = " << target_reg << "; longjmp(ctx.jump_env, 1);\n";
             } else {
-                out << "    if (" << cond_expr << ") { ctx.pc = " << target_reg << "; return; }\n";
+                out << "    if (" << cond_expr << ") { ctx.exception_pc = " << target_reg << "; longjmp(ctx.jump_env, 1); }\n";
             }
         } else if (xo == 257 || xo == 129 || xo == 289 || xo == 225 || xo == 33 || xo == 449 || xo == 417 || xo == 193) {
             uint32_t crbD = ppc_inst.rd();
@@ -962,23 +966,59 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         uint32_t frC = ppc_inst.rc();
         
         if (xo == 21) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] + ctx.fpr[" << frB << "]; // ps_add f" << frD << ", f" << frA << ", f" << frB << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] + ctx.ps1[" << frB << "];\n";
+            out << "    ctx.ps_add(" << frD << ", " << frA << ", " << frB << ");\n";
         } else if (xo == 20) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] - ctx.fpr[" << frB << "]; // ps_sub f" << frD << ", f" << frA << ", f" << frB << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] - ctx.ps1[" << frB << "];\n";
+            out << "    ctx.ps_sub(" << frD << ", " << frA << ", " << frB << ");\n";
         } else if (xo == 25) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] * ctx.fpr[" << frC << "]; // ps_mul f" << frD << ", f" << frA << ", f" << frC << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] * ctx.ps1[" << frC << "];\n";
+            out << "    ctx.ps_mul(" << frD << ", " << frA << ", " << frC << ");\n";
         } else if (xo == 29) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] * ctx.fpr[" << frC << "] + ctx.fpr[" << frB << "]; // ps_madd f" << frD << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] * ctx.ps1[" << frC << "] + ctx.ps1[" << frB << "];\n";
+            out << "    ctx.ps_madd(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 28) {
+            out << "    ctx.ps_msub(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 31) {
+            out << "    ctx.ps_nmadd(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 30) {
+            out << "    ctx.ps_nmsub(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
         } else if (xo == 18) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frA << "] / ctx.fpr[" << frB << "]; // ps_div f" << frD << ", f" << frA << ", f" << frB << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frA << "] / ctx.ps1[" << frB << "];\n";
+            out << "    ctx.ps_div(" << frD << ", " << frA << ", " << frB << ");\n";
+        } else if (xo == 10) {
+            out << "    ctx.ps_sum0(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 11) {
+            out << "    ctx.ps_sum1(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 12) {
+            out << "    ctx.ps_muls0(" << frD << ", " << frA << ", " << frC << ");\n";
+        } else if (xo == 13) {
+            out << "    ctx.ps_muls1(" << frD << ", " << frA << ", " << frC << ");\n";
+        } else if (xo == 14) {
+            out << "    ctx.ps_madds0(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 15) {
+            out << "    ctx.ps_madds1(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
+        } else if (xo == 23) {
+            out << "    ctx.ps_sel(" << frD << ", " << frA << ", " << frC << ", " << frB << ");\n";
         } else if (xo_10 == 72) {
-            out << "    ctx.fpr[" << frD << "] = ctx.fpr[" << frB << "]; // ps_mr f" << frD << ", f" << frB << "\n";
-            out << "    ctx.ps1[" << frD << "] = ctx.ps1[" << frB << "];\n";
+            out << "    ctx.ps_mr(" << frD << ", " << frB << ");\n";
+        } else if (xo_10 == 40) {
+            out << "    ctx.ps_neg(" << frD << ", " << frB << ");\n";
+        } else if (xo_10 == 264) {
+            out << "    ctx.ps_abs(" << frD << ", " << frB << ");\n";
+        } else if (xo_10 == 136) {
+            out << "    ctx.ps_nabs(" << frD << ", " << frB << ");\n";
+        } else if (xo_10 == 528) {
+            out << "    ctx.ps_merge00(" << frD << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 560) {
+            out << "    ctx.ps_merge01(" << frD << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 592) {
+            out << "    ctx.ps_merge10(" << frD << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 624) {
+            out << "    ctx.ps_merge11(" << frD << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 0) {
+            out << "    ctx.ps_cmpu0(" << (frD >> 2) << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 32) {
+            out << "    ctx.ps_cmpo0(" << (frD >> 2) << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 64) {
+            out << "    ctx.ps_cmpu1(" << (frD >> 2) << ", " << frA << ", " << frB << ");\n";
+        } else if (xo_10 == 96) {
+            out << "    ctx.ps_cmpo1(" << (frD >> 2) << ", " << frA << ", " << frB << ");\n";
         } else {
             out << "    // TODO: implement opcode 4 (ps_*) xo=" << xo << ", xo_10=" << xo_10 << "\n";
             out << "    ctx.fpr[" << frD << "] = 0.0;\n";

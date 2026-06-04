@@ -1,10 +1,12 @@
 #pragma once
 
-#include "loader/loader.h"
+#include <cstdint>
+#include <map>
 #include <vector>
 #include <set>
-#include <map>
-#include <cstdint>
+#include <queue>
+
+#include "loader/loader.h"
 
 namespace nwii {
 namespace analyzer {
@@ -32,6 +34,8 @@ public:
 private:
     bool read_instruction(uint32_t address, uint32_t& out_inst) const;
     bool is_text_address(uint32_t address) const;
+    uint32_t read_data32(uint32_t address) const;
+    void analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uint32_t>& insts, std::queue<uint32_t>& block_queue);
 
     const loader::Executable& executable_;
     
