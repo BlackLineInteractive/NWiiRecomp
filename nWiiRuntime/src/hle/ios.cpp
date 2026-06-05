@@ -93,4 +93,52 @@ void IOS_Ioctlv(CPUContext& ctx) {
     ctx.gpr[3] = 0; // Success
 }
 
+// --- НОВІ АСИНХРОННІ ВИКЛИКИ (Вирішують зависання на 0x8020def4) ---
+
+void IOS_IoctlAsync(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
+    
+    // Сигнатура: fd (r3), cmd (r4), in_buf (r5), in_len (r6), out_buf (r7), out_len (r8), callback (r9), userdata (r10)
+    uint32_t callback = ctx.gpr[9];
+    uint32_t userdata = ctx.gpr[10];
+
+    std::cout << "[HLE IOS] IOS_IoctlAsync: cmd=" << ctx.gpr[4] << " cb=" << std::hex << callback << std::dec << "\n";
+
+    if (callback != 0) {
+        // Готуємо аргументи для колбека: r3 = 0 (Успіх/IPC_OK), r4 = userdata
+        ctx.gpr[3] = 0; 
+        ctx.gpr[4] = userdata;
+        // Tail-call: Переходимо в колбек
+        ctx.pc = callback; 
+    } else {
+        ctx.gpr[3] = 0;
+        ctx.pc = ctx.lr;
+    }
+}
+
+void IOS_IoctlvAsync(CPUContext& ctx) {
+    if (Config::get().platform == Platform::GameCube) {
+        ctx.gpr[3] = -1;
+        return;
+    }
+    
+    // Сигнатура: fd (r3), cmd (r4), in_cnt (r5), out_cnt (r6), vec (r7), callback (r8), userdata (r9)
+    uint32_t callback = ctx.gpr[8];
+    uint32_t userdata = ctx.gpr[9];
+
+    std::cout << "[HLE IOS] IOS_IoctlvAsync: cmd=" << ctx.gpr[4] << " cb=" << std::hex << callback << std::dec << "\n";
+
+    if (callback != 0) {
+        ctx.gpr[3] = 0; // IPC_OK
+        ctx.gpr[4] = userdata;
+        ctx.pc = callback;
+    } else {
+        ctx.gpr[3] = 0;
+        ctx.pc = ctx.lr;
+    }
+}
+
 } // extern "C"

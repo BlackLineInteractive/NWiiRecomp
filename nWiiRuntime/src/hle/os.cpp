@@ -22,20 +22,102 @@ void OSReport(CPUContext& ctx) {
     uint32_t format_addr = ctx.gpr[3];
     std::string format_str = read_guest_string(ctx, format_addr);
     
-    // Quick hack to replace the first %d or %x with the value of r4
-    size_t pos = format_str.find("%d");
-    if (pos != std::string::npos) {
-        format_str.replace(pos, 2, std::to_string((int32_t)ctx.gpr[4]));
-    } else {
-        pos = format_str.find("%x");
-        if (pos != std::string::npos) {
-            char hex_buf[32];
-            snprintf(hex_buf, sizeof(hex_buf), "%x", ctx.gpr[4]);
-            format_str.replace(pos, 2, hex_buf);
-        }
-    }
+    std::string output;
+    uint32_t current_reg = 4; // Arguments start at r4
     
-    std::cout << "[OSReport] " << format_str;
+    for (size_t i = 0; i < format_str.length(); ++i) {
+        if (format_str[i] == '%' && i + 1 < format_str.length()) {
+            char format_char = format_str[i + 1];
+            
+            // Basic format specifiers
+            if (format_char == 's') {
+                if (current_reg <= 10) {
+                    uint32_t str_addr = ctx.gpr[current_reg++];
+                    output += read_guest_string(ctx, str_addr);
+                } else {
+                    output += "(null)";
+                }
+                i++; // Skip the 's'
+                continue;
+            } else if (format_char == 'd' || format_char == 'i' || format_char == 'u' || format_char == 'c') {
+                if (current_reg <= 10) {
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "%d", (int32_t)ctx.gpr[current_reg++]);
+                    output += buf;
+                }
+                i++; // Skip the specifier
+                continue;
+            } else if (format_char == 'x' || format_char == 'X' || format_char == 'p') {
+                if (current_reg <= 10) {
+                    char buf[32];
+                    if (format_char == 'X') {
+                        std::snprintf(buf, sizeof(buf), "%X", ctx.gpr[current_reg++]);
+                    } else if (format_char == 'p') {
+                        // Sometimes games use %p for pointer hex printing. Adding 0x prefix to match common behavior.
+                        std::snprintf(buf, sizeof(buf), "%08x", ctx.gpr[current_reg++]);
+                    } else {
+                        std::snprintf(buf, sizeof(buf), "%x", ctx.gpr[current_reg++]);
+                    }
+                    output += buf;
+                }
+                i++; // Skip the specifier
+                continue;
+            } else if (format_char == 'f') {
+                 // Floats are passed in floating point registers (fpr[1] onwards), not GPRs.
+                 // To properly support floats, we would need to read fpr[current_fpr++].
+                 // For now, since we only have ctx.gpr, we'll just print a placeholder or ignore.
+                 // A true implementation needs to track float arguments independently.
+                 output += "(float)";
+                 // Note: we DO NOT increment current_reg here because floats don't use GPRs.
+                 i++;
+                 continue;
+            } else if (format_char == 'l') {
+                // Handling size modifiers like %ld, %llx, etc is complex.
+                // We'll do a very basic skip for 'l' modifier.
+                if (i + 2 < format_str.length()) {
+                     char next_char = format_str[i+2];
+                     if (next_char == 'd' || next_char == 'i' || next_char == 'u') {
+                         if (current_reg <= 10) {
+                             char buf[32];
+                             std::snprintf(buf, sizeof(buf), "%d", (int32_t)ctx.gpr[current_reg++]);
+                             output += buf;
+                         }
+                         i += 2;
+                         continue;
+                     } else if (next_char == 'x' || next_char == 'X') {
+                         if (current_reg <= 10) {
+                             char buf[32];
+                             std::snprintf(buf, sizeof(buf), "%x", ctx.gpr[current_reg++]);
+                             output += buf;
+                         }
+                         i += 2;
+                         continue;
+                     }
+                }
+            } else if (format_char == '0') {
+                // Simplified handling for things like %08x
+                // We find the full specifier.
+                size_t j = i + 1;
+                while (j < format_str.length() && (isdigit(format_str[j]) || format_str[j] == 'l')) {
+                    j++;
+                }
+                if (j < format_str.length() && (format_str[j] == 'x' || format_str[j] == 'X' || format_str[j] == 'd' || format_str[j] == 'i')) {
+                    if (current_reg <= 10) {
+                         std::string sub_fmt = format_str.substr(i, j - i + 1);
+                         char buf[64];
+                         // Safe to use snprintf here because we validated the specifier ends in x,X,d,i
+                         std::snprintf(buf, sizeof(buf), sub_fmt.c_str(), ctx.gpr[current_reg++]);
+                         output += buf;
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        output += format_str[i];
+    }
+
+    std::cout << "[OSReport] " << output;
 }
 
 // Basic stubs for other OS functions to prevent linker errors
@@ -212,6 +294,23 @@ void OSTicksToMilliseconds(CPUContext& ctx) {
     uint64_t ms = ticks / 40500;
     ctx.gpr[3] = (uint32_t)(ms >> 32);
     ctx.gpr[4] = (uint32_t)(ms & 0xFFFFFFFF);
+}
+
+// --- ВПРАВЛІННЯ АРЕНАМИ ПАМ'ЯТІ ---
+void OSGetArenaLo(CPUContext& ctx) {
+    ctx.gpr[3] = ctx.mmu.read32(0x80000030);
+}
+
+void OSGetArenaHi(CPUContext& ctx) {
+    ctx.gpr[3] = ctx.mmu.read32(0x80000034);
+}
+
+void OSSetArenaLo(CPUContext& ctx) {
+    ctx.mmu.write32(0x80000030, ctx.gpr[3]);
+}
+
+void OSSetArenaHi(CPUContext& ctx) {
+    ctx.mmu.write32(0x80000034, ctx.gpr[3]);
 }
 
 } // extern "C"

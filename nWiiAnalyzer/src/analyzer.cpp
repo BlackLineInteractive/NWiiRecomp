@@ -153,7 +153,7 @@ void Analyzer::analyze() {
     }
     
     // Hardcoded dynamic dispatch entry points (OS functions computed via lis/addi)
-    std::vector<uint32_t> hints = {0x80218070, 0x802180F0, 0x8019BA08};
+    std::vector<uint32_t> hints = {0x8010beb4, 0x80218070, 0x802180F0, 0x8019BA08, 0x8018fea8, 0x801a98fc};
     for (uint32_t hint : hints) {
         if (is_text_address(hint) && known_functions.find(hint) == known_functions.end()) {
             known_functions.insert(hint);
