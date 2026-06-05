@@ -47,6 +47,11 @@ extern "C" {
 
 static uint32_t vi_vblank_counter = 0;
 
+static uint16_t dsp_mbox_cpu_hi = 0;
+static uint16_t dsp_mbox_cpu_lo = 0;
+static uint16_t dsp_mbox_dsp_hi = 0;
+static uint16_t dsp_mbox_dsp_lo = 0;
+
 uint16_t HW_Reg_Read16(uint32_t addr) {
     return (uint16_t)HW_Reg_Read32(addr);
 }
@@ -75,12 +80,14 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     
     // AI/DSP (Audio Interface / Digital Signal Processor) Registers
     if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
-        if (addr == 0xCC00500A || addr == 0xCC005008) {
-            // DSP Control Register
-            // Bit 5 (0x20) = DSP is ready / initialized.
-            // Returning 0x20 satisfies loops waiting for DSP init.
-            return 0x0020;
+        if (addr == 0xCC005000 || addr == 0xCC005002) return dsp_mbox_cpu_hi;
+        if (addr == 0xCC005004) return dsp_mbox_dsp_hi;
+        if (addr == 0xCC005006) {
+            uint16_t val = dsp_mbox_dsp_lo;
+            dsp_mbox_dsp_hi &= ~0x8000; // Reading Mailbox Lo acknowledges and clears the message bit
+            return val;
         }
+        if (addr == 0xCC005008 || addr == 0xCC00500A) return 0x0020; // Always return 0x20 (Init)
         return 0;
     }
     
@@ -113,6 +120,28 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val) {
 
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
     addr = (addr & 0x00FFFFFF) | 0xCC000000;
+    
+    if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
+        if (addr == 0xCC005000 || addr == 0xCC005002) {
+            dsp_mbox_cpu_hi = (val & 0x7FFF) | 0x8000; // Bit 15 set when CPU writes
+            
+            // FAKE DSP SYNCHRONOUS PROCESSING
+            // The DSP consumes the message instantly:
+            dsp_mbox_cpu_hi &= ~0x8000; 
+            
+            // The DSP replies with a dummy message immediately:
+            dsp_mbox_dsp_hi = 0x8000 | 0; // Bit 15 set: DSP has replied
+        }
+        else if (addr == 0xCC005004 || addr == 0xCC005006) {
+            // CPU acknowledging DSP message by writing 1 to bit 15
+            if (val & 0x8000) {
+                dsp_mbox_dsp_hi &= ~0x8000; // Clear the bit
+            }
+        }
+        // Ignores writes to 0xCC005008 and 0xCC00500A
+        return;
+    }
+    
     // Ignore writes to hardware registers for now,
     // to prevent crashes, unless they are specific handled registers.
 }
