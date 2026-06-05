@@ -43,6 +43,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         std::ofstream hout(header_path);
         hout << "#pragma once\n";
         hout << "#include \"runtime/cpu_context.h\"\n\n";
+        hout << "void OSReport(nwii::runtime::CPUContext& ctx);\n";
         
         std::set<std::string> emitted_names;
         std::vector<std::string> all_func_names;
@@ -647,7 +648,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                     bool target_is_hle = (symbols_ && symbols_->has_symbol(target) && is_hle_function(symbols_->get_symbol(target)));
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; ";
                     if (target == 0x80213ea0) {
-                        out << "{ std::string msg; uint32_t addr = ctx.gpr[3]; while (char c = ctx.mmu.read8(addr++)) { msg += c; if (msg.length() > 512) break; } std::cout << \"\\n[PANIC/REPORT]: \" << msg << \"\\n\\n\"; }\n";
+                        out << "    OSReport(ctx);\n";
                     }
                     out << target_name << "(ctx);\n";
                     if (target_is_hle) out << "    ctx.pc = ctx.lr;\n";
@@ -669,7 +670,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 if (is_mapped) {
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; ";
                     if (target == 0x80213ea0) {
-                        out << "{ std::string msg; uint32_t addr = ctx.gpr[3]; while (char c = ctx.mmu.read8(addr++)) { msg += c; if (msg.length() > 512) break; } std::cout << \"\\n[PANIC/REPORT]: \" << msg << \"\\n\\n\"; }\n";
+                        out << "    OSReport(ctx);\n";
                     }
                     out << target_name << "(ctx); return;\n";
                 } else {
