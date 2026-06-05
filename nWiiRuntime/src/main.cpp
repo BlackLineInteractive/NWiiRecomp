@@ -73,8 +73,14 @@ int main(int argc, char** argv) {
     ctx.mmu.write32(0x80000310, 64 * 1024 * 1024);
     // 0x80000314 = MEM2 ArenaLo
     ctx.mmu.write32(0x80000314, 0x90000000);
-    // 0x80000318 = MEM2 ArenaHi
-    ctx.mmu.write32(0x80000318, 0x94000000);
+    // 0x80000318 = MEM2 ArenaHi (reduced to leave 16MB for IPC)
+    ctx.mmu.write32(0x80000318, 0x93000000);
+    
+    // Initialize OS Globals (IPC)
+    // 0x80003130 = IPC ArenaLo
+    ctx.mmu.write32(0x80003130, 0x93000000);
+    // 0x80003134 = IPC ArenaHi
+    ctx.mmu.write32(0x80003134, 0x94000000);
     // Bus Frequency = 243 MHz
     ctx.mmu.write32(0x800000F8, 243000000);
     // CPU Frequency = 729 MHz

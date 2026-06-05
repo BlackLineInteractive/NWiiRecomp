@@ -22,8 +22,19 @@ void OSReport(CPUContext& ctx) {
     uint32_t format_addr = ctx.gpr[3];
     std::string format_str = read_guest_string(ctx, format_addr);
     
-    // In a real HLE, we would parse the format string and varargs.
-    // For now, we'll just print the format string raw.
+    // Quick hack to replace the first %d or %x with the value of r4
+    size_t pos = format_str.find("%d");
+    if (pos != std::string::npos) {
+        format_str.replace(pos, 2, std::to_string((int32_t)ctx.gpr[4]));
+    } else {
+        pos = format_str.find("%x");
+        if (pos != std::string::npos) {
+            char hex_buf[32];
+            snprintf(hex_buf, sizeof(hex_buf), "%x", ctx.gpr[4]);
+            format_str.replace(pos, 2, hex_buf);
+        }
+    }
+    
     std::cout << "[OSReport] " << format_str;
 }
 
@@ -41,33 +52,54 @@ uint16_t HW_Reg_Read16(uint32_t addr) {
 }
 
 uint32_t HW_Reg_Read32(uint32_t addr) {
-    // VI (Video Interface) Registers
-    if (addr == 0xCC00302C || addr == 0xCC003030) {
-        // VBlank / Retrace counter. Toggling this breaks spinlocks.
-        vi_vblank_counter++;
-        return vi_vblank_counter;
-    }
-    
-    // EXI (Expansion Interface) Registers
-    if ((addr & 0xFFFFFF00) == 0xCC005000) {
-        static uint32_t exi_seed = 1;
-        exi_seed = exi_seed * 1664525 + 1013904223;
-        return exi_seed;
-    }
-    
-    // DI (DVD Interface) Registers
-    if (addr == 0xCC006000) {
-        // Status register. Return 0 for success / ready.
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
+    // PI (Processor Interface) Registers - Interrupts
+    if (addr >= 0xCC003000 && addr <= 0xCC0030FF) {
+        if (addr == 0xCC003000 || addr == 0xCC003004) {
+            // PI Interrupt Cause / Mask. 
+            // Return 0 so game doesn't think it has unhandled hardware interrupts.
+            return 0; 
+        }
         return 0;
     }
     
-    if (addr == 0xCC006004) {
-        // Cover register. 1 = Closed.
-        return 1;
+    // VI (Video Interface) Registers
+    if (addr >= 0xCC002000 && addr <= 0xCC0020FF) {
+        if (addr == 0xCC00202C || addr == 0xCC002030) {
+            // VBlank / Retrace counter. We increment it so the game thinks frames are passing.
+            static uint32_t vi_vblank_counter = 0;
+            return vi_vblank_counter++;
+        }
+        return 0;
     }
-
-    if (addr == 0xCC006008) {
-        // Command register.
+    
+    // AI/DSP (Audio Interface / Digital Signal Processor) Registers
+    if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
+        if (addr == 0xCC00500A || addr == 0xCC005008) {
+            // DSP Control Register
+            // Bit 5 (0x20) = DSP is ready / initialized.
+            // Returning 0x20 satisfies loops waiting for DSP init.
+            return 0x0020;
+        }
+        return 0;
+    }
+    
+    // EXI (Expansion Interface) Registers
+    if (addr >= 0xCC006800 && addr <= 0xCC0068FF) {
+        // EXI Control Registers (Channel 0, 1, 2)
+        if (addr == 0xCC00680C || addr == 0xCC006820 || addr == 0xCC006834) {
+            // Bit 0 is 'START'. Returning 0 indicates transfer is complete.
+            // This prevents EXI hardware polling spinlocks.
+            return 0;
+        }
+        return 0;
+    }
+    
+    // DI (DVD Interface) Registers
+    if (addr >= 0xCC006000 && addr <= 0xCC0060FF) {
+        if (addr == 0xCC006000) return 0; // Status: Ready / No Error
+        if (addr == 0xCC006004) return 1; // Cover Status: 1 = Closed
+        if (addr == 0xCC006008) return 0; // Command Status
         return 0;
     }
 
@@ -80,6 +112,7 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val) {
 }
 
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
     // Ignore writes to hardware registers for now,
     // to prevent crashes, unless they are specific handled registers.
 }

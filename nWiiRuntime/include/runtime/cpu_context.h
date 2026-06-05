@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <iostream>
 
 namespace nwii {
 namespace runtime {
@@ -73,7 +74,7 @@ struct MMU {
   }
 
   uint16_t read16(uint32_t addr) {
-    if ((addr & 0xFFFF0000) == 0xCC000000)
+    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000)
       return HW_Reg_Read16(addr);
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
@@ -86,7 +87,7 @@ struct MMU {
       GX_WGPIPE_Write16(value);
       return;
     }
-    if ((addr & 0xFFFF0000) == 0xCC000000) {
+    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000) {
       HW_Reg_Write16(addr, value);
       return;
     }
@@ -98,13 +99,16 @@ struct MMU {
   }
 
   uint32_t read32(uint32_t addr) {
-    if ((addr & 0xFFFF0000) == 0xCC000000)
+    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000)
       return HW_Reg_Read32(addr);
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
       return 0;
-    return ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
-           ((uint32_t)ptr[2] << 8) | (uint32_t)ptr[3];
+
+    uint32_t val = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
+                   ((uint32_t)ptr[2] << 8) | (uint32_t)ptr[3];
+
+    return val;
   }
 
   void write32(uint32_t addr, uint32_t value) {
@@ -112,7 +116,7 @@ struct MMU {
       GX_WGPIPE_Write32(value);
       return;
     }
-    if ((addr & 0xFFFF0000) == 0xCC000000) {
+    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000) {
       HW_Reg_Write32(addr, value);
       return;
     }

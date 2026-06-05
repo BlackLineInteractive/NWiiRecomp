@@ -87,13 +87,20 @@ void DVDReadAsyncPrio(CPUContext& ctx) {
         for (uint32_t i = 0; i < bytes_read; i++) {
             ctx.mmu.write8(buffer_addr + i, temp_buf[i]);
         }
+        
+        // Update DVDFileInfo struct
+        // struct DVDCommandBlock starts at 0x00
+        // 0x0C: state (0 = ready, 1 = busy, -1 = canceled, etc)
+        ctx.mmu.write32(file_info_addr + 0x0C, 0); 
+        // 0x20: transferredSize
+        ctx.mmu.write32(file_info_addr + 0x20, bytes_read);
     } else {
         std::cerr << "[HLE DVD] ERROR: DVDReadAsyncPrio called on invalid/closed file info!\n";
     }
     
-    // TODO: Fire callback if callback_addr != 0
     if (callback_addr != 0) {
-        std::cerr << "[HLE DVD] WARNING: Ignoring callback 0x" << std::hex << callback_addr << std::dec << " (Not yet implemented)\n";
+        std::cerr << "[HLE DVD] WARNING: Ignoring callback 0x" << std::hex << callback_addr << std::dec << " (No C++ dispatcher available yet to invoke PPC addresses)\n";
+        // To properly execute this, the recompiler needs to generate a global dispatcher map mapping 0x80xxxxxx to C++ func_0x80xxxxxx().
     }
     
     ctx.gpr[3] = 1; // Success
