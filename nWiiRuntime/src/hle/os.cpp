@@ -81,13 +81,20 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     // AI/DSP (Audio Interface / Digital Signal Processor) Registers
     if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
         if (addr == 0xCC005000 || addr == 0xCC005002) return dsp_mbox_cpu_hi;
-        if (addr == 0xCC005004) return dsp_mbox_dsp_hi;
+        if (addr == 0xCC005004) {
+            std::cout << "[DSP] Read 0xCC005004 -> " << std::hex << dsp_mbox_dsp_hi << std::endl;
+            return dsp_mbox_dsp_hi;
+        }
         if (addr == 0xCC005006) {
             uint16_t val = dsp_mbox_dsp_lo;
             dsp_mbox_dsp_hi &= ~0x8000; // Reading Mailbox Lo acknowledges and clears the message bit
+            std::cout << "[DSP] Read 0xCC005006 -> " << std::hex << val << " (cleared 0x8000)" << std::endl;
             return val;
         }
-        if (addr == 0xCC005008 || addr == 0xCC00500A) return 0x0020; // Always return 0x20 (Init)
+        if (addr == 0xCC005008 || addr == 0xCC00500A) {
+            std::cout << "[DSP] Read 0xCC00500A -> 0x0020" << std::endl;
+            return 0x0020; // Always return 0x20 (Init)
+        }
         return 0;
     }
     
@@ -138,7 +145,13 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
                 dsp_mbox_dsp_hi &= ~0x8000; // Clear the bit
             }
         }
-        // Ignores writes to 0xCC005008 and 0xCC00500A
+        else if (addr == 0xCC005008 || addr == 0xCC00500A) {
+            // When the CPU configures the DSP Control register (e.g., clearing HALT/RESET),
+            // the DSP bootrom executes and sends its INIT message (0xDCD1) to the CPU.
+            dsp_mbox_dsp_hi = 0xDCD1; // 0x8000 (Ready bit) | 0x5CD1 (INIT payload)
+            dsp_mbox_dsp_lo = 0x0000;
+            std::cout << "[DSP] Write 0xCC00500A val=" << std::hex << val << " -> Setting INIT message 0xDCD1" << std::endl;
+        }
         return;
     }
     
