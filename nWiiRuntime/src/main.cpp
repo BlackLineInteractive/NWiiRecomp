@@ -83,14 +83,14 @@ int main(int argc, char** argv) {
     
     // Initialize OS Globals (MEM2/Wii)
     uint32_t mem2_size = __builtin_bswap32(64 * 1024 * 1024);
-    std::memcpy(ctx.mmu.get_memory() + 0x3118, &mem2_size, 4);
-    std::memcpy(ctx.mmu.get_memory() + 0x311C, &mem2_size, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x3118, &mem2_size, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x311C, &mem2_size, 4);
 
     // Simulated MEM2 Arena (0x90000000 to 0x93E00000)
     uint32_t arena2_lo = __builtin_bswap32(0x90000000);
     uint32_t arena2_hi = __builtin_bswap32(0x93E00000);
-    std::memcpy(ctx.mmu.get_memory() + 0x3124, &arena2_lo, 4);
-    std::memcpy(ctx.mmu.get_memory() + 0x3128, &arena2_hi, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x3124, &arena2_lo, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x3128, &arena2_hi, 4);
     
     // IOS IPC Arena
     ctx.mmu.mem1[0x3130 + 0] = 0x93;
@@ -107,11 +107,17 @@ int main(int argc, char** argv) {
     ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
     ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
     
+    std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
+    std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
+
     // Console type = Wii retail (2)
     ctx.mmu.mem1[0x24] = 0x00;
     ctx.mmu.mem1[0x25] = 0x00;
     ctx.mmu.mem1[0x26] = 0x00;
     ctx.mmu.mem1[0x27] = 0x02;
+
+    std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
+    std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
     
     run_game(ctx);
     
