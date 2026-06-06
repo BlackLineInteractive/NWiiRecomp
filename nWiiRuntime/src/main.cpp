@@ -60,10 +60,15 @@ int main(int argc, char** argv) {
     
     std::cout << "DOL loaded into memory. ArenaLo: 0x" << std::hex << arena_lo << std::dec << std::endl;
     
-    // Initialize OS Globals (MEM1) — Dolphin Boot.cpp reference
+    // Initialize OS Globals (MEM1)
+    ctx.mmu.mem1[0x24 + 0] = 0x00;
+    ctx.mmu.mem1[0x24 + 1] = 0x00;
+    ctx.mmu.mem1[0x24 + 2] = 0x00;
+    ctx.mmu.mem1[0x24 + 3] = 0x02; // Console Type: Wii Retail
+
     ctx.mmu.mem1[0x28 + 0] = (24u * 1024u * 1024u) >> 24;
-    ctx.mmu.mem1[0x28 + 1] = (24u * 1024u * 1024u) >> 16;
-    ctx.mmu.mem1[0x28 + 2] = (24u * 1024u * 1024u) >> 8;
+    ctx.mmu.mem1[0x28 + 1] = ((24u * 1024u * 1024u) >> 16) & 0xFF;
+    ctx.mmu.mem1[0x28 + 2] = ((24u * 1024u * 1024u) >> 8) & 0xFF;
     ctx.mmu.mem1[0x28 + 3] = (24u * 1024u * 1024u) & 0xFF;
     
     ctx.mmu.mem1[0x30 + 0] = arena_lo >> 24;
@@ -77,20 +82,15 @@ int main(int argc, char** argv) {
     ctx.mmu.mem1[0x34 + 3] = 0x00;
     
     // Initialize OS Globals (MEM2/Wii)
-    ctx.mmu.mem1[0x3110 + 0] = (64u * 1024u * 1024u) >> 24;
-    ctx.mmu.mem1[0x3110 + 1] = (64u * 1024u * 1024u) >> 16;
-    ctx.mmu.mem1[0x3110 + 2] = (64u * 1024u * 1024u) >> 8;
-    ctx.mmu.mem1[0x3110 + 3] = (64u * 1024u * 1024u) & 0xFF;
+    uint32_t mem2_size = __builtin_bswap32(64 * 1024 * 1024);
+    std::memcpy(ctx.mmu.get_memory() + 0x3118, &mem2_size, 4);
+    std::memcpy(ctx.mmu.get_memory() + 0x311C, &mem2_size, 4);
 
-    ctx.mmu.mem1[0x3118 + 0] = 0x90;
-    ctx.mmu.mem1[0x3118 + 1] = 0x00;
-    ctx.mmu.mem1[0x3118 + 2] = 0x00;
-    ctx.mmu.mem1[0x3118 + 3] = 0x00;
-
-    ctx.mmu.mem1[0x311C + 0] = 0x93;
-    ctx.mmu.mem1[0x311C + 1] = 0xE0;
-    ctx.mmu.mem1[0x311C + 2] = 0x00;
-    ctx.mmu.mem1[0x311C + 3] = 0x00;
+    // Simulated MEM2 Arena (0x90000000 to 0x93E00000)
+    uint32_t arena2_lo = __builtin_bswap32(0x90000000);
+    uint32_t arena2_hi = __builtin_bswap32(0x93E00000);
+    std::memcpy(ctx.mmu.get_memory() + 0x3124, &arena2_lo, 4);
+    std::memcpy(ctx.mmu.get_memory() + 0x3128, &arena2_hi, 4);
     
     // IOS IPC Arena
     ctx.mmu.mem1[0x3130 + 0] = 0x93;

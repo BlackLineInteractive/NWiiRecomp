@@ -130,6 +130,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
 
   // PI (Процесорний інтерфейс) — переривання
   if (addr >= 0xCC003000 && addr <= 0xCC0030FF) {
+    if (addr == 0xCC00302C) return 0x00000020; // PI_CPUREV (Hardware Revision)
     return 0; // PI Interrupt Cause/Mask = 0 (немає очікуючих переривань)
   }
 

@@ -106,12 +106,17 @@ struct MMU {
     // Hardcode OS globals to fix MEM2 0MB issue
     if (paddr == 0x00000024) return 0x00000002u;          // Console Type = Wii Retail
     if (paddr == 0x00000028) return 24u * 1024u * 1024u;  // 24MB MEM1
-    if (paddr == 0x00000310) return 64u * 1024u * 1024u;  // 64MB MEM2
-    if (paddr == 0x00000314) return 0x90000000u;          // MEM2 Arena Lo
-    if (paddr == 0x00000318) return 0x93E00000u;          // MEM2 Arena Hi
+    if (paddr >= 0x3100 && paddr <= 0x3140) {
+      std::cout << "[DEBUG] Game read from OS Global: 0x" << std::hex << paddr << std::dec << "\n";
+    }
+
+    if (paddr == 0x00003118) return 64u * 1024u * 1024u;  // Physical MEM2
+    if (paddr == 0x0000311C) return 64u * 1024u * 1024u;  // Simulated MEM2
+    if (paddr == 0x00003124) return 0x90000000u;          // Usable MEM2 Start
+    if (paddr == 0x00003128) return 0x93E00000u;          // Usable MEM2 End
     // IOS IPC arena
-    if (paddr == 0x00000330) return 0x93E00000u;          // IOS ArenaLo
-    if (paddr == 0x00000334) return 0x94000000u;          // IOS ArenaHi
+    if (paddr == 0x00003130) return 0x93E00000u;          // IOS ArenaLo
+    if (paddr == 0x00003134) return 0x94000000u;          // IOS ArenaHi
 
     // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD)
     if ((addr & 0xFF000000) == 0xCC000000 || (addr & 0xFF000000) == 0xCD000000)
@@ -130,8 +135,8 @@ struct MMU {
 
     // Prevent OSInit from overwriting our hardcoded globals
     if (paddr == 0x00000024 || paddr == 0x00000028 ||
-        paddr == 0x00000310 || paddr == 0x00000314 || paddr == 0x00000318 ||
-        paddr == 0x00000330 || paddr == 0x00000334) {
+        paddr == 0x00003118 || paddr == 0x0000311C || paddr == 0x00003124 ||
+        paddr == 0x00003128 || paddr == 0x00003130 || paddr == 0x00003134) {
       return; 
     }
 
