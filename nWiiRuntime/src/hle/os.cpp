@@ -16,7 +16,7 @@ static std::string read_guest_string(CPUContext &ctx, uint32_t addr) {
   return str;
 }
 
-// OSReport  is the standard Nintendo SDK print function.
+// OSReport  is the standard NN SDK print function.
 // Signature: void OSReport(const char* msg, ...);
 // The format string address is passed in r3 (gpr[3]).
 void OSReport(CPUContext &ctx) {
@@ -24,7 +24,7 @@ void OSReport(CPUContext &ctx) {
   std::string format_str = read_guest_string(ctx, format_addr);
 
   std::string result;
-  int arg_idx = 4; // Аргументи PowerPC починаються з r4
+  int arg_idx = 4; // PowerPC arguments start at r4
 
   for (size_t i = 0; i < format_str.length(); ++i) {
     if (format_str[i] == '%') {
@@ -36,7 +36,7 @@ void OSReport(CPUContext &ctx) {
 
       std::string specifier = "%";
       i++;
-      // Збираємо всі прапорці, ширину та модифікатори (наприклад, 08, l, h)
+      // Collect all flags, width, and modifiers (e.g. 08, l, h)
       while (i < format_str.length() &&
              std::string("0123456789.-+ #hlz").find(format_str[i]) !=
                  std::string::npos) {
@@ -66,8 +66,8 @@ void OSReport(CPUContext &ctx) {
             result += "(null)";
           }
         } else if (type == 'f') {
-          result += "[float_FPR]"; // Флоати передаються в регістрах f1-f8,
-                                   // тимчасово ігноруємо
+          result += "[float_FPR]"; // Floats are passed in registers f1-f8,
+                                   // temporarily ignoring
         } else {
           result += specifier;
         }
@@ -84,6 +84,10 @@ void OSInit(CPUContext &ctx) {
   std::cout << "[OSInit] System initialized." << std::endl;
 }
 
+namespace nwii::runtime {
+extern MMU *g_mmu;
+}
+
 extern "C" {
 
 static uint32_t vi_vblank_counter = 0;
@@ -96,45 +100,64 @@ static uint16_t dsp_mbox_dsp_lo = 0;
 static uint32_t ipc_arm_msg = 0;  // HW_IPC_ARMMSG  (0xCD000008)
 static uint32_t ipc_arm_ctrl = 0; // HW_IPC_ARMCTRL (0xCD00000C)
 
-// Посилаємо миттєву IOS-відповідь на IPC-запит від гри
-// result_code: 0 = IPC_OK (успіх), будь-яке інше = помилка
-static void ipc_fake_ack(uint32_t request_addr, int32_t result_code) {
-  // IPC reply структура: cmd(4), result(4), ...  — записуємо result
-  // безпосередньо в пам'ять ARM зображує фізичну адресу буфера (без 0x80) в
+// g_mmu declaration moved outside extern "C"
+static void ipc_fake_ack(uint32_t request_addr) {
+
   // HW_IPC_ARMMSG
-  ipc_arm_msg = request_addr & 0x1FFFFFFF; // фізична адреса
-  ipc_arm_ctrl = 0x00000002;               // bit1 = Y2 ("відповідь готова")
+  ipc_arm_msg = request_addr & 0x1FFFFFFF;
+  ipc_arm_ctrl = 0x00000002; // bit1 = Y2
+
+  if (nwii::runtime::g_mmu) {
+    uint32_t cmd = nwii::runtime::g_mmu->read32(request_addr);
+    int32_t result = 0; // IPC_OK
+    if (cmd == 1 || cmd == 2) {
+      result = 1; // Return fake FD 1 for Open/Close
+    } else if (cmd == 3 || cmd == 4) {
+      // Read/Write: return length (from offset 20 usually, but let's just
+      // return what was requested if possible)
+      uint32_t length = nwii::runtime::g_mmu->read32(
+          request_addr + 20); // usually length is at offset 20
+      result = length;
+    }
+
+    std::cout << "[HW IPC] Processing command " << cmd << " at 0x" << std::hex
+              << request_addr << std::dec << ", returning result " << result
+              << "\n";
+
+    nwii::runtime::g_mmu->write32(request_addr + 4, (uint32_t)result);
+  }
 }
 
 uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 
 uint32_t HW_Reg_Read32(uint32_t addr) {
-  // --- IOS IPC регістри (Wii, 0xCD000000–0xCD00FFFF) ---
+  // --- IOS IPC registers (Wii, 0xCD000000–0xCD00FFFF) ---
   if ((addr & 0xFF000000) == 0xCD000000) {
     switch (addr & 0x00FFFFFF) {
     case 0x000000:
-      return 0; // HW_IPC_PPCMSG  (прочитано — 0)
+      return 0; // HW_IPC_PPCMSG
     case 0x000004:
-      return 0; // HW_IPC_PPCCTRL (готовий приймати)
+      return 0; // HW_IPC_PPCCTRL
     case 0x000008:
-      return ipc_arm_msg; // HW_IPC_ARMMSG  (відповідь IOS)
+      return ipc_arm_msg; // HW_IPC_ARMMSG
     case 0x00000C:
-      return ipc_arm_ctrl; // HW_IPC_ARMCTRL (прапор "відповідь")
+      return ipc_arm_ctrl; // HW_IPC_ARMCTRL
     default:
       return 0;
     }
   }
 
-  // --- Залізо регістри GC (0xCC000000) ---
+  // --- Hardware registers GC (0xCC000000) ---
   addr = (addr & 0x00FFFFFF) | 0xCC000000;
 
-  // PI (Процесорний інтерфейс) — переривання
+  // PI (Processor Interface) - interrupts
   if (addr >= 0xCC003000 && addr <= 0xCC0030FF) {
-    if (addr == 0xCC00302C) return 0x00000020; // PI_CPUREV (Hardware Revision)
-    return 0; // PI Interrupt Cause/Mask = 0 (немає очікуючих переривань)
+    if (addr == 0xCC00302C)
+      return 0x00000020; // PI_CPUREV (Hardware Revision)
+    return 0;            // PI Interrupt Cause/Mask = 0 (no pending interrupts)
   }
 
-  // VI (Відео) — лічильник VBlank
+  // VI (Video Interface) - VBlank counter
   if (addr >= 0xCC002000 && addr <= 0xCC0020FF) {
     if (addr == 0xCC00202C || addr == 0xCC002030) {
       return vi_vblank_counter++;
@@ -142,7 +165,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     return 0;
   }
 
-  // AI/DSP мейлбокс
+  // AI/DSP mailbox
   if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
     if (addr == 0xCC005000 || addr == 0xCC005002)
       return dsp_mbox_cpu_hi;
@@ -158,7 +181,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     return 0;
   }
 
-  // EXI (інтерфейс розширення) — передача "вільний"
+  // EXI (Expansion Interface) - transfer "free"
   if (addr >= 0xCC006800 && addr <= 0xCC0068FF) {
     return 0;
   }
@@ -168,7 +191,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     if (addr == 0xCC006000)
       return 0;
     if (addr == 0xCC006004)
-      return 1; // Кришка закрита
+      return 1; // Cover closed
     return 0;
   }
 
@@ -178,24 +201,24 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
 void HW_Reg_Write16(uint32_t addr, uint16_t val) { HW_Reg_Write32(addr, val); }
 
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
-  // --- IOS IPC регістри (Wii, 0xCD000000) ---
-  // Коли гра пише в HW_IPC_PPCMSG — означає що вона відправила IPC-запит IOS.
-  // Ми негайно синтезуємо миттєву відповідь, щоб зняти спін-лок.
+  // --- IOS IPC registers (Wii, 0xCD000000) ---
+  // When the game writes to HW_IPC_PPCMSG, it means it sent an IPC request to
+  // IOS. We immediately synthesize an instant reply to release the spin-lock.
   if ((addr & 0xFF000000) == 0xCD000000) {
     switch (addr & 0x00FFFFFF) {
     case 0x000000: {
-      // HW_IPC_PPCMSG: гра відправляє IPC-запит
-      // val — фізична адреса IPCRequest буфера (без 0x80 префікса)
-      std::cout << "[HW IPC] Ga відправила IPC-запит до IOS. Phys addr=0x"
+      // HW_IPC_PPCMSG: game sends IPC request
+      // val — physical address of IPCRequest buffer (without 0x80 prefix)
+      std::cout << "[HW IPC] Game sent IPC request to IOS. Phys addr=0x"
                 << std::hex << val << std::dec << "\n";
-      ipc_fake_ack(val, 0 /*IPC_OK*/);
+      ipc_fake_ack(val);
       break;
     }
     case 0x000004:
-      // HW_IPC_PPCCTRL: гра ставить 1 озн. "запит відправлено" (ігноруємо)
+      // HW_IPC_PPCCTRL: game sets 1 meaning "request sent" (ignored)
       break;
     case 0x00000C:
-      // HW_IPC_ARMCTRL: гра пише 0 для підтвердження отримання відповіді
+      // HW_IPC_ARMCTRL: game writes 0 to confirm receipt of response
       if (val == 0)
         ipc_arm_ctrl = 0;
       break;
@@ -205,14 +228,14 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
     return;
   }
 
-  // --- GC залізо регістри (0xCC000000) ---
+  // --- GC hardware registers (0xCC000000) ---
   addr = (addr & 0x00FFFFFF) | 0xCC000000;
 
   if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
     if (addr == 0xCC005000 || addr == 0xCC005002) {
       dsp_mbox_cpu_hi = (val & 0x7FFF) | 0x8000;
-      dsp_mbox_cpu_hi &= ~0x8000; // DSP відразу приймає повідомлення
-      dsp_mbox_dsp_hi = 0x8000;   // DSP відповідає миттєво
+      dsp_mbox_cpu_hi &= ~0x8000; // DSP immediately accepts the message
+      dsp_mbox_dsp_hi = 0x8000;   // DSP replies instantly
     } else if (addr == 0xCC005004 || addr == 0xCC005006) {
       if (val & 0x8000)
         dsp_mbox_dsp_hi &= ~0x8000;
@@ -222,7 +245,7 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
     }
     return;
   }
-  // Інші GC-регістри — ігноруємо
+  // Other GC registers - ignored
 }
 
 } // extern "C"
@@ -282,7 +305,7 @@ void OSTicksToMilliseconds(CPUContext &ctx) {
   ctx.gpr[4] = (uint32_t)(ms & 0xFFFFFFFF);
 }
 
-// --- ВПРАВЛІННЯ АРЕНАМИ ПАМ'ЯТІ ---
+// --- MEMORY ARENA MANAGEMENT ---
 void OSGetArenaLo(CPUContext &ctx) { ctx.gpr[3] = ctx.mmu.read32(0x80000030); }
 
 void OSGetArenaHi(CPUContext &ctx) { ctx.gpr[3] = ctx.mmu.read32(0x80000034); }

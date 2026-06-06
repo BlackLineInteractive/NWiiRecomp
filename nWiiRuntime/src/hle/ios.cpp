@@ -239,23 +239,37 @@ void IOS_SeekAsync(CPUContext& ctx) {
 namespace nwii {
 namespace runtime {
 
-void syscall_handler(CPUContext& ctx) {
+void handle_syscall(CPUContext& ctx) {
     uint32_t syscall_id = ctx.gpr[0];
     switch (syscall_id) {
-        case 0x02: IOS_Open(ctx); break;
-        case 0x03: IOS_Close(ctx); break;
-        case 0x04: IOS_Read(ctx); break;
-        case 0x05: IOS_Write(ctx); break;
-        case 0x06: IOS_Seek(ctx); break;
-        case 0x07: IOS_Ioctl(ctx); break;
-        case 0x08: IOS_Ioctlv(ctx); break;
-        case 0x09: IOS_OpenAsync(ctx); break;
-        case 0x0A: IOS_CloseAsync(ctx); break;
-        case 0x0B: IOS_ReadAsync(ctx); break;
-        case 0x0C: IOS_WriteAsync(ctx); break;
-        case 0x0D: IOS_SeekAsync(ctx); break;
-        case 0x0E: IOS_IoctlAsync(ctx); break;
-        case 0x0F: IOS_IoctlvAsync(ctx); break;
+        case 0x02:
+        case 0x61: IOS_Open(ctx); break;
+        case 0x03:
+        case 0x62: IOS_Close(ctx); break;
+        case 0x04:
+        case 0x63: IOS_Read(ctx); break;
+        case 0x05:
+        case 0x64: IOS_Write(ctx); break;
+        case 0x06:
+        case 0x65: IOS_Seek(ctx); break;
+        case 0x07:
+        case 0x66: IOS_Ioctl(ctx); break;
+        case 0x08:
+        case 0x67: IOS_Ioctlv(ctx); break;
+        case 0x09:
+        case 0x68: IOS_OpenAsync(ctx); break;
+        case 0x0A:
+        case 0x69: IOS_CloseAsync(ctx); break;
+        case 0x0B:
+        case 0x6A: IOS_ReadAsync(ctx); break;
+        case 0x0C:
+        case 0x6C: IOS_WriteAsync(ctx); break; // 0x6C? User said 0x6B is IoctlAsync
+        case 0x0D:
+        case 0x6D: IOS_SeekAsync(ctx); break;
+        case 0x0E:
+        case 0x6B: IOS_IoctlAsync(ctx); break; // User explicitly said 0x6B is IOS_IoctlAsync
+        case 0x0F:
+        case 0x6E: IOS_IoctlvAsync(ctx); break;
         case 0x40000:
         case 0x80212d04:
             // Ignore OSYieldThread / OSDisableInterrupts syscalls

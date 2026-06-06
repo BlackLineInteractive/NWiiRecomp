@@ -32,7 +32,7 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val);
 }
 
 struct CPUContext;
-void syscall_handler(CPUContext& ctx);
+void handle_syscall(CPUContext& ctx);
 
 struct MMU {
   std::vector<uint8_t> mem1;

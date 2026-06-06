@@ -4,6 +4,8 @@
 
 namespace nwii::runtime {
 
+MMU* g_mmu = nullptr;
+
 bool init() {
     std::cout << "init runtime" << std::endl;
     Config::get().load("config.toml");
@@ -16,7 +18,6 @@ void shutdown() {
 }
 
 } // namespace nwii::runtime
-
 extern "C" void run_game(nwii::runtime::CPUContext& ctx);
 
 #include "loader/loader.h"
@@ -119,6 +120,7 @@ int main(int argc, char** argv) {
     std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
     std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
     
+    nwii::runtime::g_mmu = &ctx.mmu;
     run_game(ctx);
     
     nwii::runtime::shutdown();

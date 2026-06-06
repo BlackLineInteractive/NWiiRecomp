@@ -1273,7 +1273,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         else out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << rA << "] + " << (ppc_inst.simm() << 16) << "; // addis\n";
     } else if (ppc_inst.opcode() == 17) { // sc
         out << "    // sc (System Call)\n";
-        out << "    nwii::runtime::syscall_handler(ctx);\n";
+        out << "    nwii::runtime::handle_syscall(ctx);\n";
     } else if (ppc_inst.opcode() == 4) { // ps_*
         uint32_t xo = (inst.opcode >> 1) & 0x1F;
         uint32_t xo_10 = (inst.opcode >> 1) & 0x3FF;
