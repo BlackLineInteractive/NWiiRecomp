@@ -103,6 +103,12 @@ int main(int argc, char** argv) {
     ctx.mmu.mem1[0x3134 + 1] = 0x00;
     ctx.mmu.mem1[0x3134 + 2] = 0x00;
     ctx.mmu.mem1[0x3134 + 3] = 0x00;
+
+    // Memory Sizes
+    uint32_t mem1_size = __builtin_bswap32(24 * 1024 * 1024); // 24MB
+    std::memcpy(ctx.mmu.mem1.data() + 0x28, &mem1_size, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x3118, &mem2_size, 4);
+    std::memcpy(ctx.mmu.mem1.data() + 0x311C, &mem2_size, 4);
     
     // Bus/CPU Frequency
     ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
@@ -111,11 +117,11 @@ int main(int argc, char** argv) {
     std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
     std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
 
-    // Console type = Wii retail (2)
+    // Console type = Emulator / Cold Boot (0)
     ctx.mmu.mem1[0x24] = 0x00;
     ctx.mmu.mem1[0x25] = 0x00;
     ctx.mmu.mem1[0x26] = 0x00;
-    ctx.mmu.mem1[0x27] = 0x02;
+    ctx.mmu.mem1[0x27] = 0x00;
 
     std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
     std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";

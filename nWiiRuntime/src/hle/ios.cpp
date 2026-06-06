@@ -130,27 +130,88 @@ void IOS_IoctlAsync(CPUContext& ctx) {
         return;
     }
     
-    std::cout << "[HLE IOS] IOS_IoctlAsync: r3=" << ctx.gpr[3] << " r4=" << ctx.gpr[4] << " r5=" << ctx.gpr[5] << " r6=" << ctx.gpr[6] << " r7=" << ctx.gpr[7] << " r8=" << ctx.gpr[8] << " r9=" << std::hex << ctx.gpr[9] << " r10=" << ctx.gpr[10] << std::dec << "\n";
+    // This hook is actually iosQueueMessage(queue_id, IPCMessage*)
+    uint32_t queue_id = ctx.gpr[3];
+    uint32_t ipc_ptr = ctx.gpr[4];
 
-    uint32_t callback = ctx.gpr[9];
-    uint32_t userdata = ctx.gpr[10];
+    if (ipc_ptr >= 0x80000000) {
+        uint32_t cmd = ctx.mmu.read32(ipc_ptr + 0x00);
+        int32_t fd = ctx.mmu.read32(ipc_ptr + 0x08);
+        
+        if (cmd == 1) { // IOS_Open
+            uint32_t arg0 = ctx.mmu.read32(ipc_ptr + 0x0C);
+            uint32_t arg1 = ctx.mmu.read32(ipc_ptr + 0x10);
+            uint32_t arg2 = ctx.mmu.read32(ipc_ptr + 0x14);
+            uint32_t arg3 = ctx.mmu.read32(ipc_ptr + 0x18);
+            uint32_t arg4 = ctx.mmu.read32(ipc_ptr + 0x1C);
+            
+            // Translate physical address to virtual cached address
+            uint32_t path_ptr = arg0;
+            if (path_ptr < 0x80000000) {
+                if (path_ptr < 0x01800000 || (path_ptr >= 0x10000000 && path_ptr < 0x14000000)) {
+                    path_ptr |= 0x80000000;
+                }
+            }
 
-    // If it's not a pointer, maybe the signature is different? Try r6/r7?
-    if (callback < 0x80000000 || callback >= 0x82000000) {
-        if (ctx.gpr[5] >= 0x80000000 && ctx.gpr[5] < 0x82000000) {
-            callback = ctx.gpr[5];
-            userdata = ctx.gpr[6];
+            std::string path;
+            if (path_ptr >= 0x80000000 && path_ptr < 0x94000000) {
+                uint32_t p = path_ptr;
+                for(int i=0; i<64; ++i) {
+                    char c = ctx.mmu.read8(p++);
+                    if (c == '\0') break;
+                    if (c >= 32 && c <= 126) path += c;
+                }
+            }
+            
+            std::cout << "[HLE IOS] iosQueueMessage OPEN: path='" << path << "' (raw arg0=" << std::hex << arg0 << ")\n" << std::dec;
+            
+            if (path == "/dev/di") {
+                ctx.mmu.write32(ipc_ptr + 0x04, 2); // result = fd
+            } else {
+                ctx.mmu.write32(ipc_ptr + 0x04, 3); // some other fd
+            }
+        } else if (cmd == 2) { // IOS_Close
+            std::cout << "[HLE IOS] iosQueueMessage CLOSE: fd=" << fd << "\n";
+            ctx.mmu.write32(ipc_ptr + 0x04, 0); // result = 0 (Success)
+        } else if (cmd == 6) { // IOS_Ioctl
+            uint32_t ioctl_cmd = ctx.mmu.read32(ipc_ptr + 0x0C);
+            std::cout << "[HLE IOS] iosQueueMessage IOCTL: fd=" << (int)fd << " cmd=" << std::hex << ioctl_cmd << std::dec << "\n";
+            ctx.mmu.write32(ipc_ptr + 0x04, 0); // result = 0 (Success)
+        } else if (cmd == 7) { // IOS_Ioctlv
+            uint32_t ioctl_cmd = ctx.mmu.read32(ipc_ptr + 0x0C);
+            std::cout << "[HLE IOS] iosQueueMessage IOCTLV: fd=" << fd << " cmd=" << std::hex << ioctl_cmd << std::dec << "\n";
+            ctx.mmu.write32(ipc_ptr + 0x04, 0); // result = 0 (Success)
+        } else {
+            std::cout << "[HLE IOS] iosQueueMessage UNKNOWN CMD: " << cmd << " fd=" << fd << "\n";
+            ctx.mmu.write32(ipc_ptr + 0x04, 0); // result = 0 (Success)
+        }
+
+        // --- MANUALLY INVOKE CALLBACK ---
+        uint32_t callback = ctx.mmu.read32(ipc_ptr + 0x20);
+        uint32_t userdata = ctx.mmu.read32(ipc_ptr + 0x24);
+        int32_t result = ctx.mmu.read32(ipc_ptr + 0x04);
+        
+        std::cout << "  -> callback=0x" << std::hex << callback << " userdata=0x" << userdata << " result=" << std::dec << result << "\n";
+        
+        if (callback != 0 && callback != 0xFFFFFFFF) {
+            std::cout << "  -> Invoking callback directly!\n";
+            uint32_t saved_lr = ctx.lr;
+            uint32_t saved_pc = ctx.pc;
+            uint32_t saved_r3 = ctx.gpr[3];
+            uint32_t saved_r4 = ctx.gpr[4];
+            
+            ctx.gpr[3] = result;
+            ctx.gpr[4] = userdata;
+            ctx.lr = 0x802438B4; // dummy return
+            ctx.pc = callback;
+            
+            // Wait, we can't just invoke it synchronously if it does a context switch.
+            // But we will try!
         }
     }
 
-    if (callback >= 0x80000000 && callback < 0x82000000) {
-        ctx.gpr[3] = 0; 
-        ctx.gpr[4] = userdata;
-        ctx.pc = callback; 
-    } else {
-        ctx.gpr[3] = 0;
-        ctx.pc = ctx.lr;
-    }
+    ctx.gpr[3] = 0; // return IPC_OK
+    ctx.pc = ctx.lr;
 }
 
 void IOS_IoctlvAsync(CPUContext& ctx) {
@@ -240,44 +301,44 @@ namespace nwii {
 namespace runtime {
 
 void handle_syscall(CPUContext& ctx) {
-    uint32_t syscall_id = ctx.gpr[0];
-    switch (syscall_id) {
-        case 0x02:
-        case 0x61: IOS_Open(ctx); break;
-        case 0x03:
-        case 0x62: IOS_Close(ctx); break;
-        case 0x04:
-        case 0x63: IOS_Read(ctx); break;
-        case 0x05:
-        case 0x64: IOS_Write(ctx); break;
-        case 0x06:
-        case 0x65: IOS_Seek(ctx); break;
-        case 0x07:
-        case 0x66: IOS_Ioctl(ctx); break;
-        case 0x08:
-        case 0x67: IOS_Ioctlv(ctx); break;
-        case 0x09:
-        case 0x68: IOS_OpenAsync(ctx); break;
-        case 0x0A:
-        case 0x69: IOS_CloseAsync(ctx); break;
-        case 0x0B:
-        case 0x6A: IOS_ReadAsync(ctx); break;
-        case 0x0C:
-        case 0x6C: IOS_WriteAsync(ctx); break; // 0x6C? User said 0x6B is IoctlAsync
-        case 0x0D:
-        case 0x6D: IOS_SeekAsync(ctx); break;
-        case 0x0E:
-        case 0x6B: IOS_IoctlAsync(ctx); break; // User explicitly said 0x6B is IOS_IoctlAsync
-        case 0x0F:
-        case 0x6E: IOS_IoctlvAsync(ctx); break;
-        case 0x40000:
-        case 0x80212d04:
-            // Ignore OSYieldThread / OSDisableInterrupts syscalls
-            break;
-        default:
-            std::cout << "[HLE IOS] Unknown syscall 0x" << std::hex << syscall_id << std::dec << "\n";
-            ctx.gpr[3] = -1;
-            break;
+    uint32_t syscall_id = ctx.gpr[0]; // Syscall number is always in r0
+
+    if (syscall_id == 0x61) { 
+        // 0x61 = IOS_Open. Game requests to open a device (e.g., "/dev/di")
+        // We simply say "Ok, here is descriptor number 2"
+        std::cout << "[HLE IOS] IOS_Open via sc\n";
+        ctx.gpr[3] = 2; 
+
+    } else if (syscall_id == 0x62) {
+        // 0x62 = IOS_Close
+        std::cout << "[HLE IOS] IOS_Close via sc\n";
+        ctx.gpr[3] = 0; // Success
+
+    } else if (syscall_id == 0x6B || syscall_id == 0x6C) {
+        // 0x6B = IOS_IoctlAsync, 0x6C = IOS_IoctlvAsync (Async requests to DVD)
+        // Here is the most important magic: we must invoke the game's Callback!
+        std::cout << "[HLE IOS] IOS_Ioctl(v)Async via sc: " << std::hex << syscall_id << std::dec << "\n";
+        uint32_t callback = (syscall_id == 0x6B) ? ctx.gpr[9] : ctx.gpr[8];
+        uint32_t userdata = (syscall_id == 0x6B) ? ctx.gpr[10] : ctx.gpr[9];
+
+        if (callback != 0) {
+            // Prepare arguments for the callback
+            ctx.gpr[3] = 0; // 0 = Success (IPC_OK)
+            ctx.gpr[4] = userdata;
+            
+            // Perform a tail-call jump directly to the game's function!
+            ctx.pc = callback; 
+        } else {
+            ctx.gpr[3] = 0;
+            ctx.pc = ctx.lr;
+        }
+
+    } else {
+        // For all other syscalls (thread switching, etc.) simulate success
+        // std::cout << "[HLE IOS] Unknown sc: " << std::hex << syscall_id << std::dec << "\n";
+        // Do NOT overwrite r3 because the `sc` could be a cache flush workaround that isn't a real syscall
+        // and shouldn't corrupt the registers.
+        // ctx.gpr[3] = 0; 
     }
 }
 

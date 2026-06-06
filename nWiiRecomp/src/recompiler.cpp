@@ -352,12 +352,12 @@ void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func
         out << "    ctx.pc = ctx.lr; return;\n";
         out << "}\n\n";
         return;
-    } else if (func.start_address == 0x802430a0) {
+    } else if (func.start_address == 0x802430a0 || func.start_address == 0x80243270) {
         out << "    IOS_Open(ctx);\n";
         out << "    return;\n";
         out << "}\n\n";
         return;
-    } else if (func.start_address == 0x80243190) {
+    } else if (func.start_address == 0x80243190 || func.start_address == 0x80242f60) {
         out << "    IOS_OpenAsync(ctx);\n";
         out << "    return;\n";
         out << "}\n\n";
@@ -468,6 +468,10 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.gpr[" << rD << "] = ctx.xer; // mfxer r" << rD << "\n";
         } else if (spr >= 920 && spr <= 924) {
             out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID " << spr << "\n";
+        } else if (spr == 1008) {
+            out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID0 (stub)\n";
+        } else if (spr == 1017) {
+            out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID2 (stub)\n";
         } else {
             out << "    std::cerr << \"[WARN] mfspr r\" << " << rD << " << \" spr=\" << " << spr << " << \" (stub=0)\\n\";\n";
             out << "    ctx.gpr[" << rD << "] = 0; // unknown spr stub\n";
@@ -1134,16 +1138,19 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.gpr[" << ppc_inst.rs() << "]); // stwcx\n";
             out << "    ctx.cr[0].eq = true; ctx.cr[0].lt = false; ctx.cr[0].gt = false; // always succeed\n";
         } else if (xo == 119) { // lbzux
-            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read8(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lbzux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.gpr[" << rD << "] = ctx.mmu.read8(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lbzux\n";
         } else if (xo == 311) { // lhzux
-            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhzux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.gpr[" << rD << "] = ctx.mmu.read16(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lhzux\n";
         } else if (xo == 343) { // lhax
             out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhax\n";
         } else if (xo == 375) { // lhaux
-            out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lhaux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lhaux\n";
         } else if (xo == 247) { // stbux
             out << "    ctx.mmu.write8(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]); // stbux\n";
             out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
@@ -1171,15 +1178,17 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
             out << "    ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfsx\n";
         } else if (xo == 567) { // lfsux
             uint32_t frD2 = ppc_inst.rd();
-            out << "    ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfsux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lfsux\n";
         } else if (xo == 599) { // lfdx
             uint32_t frD2 = ppc_inst.rd();
             out << "    ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfdx\n";
         } else if (xo == 631) { // lfdux
             uint32_t frD2 = ppc_inst.rd();
-            out << "    ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lfdux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lfdux\n";
         } else if (xo == 663) { // stfsx
             out << "    ctx.mmu.write_f32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], (float)ctx.fpr[" << ppc_inst.rs() << "]); // stfsx\n";
         } else if (xo == 695) { // stfsux
@@ -1201,8 +1210,9 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         } else if (xo == 1014) { // dcbz
             out << "    // dcbz (data cache block zero) - stub\n";
         } else if (xo == 55) { // lwzux
-            out << "    ctx.gpr[" << rD << "] = ctx.mmu.read32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]); // lwzux\n";
-            out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+            out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "]; ";
+            out << "ctx.gpr[" << rD << "] = ctx.mmu.read32(ea); ";
+            out << "ctx.gpr[" << rA << "] = ea; } // lwzux\n";
         } else if (xo == 183) { // stwux
             out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "], ctx.gpr[" << ppc_inst.rs() << "]); // stwux\n";
             out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
