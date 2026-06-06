@@ -31,6 +31,9 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val);
 void HW_Reg_Write32(uint32_t addr, uint32_t val);
 }
 
+struct CPUContext;
+void syscall_handler(CPUContext& ctx);
+
 struct MMU {
   std::vector<uint8_t> mem1;
   std::vector<uint8_t> mem2;
@@ -99,33 +102,72 @@ struct MMU {
   }
 
   uint32_t read32(uint32_t addr) {
-    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000)
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    // Hardcode OS globals to fix MEM2 0MB issue
+    if (paddr == 0x00000024) return 0x00000002u;          // Console Type = Wii Retail
+    if (paddr == 0x00000028) return 24u * 1024u * 1024u;  // 24MB MEM1
+    if (paddr == 0x00000310) return 64u * 1024u * 1024u;  // 64MB MEM2
+    if (paddr == 0x00000314) return 0x90000000u;          // MEM2 Arena Lo
+    if (paddr == 0x00000318) return 0x93E00000u;          // MEM2 Arena Hi
+    // IOS IPC arena
+    if (paddr == 0x00000330) return 0x93E00000u;          // IOS ArenaLo
+    if (paddr == 0x00000334) return 0x94000000u;          // IOS ArenaHi
+
+    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD)
+    if ((addr & 0xFF000000) == 0xCC000000 || (addr & 0xFF000000) == 0xCD000000)
       return HW_Reg_Read32(addr);
+
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
       return 0;
 
-    uint32_t val = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
-                   ((uint32_t)ptr[2] << 8) | (uint32_t)ptr[3];
-
-    return val;
+    return ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
+           ((uint32_t)ptr[2] << 8)  | (uint32_t)ptr[3];
   }
 
   void write32(uint32_t addr, uint32_t value) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+
+    // Prevent OSInit from overwriting our hardcoded globals
+    if (paddr == 0x00000024 || paddr == 0x00000028 ||
+        paddr == 0x00000310 || paddr == 0x00000314 || paddr == 0x00000318 ||
+        paddr == 0x00000330 || paddr == 0x00000334) {
+      return; 
+    }
+
+    // HW IOS IPC hack
+    // Without HLE symbols, we have to fake the response right at the hardware level.
+    if (paddr == 0x0D000000) { // 0xCD000000 (HW_IPC_REQ)
+      uint32_t req_addr = value | 0x80000000; // Convert physical buffer address to virtual
+      
+      // Read the command the game is sending
+      uint32_t cmd = read32(req_addr); 
+      std::cout << "[HW_IPC] Received IOS request! Command: " << cmd << " at 0x" << std::hex << req_addr << std::dec << "\n";
+      
+      // Fake an immediate success by writing 1 to the result field
+      write32(req_addr + 4, 1);
+      
+      // Acknowledge the request to the hardware
+      write32(0xCD000004, value);
+      return;
+    }
+
     if (addr == 0xCC008000) {
       GX_WGPIPE_Write32(value);
       return;
     }
-    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000) {
+    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD)
+    if ((addr & 0xFF000000) == 0xCC000000 || (addr & 0xFF000000) == 0xCD000000) {
       HW_Reg_Write32(addr, value);
       return;
     }
+
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
       return;
     ptr[0] = (value >> 24) & 0xFF;
     ptr[1] = (value >> 16) & 0xFF;
-    ptr[2] = (value >> 8) & 0xFF;
+    ptr[2] = (value >> 8)  & 0xFF;
     ptr[3] = value & 0xFF;
   }
 

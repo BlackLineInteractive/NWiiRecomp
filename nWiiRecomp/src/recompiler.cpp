@@ -44,6 +44,14 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         hout << "#pragma once\n";
         hout << "#include \"runtime/cpu_context.h\"\n\n";
         hout << "void OSReport(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_Open(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_OpenAsync(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_Close(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_Read(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_Ioctl(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_IoctlAsync(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_Ioctlv(nwii::runtime::CPUContext& ctx);\n";
+        hout << "void IOS_IoctlvAsync(nwii::runtime::CPUContext& ctx);\n";
         
         std::set<std::string> emitted_names;
         std::vector<std::string> all_func_names;
@@ -338,6 +346,53 @@ std::string Recompiler::generate_function_cpp(const analyzer::Function& func) {
 
 void Recompiler::emit_function(std::ostream& out, const analyzer::Function& func, const std::string& func_name) {
     out << "void " << func_name << "(CPUContext& ctx) {\n";
+
+    if (func.start_address == 0x80213ea0) {
+        out << "    OSReport(ctx);\n";
+        out << "    ctx.pc = ctx.lr; return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x802430a0) {
+        out << "    IOS_Open(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x80243190) {
+        out << "    IOS_OpenAsync(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x802438a0) {
+        out << "    IOS_Ioctl(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x802438b0) {
+        out << "    IOS_IoctlAsync(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x80243400) {
+        out << "    IOS_Close(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x802435e0) {
+        out << "    IOS_Read(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x80243c70) {
+        out << "    IOS_Ioctlv(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    } else if (func.start_address == 0x80243c80) {
+        out << "    IOS_IoctlvAsync(ctx);\n";
+        out << "    return;\n";
+        out << "}\n\n";
+        return;
+    }
 
     // Map all instruction addresses in this function
     std::set<uint32_t> valid_addrs;
@@ -647,11 +702,7 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 if (is_mapped) {
                     bool target_is_hle = (symbols_ && symbols_->has_symbol(target) && is_hle_function(symbols_->get_symbol(target)));
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; ";
-                    if (target == 0x80213ea0) {
-                        out << "    OSReport(ctx);\n";
-                    }
                     out << target_name << "(ctx);\n";
-                    if (target_is_hle) out << "    ctx.pc = ctx.lr;\n";
                     out << "    if (ctx.pc != 0x" << std::hex << std::uppercase << (inst.address + 4) << std::dec << ") return;\n";
                 } else {
                     out << "    ctx.pc = 0x" << std::hex << target << std::dec << "; return; // bl to unmapped target\n";
@@ -669,9 +720,6 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
                 }
                 if (is_mapped) {
                     out << "    ctx.pc = 0x" << std::hex << std::uppercase << target << std::dec << "; ";
-                    if (target == 0x80213ea0) {
-                        out << "    OSReport(ctx);\n";
-                    }
                     out << target_name << "(ctx); return;\n";
                 } else {
                     out << "    ctx.pc = 0x" << std::hex << target << std::dec << "; return;\n";
@@ -1224,7 +1272,8 @@ void Recompiler::emit_instruction(std::ostream& out, const analyzer::Instruction
         if (rA == 0) out << "    ctx.gpr[" << ppc_inst.rd() << "] = " << (ppc_inst.simm() << 16) << "; // lis\n";
         else out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << rA << "] + " << (ppc_inst.simm() << 16) << "; // addis\n";
     } else if (ppc_inst.opcode() == 17) { // sc
-        out << "    // sc (System Call) - NOOP for now\n";
+        out << "    // sc (System Call)\n";
+        out << "    nwii::runtime::syscall_handler(ctx);\n";
     } else if (ppc_inst.opcode() == 4) { // ps_*
         uint32_t xo = (inst.opcode >> 1) & 0x1F;
         uint32_t xo_10 = (inst.opcode >> 1) & 0x3FF;

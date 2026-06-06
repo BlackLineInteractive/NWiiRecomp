@@ -60,31 +60,58 @@ int main(int argc, char** argv) {
     
     std::cout << "DOL loaded into memory. ArenaLo: 0x" << std::hex << arena_lo << std::dec << std::endl;
     
-    // Initialize OS Globals (MEM1)
-    // 0x80000028 = Physical Memory Size (24MB)
-    ctx.mmu.write32(0x80000028, 24 * 1024 * 1024);
-    // 0x80000030 = ArenaLo
-    ctx.mmu.write32(0x80000030, arena_lo);
-    // 0x80000034 = ArenaHi (End of 24MB MEM1)
-    ctx.mmu.write32(0x80000034, 0x81800000);
+    // Initialize OS Globals (MEM1) — Dolphin Boot.cpp reference
+    ctx.mmu.mem1[0x28 + 0] = (24u * 1024u * 1024u) >> 24;
+    ctx.mmu.mem1[0x28 + 1] = (24u * 1024u * 1024u) >> 16;
+    ctx.mmu.mem1[0x28 + 2] = (24u * 1024u * 1024u) >> 8;
+    ctx.mmu.mem1[0x28 + 3] = (24u * 1024u * 1024u) & 0xFF;
     
-    // Initialize OS Globals (MEM2) for Wii
-    // 0x80000310 = Physical MEM2 Size (64MB)
-    ctx.mmu.write32(0x80000310, 64 * 1024 * 1024);
-    // 0x80000314 = MEM2 ArenaLo
-    ctx.mmu.write32(0x80000314, 0x90000000);
-    // 0x80000318 = MEM2 ArenaHi (reduced to leave 16MB for IPC)
-    ctx.mmu.write32(0x80000318, 0x93000000);
+    ctx.mmu.mem1[0x30 + 0] = arena_lo >> 24;
+    ctx.mmu.mem1[0x30 + 1] = (arena_lo >> 16) & 0xFF;
+    ctx.mmu.mem1[0x30 + 2] = (arena_lo >> 8) & 0xFF;
+    ctx.mmu.mem1[0x30 + 3] = arena_lo & 0xFF;
+
+    ctx.mmu.mem1[0x34 + 0] = 0x81;
+    ctx.mmu.mem1[0x34 + 1] = 0x80;
+    ctx.mmu.mem1[0x34 + 2] = 0x00;
+    ctx.mmu.mem1[0x34 + 3] = 0x00;
     
-    // Initialize OS Globals (IPC)
-    // 0x80003130 = IPC ArenaLo
-    ctx.mmu.write32(0x80003130, 0x93000000);
-    // 0x80003134 = IPC ArenaHi
-    ctx.mmu.write32(0x80003134, 0x94000000);
-    // Bus Frequency = 243 MHz
-    ctx.mmu.write32(0x800000F8, 243000000);
-    // CPU Frequency = 729 MHz
-    ctx.mmu.write32(0x800000FC, 729000000);
+    // Initialize OS Globals (MEM2/Wii)
+    ctx.mmu.mem1[0x3110 + 0] = (64u * 1024u * 1024u) >> 24;
+    ctx.mmu.mem1[0x3110 + 1] = (64u * 1024u * 1024u) >> 16;
+    ctx.mmu.mem1[0x3110 + 2] = (64u * 1024u * 1024u) >> 8;
+    ctx.mmu.mem1[0x3110 + 3] = (64u * 1024u * 1024u) & 0xFF;
+
+    ctx.mmu.mem1[0x3118 + 0] = 0x90;
+    ctx.mmu.mem1[0x3118 + 1] = 0x00;
+    ctx.mmu.mem1[0x3118 + 2] = 0x00;
+    ctx.mmu.mem1[0x3118 + 3] = 0x00;
+
+    ctx.mmu.mem1[0x311C + 0] = 0x93;
+    ctx.mmu.mem1[0x311C + 1] = 0xE0;
+    ctx.mmu.mem1[0x311C + 2] = 0x00;
+    ctx.mmu.mem1[0x311C + 3] = 0x00;
+    
+    // IOS IPC Arena
+    ctx.mmu.mem1[0x3130 + 0] = 0x93;
+    ctx.mmu.mem1[0x3130 + 1] = 0xE0;
+    ctx.mmu.mem1[0x3130 + 2] = 0x00;
+    ctx.mmu.mem1[0x3130 + 3] = 0x00;
+
+    ctx.mmu.mem1[0x3134 + 0] = 0x94;
+    ctx.mmu.mem1[0x3134 + 1] = 0x00;
+    ctx.mmu.mem1[0x3134 + 2] = 0x00;
+    ctx.mmu.mem1[0x3134 + 3] = 0x00;
+    
+    // Bus/CPU Frequency
+    ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
+    ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
+    
+    // Console type = Wii retail (2)
+    ctx.mmu.mem1[0x24] = 0x00;
+    ctx.mmu.mem1[0x25] = 0x00;
+    ctx.mmu.mem1[0x26] = 0x00;
+    ctx.mmu.mem1[0x27] = 0x02;
     
     run_game(ctx);
     
