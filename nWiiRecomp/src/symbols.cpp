@@ -25,6 +25,19 @@ bool SymbolTable::load_csv(const std::string& filepath) {
             if (!name.empty() && name.back() == '"') name.pop_back();
             if (!loc_str.empty() && loc_str.front() == '"') loc_str.erase(0, 1);
             if (!loc_str.empty() && loc_str.back() == '"') loc_str.pop_back();
+
+            // Sanitize name for C++
+            if (name == "default" || name == "new" || name == "delete" || name == "class" || name == "struct" || name == "auto") {
+                name += "_sym";
+            }
+            for (char& c : name) {
+                if (!std::isalnum(c) && c != '_') {
+                    c = '_';
+                }
+            }
+            if (!name.empty() && std::isdigit(name.front())) {
+                name = "_" + name;
+            }
             
             try {
                 uint32_t addr = std::stoul(loc_str, nullptr, 16);

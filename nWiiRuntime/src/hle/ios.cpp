@@ -199,16 +199,15 @@ void IOS_IoctlAsync(CPUContext& ctx) {
             uint32_t saved_pc = ctx.pc;
             uint32_t saved_r3 = ctx.gpr[3];
             uint32_t saved_r4 = ctx.gpr[4];
-            
+
             ctx.gpr[3] = result;
             ctx.gpr[4] = userdata;
-            ctx.lr = 0x802438B4; // dummy return
             ctx.pc = callback;
-            
+
             // Wait, we can't just invoke it synchronously if it does a context switch.
             // But we will try!
-        }
-    }
+            return;
+        }    }
 
     ctx.gpr[3] = 0; // return IPC_OK
     ctx.pc = ctx.lr;
