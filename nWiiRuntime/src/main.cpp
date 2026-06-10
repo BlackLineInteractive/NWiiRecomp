@@ -127,6 +127,7 @@ int main(int argc, char** argv) {
     std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
     
     nwii::runtime::g_mmu = &ctx.mmu;
+    nwii::runtime::init_ipc_client(ctx);
     run_game(ctx);
     
     nwii::runtime::shutdown();

@@ -16,7 +16,7 @@ static std::string read_guest_string(CPUContext &ctx, uint32_t addr) {
   return str;
 }
 
-// OSReport  is the standard NN SDK print function.
+// OSReport is the standard NN SDK print function.
 // Signature: void OSReport(const char* msg, ...);
 // The format string address is passed in r3 (gpr[3]).
 void OSReport(CPUContext &ctx) {
@@ -186,12 +186,14 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     return 0;
   }
 
-  // DI (DVD Interface)
+  // DI (DVD Interface) - CRITICAL FIX: Return TCINT so games see transfer complete
   if (addr >= 0xCC006000 && addr <= 0xCC0060FF) {
     if (addr == 0xCC006000)
-      return 0;
+      return 0x00000020; // DI_SR: TCINT = transfer complete, no error
     if (addr == 0xCC006004)
-      return 1; // Cover closed
+      return 1; // DI_COVER: cover closed, disc present
+    if (addr == 0xCC006008)
+      return 0; // DI_COVER_STATUS: no cover interrupt pending
     return 0;
   }
 

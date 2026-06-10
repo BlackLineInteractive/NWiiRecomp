@@ -12,6 +12,9 @@ using namespace nwii::runtime;
 // Map GC virtual addresses (DVDFileInfo pointers) to host file streams
 static std::unordered_map<uint32_t, std::shared_ptr<std::ifstream>> g_open_dvd_files;
 
+// Forward declare execute_callback from ios.cpp
+extern void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2);
+
 extern "C" {
 
 // Initialize DVD subsystem
@@ -70,8 +73,8 @@ void DVDReadAsyncPrio(CPUContext& ctx) {
     uint32_t offset = ctx.gpr[6];
     uint32_t callback_addr = ctx.gpr[7];
     
-    std::cout << "[HLE DVD] DVDReadAsyncPrio: info=" << std::hex << file_info_addr 
-              << ", buf=" << buffer_addr << ", len=" << std::dec << length 
+    std::cout << "[HLE DVD] DVDReadAsyncPrio: info=" << std::hex << file_info_addr
+              << ", buf=" << buffer_addr << ", len=" << std::dec << length
               << ", offset=" << offset << ", cb=" << std::hex << callback_addr << std::dec << std::endl;
               
     auto it = g_open_dvd_files.find(file_info_addr);
@@ -91,16 +94,22 @@ void DVDReadAsyncPrio(CPUContext& ctx) {
         // Update DVDFileInfo struct
         // struct DVDCommandBlock starts at 0x00
         // 0x0C: state (0 = ready, 1 = busy, -1 = canceled, etc)
-        ctx.mmu.write32(file_info_addr + 0x0C, 0); 
+        ctx.mmu.write32(file_info_addr + 0x0C, 0);
         // 0x20: transferredSize
         ctx.mmu.write32(file_info_addr + 0x20, bytes_read);
     } else {
         std::cerr << "[HLE DVD] ERROR: DVDReadAsyncPrio called on invalid/closed file info!\n";
     }
     
-    if (callback_addr != 0) {
-        std::cerr << "[HLE DVD] WARNING: Ignoring callback 0x" << std::hex << callback_addr << std::dec << " (No C++ dispatcher available yet to invoke PPC addresses)\n";
-        // To properly execute this, the recompiler needs to generate a global dispatcher map mapping 0x80xxxxxx to C++ func_0x80xxxxxx().
+    // CRITICAL FIX: Invoke callback if provided instead of ignoring it
+    if (callback_addr != 0 && callback_addr != 0xFFFFFFFF) {
+        if (callback_addr >= 0x80000000 && callback_addr < 0x82000000) {
+            std::cout << "[HLE DVD] Invoking callback 0x" << std::hex << callback_addr
+                      << " with result=" << std::dec << length << std::endl;
+            execute_callback(ctx, callback_addr, length, file_info_addr);
+        } else {
+            std::cerr << "[HLE DVD] WARNING: Invalid callback address 0x" << std::hex << callback_addr << std::dec << "\n";
+        }
     }
     
     ctx.gpr[3] = 1; // Success
@@ -137,8 +146,8 @@ void DVDReadPrio(CPUContext& ctx) {
     uint32_t length = ctx.gpr[5];
     uint32_t offset = ctx.gpr[6];
     
-    std::cout << "[HLE DVD] DVDReadPrio: info=" << std::hex << file_info_addr 
-              << ", buf=" << buffer_addr << ", len=" << std::dec << length 
+    std::cout << "[HLE DVD] DVDReadPrio: info=" << std::hex << file_info_addr
+              << ", buf=" << buffer_addr << ", len=" << std::dec << length
               << ", offset=" << offset << std::endl;
               
     auto it = g_open_dvd_files.find(file_info_addr);
