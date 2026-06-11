@@ -71,15 +71,38 @@ static void ipc_mark_sent(CPUContext &ctx) {
   ctx.mmu.write32(IPC_RESPONSES_ADDR + 0x00, cnt_sent + 1);
 }
 
-// Bump allocator
-static uint32_t ios_guest_heap_ptr = 0x80490000;
+// Fixed IPC buffer pool - 32 slots of 64 bytes each, never reused to avoid
+// overlap with file path strings (#5 IPC corruption fix)
+static constexpr uint32_t IPC_POOL_BASE  = 0x804B0000;
+static constexpr uint32_t IPC_SLOT_SIZE  = 128; // bytes per slot
+static constexpr uint32_t IPC_POOL_SLOTS = 64;
+static uint32_t ipc_pool_next = 0; // round-robin index
 
-static uint32_t ios_guest_alloc(CPUContext &ctx, uint32_t size, uint32_t align) {
+// Bump allocator for guest IPC/heap memory
+// Use TWO separate regions to avoid IPC struct corruption by path strings (#5):
+//   ios_guest_heap_ptr  = 0x80490000  → misc/NAND/FS allocs (heap=1,2)
+//   ios_ipc_heap_ptr    = 0x804A0000  → IPC request buffers  (heap=0, size<=64)
+static uint32_t ios_guest_heap_ptr = 0x80490000;
+static uint32_t ios_ipc_heap_ptr   = 0x804A0000;
+
+static uint32_t ios_guest_alloc(CPUContext &ctx, uint32_t size, uint32_t align, int heap_id = 0) {
   if (align < 32) align = 32;
-  ios_guest_heap_ptr = (ios_guest_heap_ptr + align - 1) & ~(align - 1);
-  uint32_t ptr = ios_guest_heap_ptr;
-  ios_guest_heap_ptr += (size + align - 1) & ~(align - 1);
+  // Route small IPC request buffers (heap=0, size=64) to isolated region
+  uint32_t &heap = (heap_id == 0 && size <= 128) ? ios_ipc_heap_ptr : ios_guest_heap_ptr;
+  heap = (heap + align - 1) & ~(align - 1);
+  uint32_t ptr = heap;
+  heap += (size + align - 1) & ~(align - 1);
   for (uint32_t i = 0; i < size; ++i)
+    ctx.mmu.write8(ptr + i, 0);
+  return ptr;
+}
+
+static uint32_t ipc_pool_alloc(CPUContext &ctx) {
+  uint32_t slot = ipc_pool_next;
+  ipc_pool_next = (ipc_pool_next + 1) % IPC_POOL_SLOTS;
+  uint32_t ptr = IPC_POOL_BASE + slot * IPC_SLOT_SIZE;
+  // Zero out the slot
+  for (uint32_t i = 0; i < IPC_SLOT_SIZE; ++i)
     ctx.mmu.write8(ptr + i, 0);
   return ptr;
 }
@@ -90,12 +113,97 @@ static int get_device_fd(const std::string &path) {
   if (path == "/dev/stm/immediate") return 4;
   if (path == "/dev/stm/eventhook") return 5;
   if (path == "/dev/es") return 9;
-  return -6; // Reject USB, network, etc.
+  // /dev/usb/oh1/* is Wii Remote Bluetooth HID - not implemented.
+  // Return ENOENT so the SDK falls back to GameCube PAD.
+  if (path.find("/dev/usb") == 0) return ISFS_ERROR_ENOENT;
+  return -6; // Reject network, etc.
 }
 
 static bool valid_callback(uint32_t cb) {
   return cb != 0 && cb != 0xFFFFFFFFu && cb >= 0x80000000u && cb < 0x82000000u;
 }
+
+// ── Virtual NAND filesystem (#4 fix) ────────────────────────────────────────
+// Provides minimal system files so SDK doesn't endlessly retry missing files.
+
+struct VNandFile {
+  std::string path;
+  std::vector<uint8_t> data;
+};
+
+static std::vector<VNandFile> g_vnand_files;
+static bool g_vnand_init = false;
+
+// Build a minimal but structurally valid SYSCONF blob (64KB max, padded with 0xFF).
+// Format: magic "SCv15" + version + item count (LE16) + item array.
+// We emit just one dummy item so the SDK doesn't trip over malformed data.
+static std::vector<uint8_t> make_sysconf() {
+  std::vector<uint8_t> sc(0x4000, 0xFF); // 16 KB, fill with 0xFF (NAND erase)
+  // Header
+  sc[0]='S'; sc[1]='C'; sc[2]='v'; sc[3]='1'; sc[4]='5';
+  sc[5] = 1;   // version
+  sc[6] = 0; sc[7] = 1; // numItems = 1 (big-endian)
+  // One SH (string-header) item: key="IPL.AR", value="NTSC"
+  // Item layout: type(1) keylen(1) key(keylen) datalen(2BE) data
+  uint8_t key[] = "IPL.AR";
+  uint8_t val[] = { 0, 4, 'N','T','S','C' }; // len=4 big-endian = {0,4} then data
+  int off = 8;
+  sc[off++] = 0x02; // type SH (short string)
+  sc[off++] = (uint8_t)(sizeof(key)-1);
+  for (auto c : key) if(c) sc[off++] = c;
+  for (auto b : val) sc[off++] = b;
+  return sc;
+}
+
+// setting.txt for Wii System Settings (text key=value pairs)
+static std::vector<uint8_t> make_setting_txt() {
+  const char* txt =
+    "AREA=USA\r\n"
+    "MODEL=RVL-001\r\n"
+    "DVD=0\r\n"
+    "MPCH=0x7FFE\r\n"
+    "CODE=0\r\n"
+    "SERNO=123456789\r\n"
+    "VIDEO=NTSC\r\n"
+    "GAME=US\r\n";
+  return std::vector<uint8_t>(txt, txt + strlen(txt));
+}
+
+static void vnand_init() {
+  if (g_vnand_init) return;
+  g_vnand_init = true;
+  g_vnand_files.push_back({"/shared2/sys/SYSCONF",                   make_sysconf()});
+  g_vnand_files.push_back({"/title/00000001/00000002/data/setting.txt", make_setting_txt()});
+  // Provide an empty play_rec.dat so DVDLow stats don't fail
+  g_vnand_files.push_back({"/title/00000001/00000002/data/play_rec.dat", std::vector<uint8_t>(0x20, 0)});
+  // dvderror.dat - empty is fine
+  g_vnand_files.push_back({"/shared2/test2/dvderror.dat", std::vector<uint8_t>(4, 0)});
+}
+
+// fd 20..27 = virtual NAND file slots
+static constexpr int VNAND_FD_BASE = 20;
+static constexpr int VNAND_FD_MAX  = 8;
+struct VNandHandle { int file_idx = -1; uint32_t pos = 0; bool open = false; };
+static VNandHandle g_vnand_handles[VNAND_FD_MAX];
+
+static int vnand_open(const std::string& path) {
+  vnand_init();
+  for (int i = 0; i < (int)g_vnand_files.size(); ++i) {
+    if (g_vnand_files[i].path == path) {
+      // Find a free handle slot
+      for (int s = 0; s < VNAND_FD_MAX; ++s) {
+        if (!g_vnand_handles[s].open) {
+          g_vnand_handles[s] = {i, 0, true};
+          return VNAND_FD_BASE + s;
+        }
+      }
+      return ISFS_ERROR_ENOENT; // no free slots
+    }
+  }
+  return ISFS_ERROR_ENOENT;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 // Disc reader
 static std::shared_ptr<std::ifstream> g_disc_file;
@@ -207,14 +315,19 @@ static void read_disc_data(uint8_t* dst, uint64_t offset, uint32_t length) {
     }
 }
 
-// Isolated callback execution
+// Isolated callback execution - saves ALL non-volatile state including FPR/GQR (#9)
 static void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2) {
   if (callback == 0 || callback == 0xFFFFFFFF) return;
 
   uint32_t b_gpr[32], b_lr = ctx.lr, b_ctr = ctx.ctr, b_xer = ctx.xer, b_pc = ctx.pc;
+  uint32_t b_msr = ctx.msr, b_fpscr = ctx.fpscr;
   ConditionField b_cr[8];
+  double b_fpr[32], b_ps1[32];
+  uint32_t b_gqr[8];
   for (int i = 0; i < 32; i++) b_gpr[i] = ctx.gpr[i];
-  for (int i = 0; i < 8; i++) b_cr[i] = ctx.cr[i];
+  for (int i = 0; i < 8;  i++) b_cr[i]  = ctx.cr[i];
+  for (int i = 0; i < 32; i++) { b_fpr[i] = ctx.fpr[i]; b_ps1[i] = ctx.ps1[i]; }
+  for (int i = 0; i < 8;  i++) b_gqr[i] = ctx.gqr[i];
 
   ctx.gpr[3] = arg1;
   ctx.gpr[4] = arg2;
@@ -224,11 +337,15 @@ static void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, 
   run_game(ctx);
 
   for (int i = 0; i < 32; i++) ctx.gpr[i] = b_gpr[i];
-  for (int i = 0; i < 8; i++) ctx.cr[i] = b_cr[i];
-  ctx.lr = b_lr;
-  ctx.ctr = b_ctr;
-  ctx.xer = b_xer;
-  ctx.pc = b_pc;
+  for (int i = 0; i < 8;  i++) ctx.cr[i]  = b_cr[i];
+  for (int i = 0; i < 32; i++) { ctx.fpr[i] = b_fpr[i]; ctx.ps1[i] = b_ps1[i]; }
+  for (int i = 0; i < 8;  i++) ctx.gqr[i] = b_gqr[i];
+  ctx.lr    = b_lr;
+  ctx.ctr   = b_ctr;
+  ctx.xer   = b_xer;
+  ctx.fpscr = b_fpscr;
+  ctx.msr   = b_msr;
+  ctx.pc    = b_pc;
 }
 
 // NEW: Proper DI_Read that handles both sync and async modes
@@ -329,7 +446,7 @@ void IOS_Open(CPUContext &ctx) {
     return;
   }
   uint32_t path_ptr = ctx.gpr[3];
-  std::cout << "[HLE IOS] IOS_Open called with r3=0x" << std::hex << path_ptr << " pc=0x" << ctx.pc << " lr=0x" << ctx.lr << std::dec << std::endl;
+  std::cout << "[HLE IOS] IOS_Open called with r3=0x" << std::hex << path_ptr << " r4=0x" << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << " r6=0x" << ctx.gpr[6] << " pc=0x" << ctx.pc << " lr=0x" << ctx.lr << std::dec << std::endl;
   std::string path = read_guest_string(ctx, path_ptr);
   
   if (path.empty()) {
@@ -456,7 +573,7 @@ void IOS_Ioctl(CPUContext &ctx) {
   if (fd >= 0 && fd < 16 && arg1 > 0 && arg1 <= 0x100000) {
     if (arg2 > 0 && arg2 < 0x80000000) {
       uint32_t align = (arg2 >= 32) ? arg2 : 32;
-      uint32_t ptr = ios_guest_alloc(ctx, arg1, align);
+      uint32_t ptr = ios_guest_alloc(ctx, arg1, align, (int)fd);
       std::cout << "[HLE IOS] iosAlloc: heap=" << fd << " size=" << arg1
                 << " align=" << align << " -> 0x" << std::hex << ptr << std::dec << std::endl;
       ctx.gpr[3] = ptr;
@@ -515,6 +632,11 @@ void IOS_Ioctl(CPUContext &ctx) {
       std::cout << "[HLE IOS] Unhandled /dev/di ioctl: 0x" << std::hex << arg1 << std::dec << std::endl;
       ctx.gpr[3] = 1;
     }
+  } else if (fd == 15) { // Fake USB
+    std::cout << "[HLE IOS] Fake USB ioctl: 0x" << std::hex << arg1 << std::dec << std::endl;
+    ctx.gpr[3] = 1;
+  } else if (fd >= 10 && fd <= 12) { // USB HID
+      ctx.gpr[3] = IPC_OK;
   } else {
     ctx.gpr[3] = IPC_OK;
   }
@@ -554,7 +676,7 @@ void IOS_IoctlAsync(CPUContext &ctx) {
 
     if (cmd == 0 || cmd > 7) {
       std::cout << "[HLE IOS] iosQueueMessage: invalid cmd=" << cmd
-                << " ipc=0x" << std::hex << ipc_ptr << std::dec << std::endl;
+                << " ipc=0x" << std::hex << ipc_ptr << " lr=0x" << ctx.lr << std::dec << std::endl;
       ctx.gpr[3] = IPC_EIO;
       ctx.pc = ctx.lr;
       return;
@@ -577,11 +699,20 @@ void IOS_IoctlAsync(CPUContext &ctx) {
         std::cout << "[HLE IOS] iosQueueMessage OPEN: path='" << path << "' -> fd=" << result_fd << std::endl;
         ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)result_fd);
       } else {
-        std::cout << "[HLE IOS] iosQueueMessage OPEN: NAND file '" << path << "' not found. Returning -106." << std::endl;
-        ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)ISFS_ERROR_ENOENT);
+        // Try virtual NAND first (#4)
+        int vfd = vnand_open(path);
+        if (vfd >= 0) {
+          std::cout << "[HLE IOS] iosQueueMessage OPEN: VNAND '" << path << "' -> fd=" << vfd << std::endl;
+          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)vfd);
+        } else {
+          std::cout << "[HLE IOS] iosQueueMessage OPEN: NAND file '" << path << "' not found. Returning -106." << std::endl;
+          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)ISFS_ERROR_ENOENT);
+        }
       }
     } else if (cmd == 2) { // IOS_Close
       std::cout << "[HLE IOS] iosQueueMessage CLOSE: fd=" << fd << std::endl;
+      if (fd >= VNAND_FD_BASE && fd < VNAND_FD_BASE + VNAND_FD_MAX)
+        g_vnand_handles[fd - VNAND_FD_BASE].open = false;
       ctx.mmu.write32(ipc_ptr + 0x04, 0);
     } else if (cmd == 3) { // IOS_Read
       uint32_t buf = ctx.mmu.read32(ipc_ptr + 0x0C);
@@ -590,10 +721,27 @@ void IOS_IoctlAsync(CPUContext &ctx) {
         if (buf < 0x01800000 || (buf >= 0x10000000 && buf < 0x14000000))
           buf |= 0x80000000;
       }
-      for (uint32_t i = 0; i < len; ++i)
-        ctx.mmu.write8(buf + i, 0);
-      std::cout << "[HLE IOS] iosQueueMessage READ: fd=" << fd << " len=" << len << std::endl;
-      ctx.mmu.write32(ipc_ptr + 0x04, len);
+      // Serve from virtual NAND if possible
+      if (fd >= VNAND_FD_BASE && fd < VNAND_FD_BASE + VNAND_FD_MAX) {
+        auto& h = g_vnand_handles[fd - VNAND_FD_BASE];
+        if (h.open && h.file_idx >= 0) {
+          auto& fdata = g_vnand_files[h.file_idx].data;
+          uint32_t avail = (h.pos < fdata.size()) ? (uint32_t)(fdata.size() - h.pos) : 0;
+          uint32_t to_read = std::min(len, avail);
+          for (uint32_t i = 0; i < to_read; ++i)
+            ctx.mmu.write8(buf + i, fdata[h.pos + i]);
+          h.pos += to_read;
+          std::cout << "[HLE IOS] iosQueueMessage READ VNAND: fd=" << fd << " len=" << to_read << "/" << len << std::endl;
+          ctx.mmu.write32(ipc_ptr + 0x04, to_read);
+        } else {
+          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
+        }
+      } else {
+        for (uint32_t i = 0; i < len; ++i)
+          ctx.mmu.write8(buf + i, 0);
+        std::cout << "[HLE IOS] iosQueueMessage READ: fd=" << fd << " len=" << len << std::endl;
+        ctx.mmu.write32(ipc_ptr + 0x04, len);
+      }
     } else if (cmd == 4) { // IOS_Write
       uint32_t len = ctx.mmu.read32(ipc_ptr + 0x10);
       std::cout << "[HLE IOS] iosQueueMessage WRITE: fd=" << fd << " len=" << len << std::endl;
@@ -607,39 +755,75 @@ void IOS_IoctlAsync(CPUContext &ctx) {
       uint32_t out_len = ctx.mmu.read32(ipc_ptr + 0x1C);
       std::cout << "[HLE IOS] iosQueueMessage IOCTL: fd=" << fd << " cmd=0x"
                 << std::hex << ioctl_cmd << std::dec << std::endl;
-      
+
       if (fd == 5 && ioctl_cmd == 0x1000) {
         std::cout << "  -> STM_EVENTHOOK: leaving request pending\n";
         ctx.gpr[3] = IPC_OK;
         ctx.pc = ctx.lr;
         return;
-      }
-      if (fd < 0) {
+      } else if (fd < 0) {
         ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
       } else if (fd == 2) {
-        // /dev/di ioctls via queue
-        if (ioctl_cmd == 0x8E && out_buf != 0 && out_len >= 32) {
-          for (int i = 0; i < 32; i++) ctx.mmu.write8(out_buf + i, 0);
-          ctx.mmu.write8(out_buf + 0, 'R');
-          ctx.mmu.write8(out_buf + 1, 'S');
-          ctx.mmu.write8(out_buf + 2, 'Z');
-          ctx.mmu.write8(out_buf + 3, 'K');
-          ctx.mmu.write32(out_buf + 0x18, 0x5D1C9EA3);
-          std::cout << "[HLE IOS] DI_ReadDiskID via queue" << std::endl;
+        // /dev/di ioctls
+        // IMPORTANT: DVDLow callbacks treat result=0 as error (IPC_OK is misleading here)
+        // Most ioctls must return 1 (success), ReadDiskID returns 32 (bytes), DI_Read returns bytes_read
+        if (ioctl_cmd == 0x86) {
+          std::cout << "  -> DI_ClearCoverInterrupt\n";
           ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0x12) {
+          // DVDLowInquiry - zero-fill output buffer (29-byte drive info struct)
+          std::cout << "  -> DI_Inquiry\n";
+          if (out_buf != 0 && out_len >= 4)
+            for (uint32_t i = 0; i < out_len; ++i) ctx.mmu.write8(out_buf + i, 0);
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0x8E && out_buf != 0 && out_len >= 32) {
+          // DVDLowReadDiskID - write 32-byte disc header using config game_id (#10)
+          const std::string& gid = Config::get().game_id;
+          for (int i = 0; i < 32; i++) ctx.mmu.write8(out_buf + i, 0);
+          for (int i = 0; i < 4 && i < (int)gid.size(); ++i)
+            ctx.mmu.write8(out_buf + i, (uint8_t)gid[i]);
+          ctx.mmu.write32(out_buf + 0x18, 0x5D1C9EA3); // Wii disc magic
+          std::cout << "  -> DI_ReadDiskID: " << gid << "\n";
+          ctx.mmu.write32(ipc_ptr + 0x04, 32); // 32 bytes read
         } else if (ioctl_cmd == 0x80) {
-          std::cout << "[HLE IOS] DI_Reset via queue" << std::endl;
+          std::cout << "  -> DI_Reset\n";
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0xE0) {
+          // DVDLowGetCoverRegister
+          std::cout << "  -> DI_GetCoverRegister\n";
+          if (out_buf != 0 && out_len >= 4) ctx.mmu.write32(out_buf, 0);
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0x60) {
+          // DVDLowGetError
+          std::cout << "  -> DI_GetError\n";
+          if (out_buf != 0 && out_len >= 4) ctx.mmu.write32(out_buf, 0);
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0xE3) {
+          // DVDLowStopMotor
+          std::cout << "  -> DI_StopMotor\n";
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0x95) {
+          // DVDLowMotorStopped / motor status
+          std::cout << "  -> DI_0x95 (MotorStopped)\n";
+          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+        } else if (ioctl_cmd == 0x96) {
+          // DVDLow0x96 (unknown, likely drive ready check)
+          std::cout << "  -> DI_0x96\n";
           ctx.mmu.write32(ipc_ptr + 0x04, 1);
         } else if (ioctl_cmd == 0x20 && out_buf != 0 && out_len > 0) {
-          // DI_Read via queue - out_buf is the DICommand structure
-          std::cout << "[HLE IOS] iosQueueMessage DI_Read: inbuf=0x" << std::hex << out_buf << std::endl;
-          // For queue-based DI_Read, we need to read callback from the request
-          uint32_t callback = ctx.mmu.read32(ipc_ptr + 0x20); // callback in request
-          uint32_t userdata = ctx.mmu.read32(ipc_ptr + 0x24);
-          di_read_internal(ctx, out_buf, callback, userdata, true); // async = invoke callback
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+          // DI_Read - out_buf is the DICommand structure
+          std::cout << "  -> DI_Read inbuf=0x" << std::hex << out_buf << std::dec << "\n";
+          uint32_t callback_r = ctx.mmu.read32(ipc_ptr + 0x20);
+          uint32_t userdata_r = ctx.mmu.read32(ipc_ptr + 0x24);
+          di_read_internal(ctx, out_buf, callback_r, userdata_r, true);
+          // Result must be bytes transferred (>0 = success)
+          uint32_t bytes_read = ctx.mmu.read32(out_buf + 0x04); // transferredSize
+          if (bytes_read == 0) bytes_read = ctx.mmu.read32(out_buf + 0x18); // try length
+          if (bytes_read == 0) bytes_read = 1;
+          ctx.mmu.write32(ipc_ptr + 0x04, bytes_read);
         } else {
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
+          std::cout << "  -> Unhandled DI ioctl: 0x" << std::hex << ioctl_cmd << std::dec << "\n";
+          ctx.mmu.write32(ipc_ptr + 0x04, 1); // default: success
         }
       } else {
         ctx.mmu.write32(ipc_ptr + 0x04, IPC_OK);
@@ -678,6 +862,9 @@ void IOS_IoctlAsync(CPUContext &ctx) {
       
       if (fd < 0) {
         ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
+      } else if (fd == 15) {
+        std::cout << "  -> Fake USB IOCTLV: returning OK\n";
+        ctx.mmu.write32(ipc_ptr + 0x04, 1);
       } else if (fd == 2) {
         ctx.mmu.write32(ipc_ptr + 0x04, 1);
         // Wait, if it's IOCTLV cmd=0 for fd=2, we might need to do something?

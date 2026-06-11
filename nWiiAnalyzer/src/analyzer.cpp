@@ -228,7 +228,7 @@ void Analyzer::analyze() {
       0x8022b000,
   };
   // RVL_SDK IPC/FS module: callbacks are often registered at runtime only.
-  for (uint32_t addr = 0x80220000; addr < 0x80260000; addr += 0x10) {
+  for (uint32_t addr = 0x80210000; addr < 0x80260000; addr += 0x10) {
     hints.push_back(addr);
   }
   for (uint32_t hint : hints) {

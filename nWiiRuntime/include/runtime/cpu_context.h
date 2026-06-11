@@ -337,7 +337,6 @@ struct CPUContext {
         (st_type == 0) ? 4 : ((st_type == 4 || st_type == 6) ? 1 : 2);
 
     store_element(addr, fpr[frS]);
-    store_element(addr, fpr[frS]);
     if (W == 0) {
       store_element(addr + elem_size, ps1[frS]);
     }

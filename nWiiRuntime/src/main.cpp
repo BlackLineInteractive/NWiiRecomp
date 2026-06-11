@@ -117,11 +117,7 @@ int main(int argc, char** argv) {
     std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
     std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
 
-    // Console type = Emulator / Cold Boot (0)
-    ctx.mmu.mem1[0x24] = 0x00;
-    ctx.mmu.mem1[0x25] = 0x00;
-    ctx.mmu.mem1[0x26] = 0x00;
-    ctx.mmu.mem1[0x27] = 0x00;
+    // ConsoleType was already set to 0x00000002 (Wii Retail) above - do NOT overwrite it here!
 
     std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
     std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
