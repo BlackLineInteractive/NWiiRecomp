@@ -140,18 +140,26 @@ static bool g_vnand_init = false;
 static std::vector<uint8_t> make_sysconf() {
   std::vector<uint8_t> sc(0x4000, 0xFF); // 16 KB, fill with 0xFF (NAND erase)
   // Header
-  sc[0]='S'; sc[1]='C'; sc[2]='v'; sc[3]='1'; sc[4]='5';
-  sc[5] = 1;   // version
-  sc[6] = 0; sc[7] = 1; // numItems = 1 (big-endian)
-  // One SH (string-header) item: key="IPL.AR", value="NTSC"
-  // Item layout: type(1) keylen(1) key(keylen) datalen(2BE) data
-  uint8_t key[] = "IPL.AR";
-  uint8_t val[] = { 0, 4, 'N','T','S','C' }; // len=4 big-endian = {0,4} then data
-  int off = 8;
-  sc[off++] = 0x02; // type SH (short string)
-  sc[off++] = (uint8_t)(sizeof(key)-1);
-  for (auto c : key) if(c) sc[off++] = c;
-  for (auto b : val) sc[off++] = b;
+  sc[0]='S'; sc[1]='C'; sc[2]='v'; sc[3]='0'; // SCv0 magic (4 bytes)
+  sc[4] = 1;   // version
+  sc[5] = 0; sc[6] = 1; // numItems = 1 (big-endian)
+  
+  // One item: key="IPL.AR", value="NTSC"
+  // Byte 0: type(3 bits) | name_len - 1 (5 bits)
+  // type 2 = SmallArray. name_len = 6 ("IPL.AR"). So 0x40 | 5 = 0x45.
+  // Wait, type 2 is 010. So 2 << 5 = 0x40. length 6. 6-1=5. 0x40 | 5 = 0x45.
+  int off = 8; // data starts at offset 8 (pad byte at 7?) No, SCv0 + ver + numItems = 7 bytes.
+  // Actually, item offsets in SYSCONF:
+  // 0-3: SCv0
+  // 4: version (1)
+  // 5-6: numItems (1)
+  off = 7;
+  sc[off++] = 0x45; // Type 2 (SmallArray), Length 6
+  sc[off++] = 'I'; sc[off++] = 'P'; sc[off++] = 'L'; sc[off++] = '.'; sc[off++] = 'A'; sc[off++] = 'R';
+  // SmallArray length byte: total array length - 1
+  // "NTSC" is 4 bytes. 4 - 1 = 3.
+  sc[off++] = 0x03;
+  sc[off++] = 'N'; sc[off++] = 'T'; sc[off++] = 'S'; sc[off++] = 'C';
   return sc;
 }
 
@@ -316,7 +324,7 @@ static void read_disc_data(uint8_t* dst, uint64_t offset, uint32_t length) {
 }
 
 // Isolated callback execution - saves ALL non-volatile state including FPR/GQR (#9)
-static void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2) {
+void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2) {
   if (callback == 0 || callback == 0xFFFFFFFF) return;
 
   uint32_t b_gpr[32], b_lr = ctx.lr, b_ctr = ctx.ctr, b_xer = ctx.xer, b_pc = ctx.pc;
@@ -430,12 +438,7 @@ static void di_read_internal(CPUContext &ctx, uint32_t inbuf, uint32_t callback,
         ctx.mmu.write32(ipc_ptr + 0x20, bytes_read); // transferredSize
     }
     
-    // For async mode, invoke callback
-    if (is_async && valid_callback(callback)) {
-        std::cout << "[HLE IOS] DI_Read: Invoking callback 0x" << std::hex << callback << std::dec << std::endl;
-        execute_callback(ctx, callback, success ? 1 : 0, userdata);
-    }
-    
+    // For async mode, the callback will be triggered by IOS_IoctlAsync via HW IPC.
     ctx.gpr[3] = success ? 1 : 0;
 }
 
@@ -891,8 +894,8 @@ void IOS_IoctlAsync(CPUContext &ctx) {
     ipc_mark_sent(ctx);
 
     if (valid_callback(callback)) {
-      std::cout << "  -> Invoking callback 0x" << std::hex << callback << std::dec << std::endl;
-      execute_callback(ctx, callback, result, userdata);
+      std::cout << "  -> Triggering HW IPC interrupt for callback 0x" << std::hex << callback << std::dec << std::endl;
+      hle_set_ipc_arm_msg(ipc_ptr);
     } else if (callback != 0 && callback != 0xFFFFFFFFu) {
       std::cout << "  -> Ignoring invalid callback 0x" << std::hex << callback << std::dec << std::endl;
     }

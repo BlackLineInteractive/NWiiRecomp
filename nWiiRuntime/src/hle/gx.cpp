@@ -18,7 +18,7 @@ struct GXFifoObj {
 static GXFifoObj g_cpu_fifo = {0};
 static GXFifoObj g_gp_fifo = {0};
 
-extern "C" {
+
 
 void GXInitFifoBase(CPUContext& ctx) {
     uint32_t fifo_ptr = ctx.gpr[3];
@@ -145,7 +145,8 @@ static void push_fifo(uint8_t* data, size_t size) {
     // Also increase count, though HLE might not need strict accounting unless polled
     g_cpu_fifo.count += size;
 }
-
+namespace nwii {
+namespace runtime {
 void GX_WGPIPE_Write8(uint8_t val) {
     push_fifo(&val, 1);
     if (!g_in_begin) return;
@@ -176,4 +177,5 @@ void GX_WGPIPE_WriteF32(float val) {
     }
 }
 
-} // extern "C"
+}
+}

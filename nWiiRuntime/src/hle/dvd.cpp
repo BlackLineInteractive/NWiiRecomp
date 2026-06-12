@@ -15,7 +15,7 @@ static std::unordered_map<uint32_t, std::shared_ptr<std::ifstream>> g_open_dvd_f
 // Forward declare execute_callback from ios.cpp
 extern void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2);
 
-extern "C" {
+
 
 // Initialize DVD subsystem
 void DVDInit(CPUContext& ctx) {
@@ -169,4 +169,3 @@ void DVDReadPrio(CPUContext& ctx) {
     }
 }
 
-} // extern "C"

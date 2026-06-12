@@ -19,7 +19,6 @@ struct ConditionField {
   ConditionField() : lt(false), gt(false), eq(false), so(false) {}
 };
 
-extern "C" {
 void GX_WGPIPE_Write8(uint8_t val);
 void GX_WGPIPE_Write16(uint16_t val);
 void GX_WGPIPE_Write32(uint32_t val);
@@ -29,7 +28,6 @@ uint16_t HW_Reg_Read16(uint32_t addr);
 uint32_t HW_Reg_Read32(uint32_t addr);
 void HW_Reg_Write16(uint32_t addr, uint16_t val);
 void HW_Reg_Write32(uint32_t addr, uint32_t val);
-}
 
 struct CPUContext;
 void init_ipc_client(CPUContext& ctx);
@@ -139,23 +137,6 @@ struct MMU {
         paddr == 0x00003118 || paddr == 0x0000311C || paddr == 0x00003124 ||
         paddr == 0x00003128 || paddr == 0x00003130 || paddr == 0x00003134) {
       return; 
-    }
-
-    // HW IOS IPC hack
-    // Without HLE symbols, we have to fake the response right at the hardware level.
-    if (paddr == 0x0D000000) { // 0xCD000000 (HW_IPC_REQ)
-      uint32_t req_addr = value | 0x80000000; // Convert physical buffer address to virtual
-      
-      // Read the command the game is sending
-      uint32_t cmd = read32(req_addr); 
-      std::cout << "[HW_IPC] Received IOS request! Command: " << cmd << " at 0x" << std::hex << req_addr << std::dec << "\n";
-      
-      // Fake an immediate success by writing 1 to the result field
-      write32(req_addr + 4, 1);
-      
-      // Acknowledge the request to the hardware
-      write32(0xCD000004, value);
-      return;
     }
 
     if (addr == 0xCC008000) {
@@ -436,26 +417,36 @@ struct CPUContext {
     ps1[D] = ps1[B];
   }
   inline void ps_cmpu0(uint32_t crD, uint32_t A, uint32_t B) {
-    cr[crD].lt = fpr[A] < fpr[B];
-    cr[crD].gt = fpr[A] > fpr[B];
-    cr[crD].eq = fpr[A] == fpr[B];
+    bool un = std::isnan(fpr[A]) || std::isnan(fpr[B]);
+    cr[crD].lt = !un && (fpr[A] < fpr[B]);
+    cr[crD].gt = !un && (fpr[A] > fpr[B]);
+    cr[crD].eq = !un && (fpr[A] == fpr[B]);
+    cr[crD].so = un;
   }
   inline void ps_cmpo0(uint32_t crD, uint32_t A, uint32_t B) {
-    cr[crD].lt = fpr[A] < fpr[B];
-    cr[crD].gt = fpr[A] > fpr[B];
-    cr[crD].eq = fpr[A] == fpr[B];
+    bool un = std::isnan(fpr[A]) || std::isnan(fpr[B]);
+    cr[crD].lt = !un && (fpr[A] < fpr[B]);
+    cr[crD].gt = !un && (fpr[A] > fpr[B]);
+    cr[crD].eq = !un && (fpr[A] == fpr[B]);
+    cr[crD].so = un;
   }
   inline void ps_cmpu1(uint32_t crD, uint32_t A, uint32_t B) {
-    cr[crD].lt = ps1[A] < ps1[B];
-    cr[crD].gt = ps1[A] > ps1[B];
-    cr[crD].eq = ps1[A] == ps1[B];
+    bool un = std::isnan(ps1[A]) || std::isnan(ps1[B]);
+    cr[crD].lt = !un && (ps1[A] < ps1[B]);
+    cr[crD].gt = !un && (ps1[A] > ps1[B]);
+    cr[crD].eq = !un && (ps1[A] == ps1[B]);
+    cr[crD].so = un;
   }
   inline void ps_cmpo1(uint32_t crD, uint32_t A, uint32_t B) {
-    cr[crD].lt = ps1[A] < ps1[B];
-    cr[crD].gt = ps1[A] > ps1[B];
-    cr[crD].eq = ps1[A] == ps1[B];
+    bool un = std::isnan(ps1[A]) || std::isnan(ps1[B]);
+    cr[crD].lt = !un && (ps1[A] < ps1[B]);
+    cr[crD].gt = !un && (ps1[A] > ps1[B]);
+    cr[crD].eq = !un && (ps1[A] == ps1[B]);
+    cr[crD].so = un;
   }
 };
+
+void hle_set_ipc_arm_msg(uint32_t req_addr);
 
 } // namespace runtime
 } // namespace nwii

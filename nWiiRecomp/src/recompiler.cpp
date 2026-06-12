@@ -1179,14 +1179,13 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    // mcrfs stub\n";
     } else if (xo == 0 || xo == 32) { // fcmpu / fcmpo
       uint32_t crfD = fD >> 2;
-      out << "    ctx.cr[" << crfD << "].lt = (ctx.fpr[" << fA << "] < ctx.fpr["
-          << fB << "]);\n";
-      out << "    ctx.cr[" << crfD << "].gt = (ctx.fpr[" << fA << "] > ctx.fpr["
-          << fB << "]);\n";
-      out << "    ctx.cr[" << crfD << "].eq = (ctx.fpr[" << fA
-          << "] == ctx.fpr[" << fB << "]);\n";
-      out << "    ctx.cr[" << crfD << "].so = std::isnan(ctx.fpr[" << fA
-          << "]) || std::isnan(ctx.fpr[" << fB << "]);\n";
+      out << "    {\n";
+      out << "        bool un = std::isnan(ctx.fpr[" << fA << "]) || std::isnan(ctx.fpr[" << fB << "]);\n";
+      out << "        ctx.cr[" << crfD << "].lt = !un && (ctx.fpr[" << fA << "] < ctx.fpr[" << fB << "]);\n";
+      out << "        ctx.cr[" << crfD << "].gt = !un && (ctx.fpr[" << fA << "] > ctx.fpr[" << fB << "]);\n";
+      out << "        ctx.cr[" << crfD << "].eq = !un && (ctx.fpr[" << fA << "] == ctx.fpr[" << fB << "]);\n";
+      out << "        ctx.cr[" << crfD << "].so = un;\n";
+      out << "    }\n";
     } else {
       out << "    std::cerr << \"UNIMPLEMENTED Opcode 63 XO \" << " << xo
           << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; "
@@ -1810,15 +1809,27 @@ void Recompiler::emit_instruction(std::ostream &out,
         << ppc_inst.simm() << " - (int32_t)ctx.gpr[" << ppc_inst.ra()
         << "]); // subfic\n";
   } else if (ppc_inst.opcode() == 12) { // addic
-    out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.gpr[" << ppc_inst.ra()
-        << "] + " << ppc_inst.simm() << "; // addic\n";
+    uint32_t rD = ppc_inst.rd();
+    uint32_t rA = ppc_inst.ra();
+    int32_t simm = ppc_inst.simm();
+    out << "    {\n";
+    out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+    out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // CA\n";
+    out << "    }\n";
   } else if (ppc_inst.opcode() == 13) { // addic.
     uint32_t rD = ppc_inst.rd();
-    out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << ppc_inst.ra() << "] + "
-        << ppc_inst.simm() << "; // addic.\n";
-    out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0);\n";
-    out << "    ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0);\n";
-    out << "    ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+    uint32_t rA = ppc_inst.ra();
+    int32_t simm = ppc_inst.simm();
+    out << "    {\n";
+    out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
+    out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << 29); // CA\n";
+    out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD << "] < 0);\n";
+    out << "        ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD << "] > 0);\n";
+    out << "        ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+    out << "        ctx.cr[0].so = (ctx.xer >> 31) & 1;\n";
+    out << "    }\n";
   } else if (ppc_inst.opcode() == 15) { // addis
     uint32_t rA = ppc_inst.ra();
     if (rA == 0)

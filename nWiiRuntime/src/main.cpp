@@ -114,13 +114,13 @@ int main(int argc, char** argv) {
     ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
     ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
     
-    std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
-    std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
+    std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << ctx.mmu.read32(0x24) << "\n";
+    std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << ctx.mmu.read32(0x3118) << "\n";
 
     // ConsoleType was already set to 0x00000002 (Wii Retail) above - do NOT overwrite it here!
 
-    std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x24] << "\n";
-    std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << *(uint32_t*)&ctx.mmu.mem1[0x3118] << "\n";
+    std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << ctx.mmu.read32(0x24) << "\n";
+    std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << ctx.mmu.read32(0x3118) << "\n";
     
     nwii::runtime::g_mmu = &ctx.mmu;
     nwii::runtime::init_ipc_client(ctx);

@@ -25,6 +25,7 @@ void OSReport(CPUContext &ctx) {
 
   std::string result;
   int arg_idx = 4; // PowerPC arguments start at r4
+  int fpr_idx = 1; // PowerPC float arguments start at f1
 
   for (size_t i = 0; i < format_str.length(); ++i) {
     if (format_str[i] == '%') {
@@ -66,8 +67,14 @@ void OSReport(CPUContext &ctx) {
             result += "(null)";
           }
         } else if (type == 'f') {
-          result += "[float_FPR]"; // Floats are passed in registers f1-f8,
-                                   // temporarily ignoring
+          char buf[64];
+          if (fpr_idx <= 8) {
+            std::snprintf(buf, sizeof(buf), specifier.c_str(), ctx.fpr[fpr_idx++]);
+          } else {
+            // If more than 8 floats, they are passed on the stack or something, but usually there aren't that many.
+            std::snprintf(buf, sizeof(buf), "[float_spilled]");
+          }
+          result += buf;
         } else {
           result += specifier;
         }
@@ -84,11 +91,11 @@ void OSInit(CPUContext &ctx) {
   std::cout << "[OSInit] System initialized." << std::endl;
 }
 
-namespace nwii::runtime {
+namespace nwii {
+namespace runtime {
 extern MMU *g_mmu;
 }
-
-extern "C" {
+}
 
 static uint32_t vi_vblank_counter = 0;
 
@@ -99,6 +106,19 @@ static uint16_t dsp_mbox_dsp_lo = 0;
 
 static uint32_t ipc_arm_msg = 0;  // HW_IPC_ARMMSG  (0xCD000008)
 static uint32_t ipc_arm_ctrl = 0; // HW_IPC_ARMCTRL (0xCD00000C)
+static uint32_t ipc_ppc_ctrl = 0; // HW_IPC_PPCCTRL (0xCD000004)
+static uint32_t pi_intsr = 0;     // PI_INTSR (0xCC003000)
+
+namespace nwii {
+namespace runtime {
+void hle_set_ipc_arm_msg(uint32_t req_addr) {
+  ipc_arm_msg = req_addr & 0x1FFFFFFF;
+  ipc_arm_ctrl = 0x00000002; // bit1 = Y2
+  ipc_ppc_ctrl |= 0x00000004; // bit2 = X2 (response ready)
+  pi_intsr |= 0x00001000; // Trigger PI interrupt for IPC (usually bit 12 or 14)
+}
+}
+}
 
 // g_mmu declaration moved outside extern "C"
 static void ipc_fake_ack(uint32_t request_addr) {
@@ -128,6 +148,8 @@ static void ipc_fake_ack(uint32_t request_addr) {
   }
 }
 
+namespace nwii {
+namespace runtime {
 uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 
 uint32_t HW_Reg_Read32(uint32_t addr) {
@@ -137,7 +159,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     case 0x000000:
       return 0; // HW_IPC_PPCMSG
     case 0x000004:
-      return 0; // HW_IPC_PPCCTRL
+      return ipc_ppc_ctrl; // HW_IPC_PPCCTRL
     case 0x000008:
       return ipc_arm_msg; // HW_IPC_ARMMSG
     case 0x00000C:
@@ -152,6 +174,8 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
 
   // PI (Processor Interface) - interrupts
   if (addr >= 0xCC003000 && addr <= 0xCC0030FF) {
+    if (addr == 0xCC003000)
+      return pi_intsr;
     if (addr == 0xCC00302C)
       return 0x00000020; // PI_CPUREV (Hardware Revision)
     return 0;            // PI Interrupt Cause/Mask = 0 (no pending interrupts)
@@ -189,7 +213,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
   // DI (DVD Interface) - CRITICAL FIX: Return TCINT so games see transfer complete
   if (addr >= 0xCC006000 && addr <= 0xCC0060FF) {
     if (addr == 0xCC006000)
-      return 0x00000020; // DI_SR: TCINT = transfer complete, no error
+      return 0x00000008; // DI_SR: TCINT = transfer complete, no error
     if (addr == 0xCC006004)
       return 1; // DI_COVER: cover closed, disc present
     if (addr == 0xCC006008)
@@ -217,7 +241,9 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
       break;
     }
     case 0x000004:
-      // HW_IPC_PPCCTRL: game sets 1 meaning "request sent" (ignored)
+      // HW_IPC_PPCCTRL: game clears bits or sets them
+      // In a real Wii, writing 1 to X1/Y1 clears them. We'll simplify and just clear X2 if requested.
+      if (val & 0x00000008) ipc_ppc_ctrl &= ~0x00000004; // Clear X2 on Ack?
       break;
     case 0x00000C:
       // HW_IPC_ARMCTRL: game writes 0 to confirm receipt of response
@@ -232,6 +258,14 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
 
   // --- GC hardware registers (0xCC000000) ---
   addr = (addr & 0x00FFFFFF) | 0xCC000000;
+
+  if (addr >= 0xCC003000 && addr <= 0xCC0030FF) {
+    if (addr == 0xCC003000) {
+      // Writing to PI_INTSR clears bits
+      pi_intsr &= ~val;
+    }
+    return;
+  }
 
   if (addr >= 0xCC005000 && addr <= 0xCC0050FF) {
     if (addr == 0xCC005000 || addr == 0xCC005002) {
@@ -249,8 +283,9 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
   }
   // Other GC registers - ignored
 }
+}
+} // namespace nwii::runtime
 
-} // extern "C"
 
 #include <chrono>
 
@@ -260,8 +295,6 @@ static uint64_t get_os_time() {
              now.time_since_epoch())
       .count();
 }
-
-extern "C" {
 
 // Interrupt Management
 uint32_t OSDisableInterrupts(CPUContext &ctx) {
@@ -316,4 +349,14 @@ void OSSetArenaLo(CPUContext &ctx) { ctx.mmu.write32(0x80000030, ctx.gpr[3]); }
 
 void OSSetArenaHi(CPUContext &ctx) { ctx.mmu.write32(0x80000034, ctx.gpr[3]); }
 
-} // extern "C"
+void VISetBlack(CPUContext &ctx) {
+  // Ignore
+}
+
+void VIGetNextField(CPUContext &ctx) {
+  ctx.gpr[3] = 0;
+}
+
+void PADInit(CPUContext &ctx) {
+  std::cout << "[HLE PAD] PADInit called" << std::endl;
+}
