@@ -18,6 +18,8 @@ NO_GitHub/
 *.iso
 *.wbfs
 
+NWii-documentation/
+
 # CMake
 CMakeCache.txt
 CMakeFiles
@@ -33,4 +35,3 @@ log.txt
 
 # Configuration files
 *.toml
-recomp_config.toml

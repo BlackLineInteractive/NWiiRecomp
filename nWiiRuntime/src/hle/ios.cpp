@@ -442,6 +442,7 @@ static void di_read_internal(CPUContext &ctx, uint32_t inbuf, uint32_t callback,
     ctx.gpr[3] = success ? 1 : 0;
 }
 
+extern "C" {
 void IOS_Open(CPUContext &ctx) {
   if (Config::get().platform == Platform::GameCube) {
     ctx.gpr[3] = -1;
@@ -475,7 +476,12 @@ void IOS_Open(CPUContext &ctx) {
   
   int fd_or_error;
   if (path.find("/dev/") == 0) {
-    fd_or_error = get_device_fd(path);
+    if (path.find("/dev/usb/") == 0) {
+      fd_or_error = 10; // Fake FD for USB devices
+      std::cout << "[HLE IOS] IOS_Open: faking /dev/usb -> fd=10" << std::endl;
+    } else {
+      fd_or_error = get_device_fd(path);
+    }
   } else {
     fd_or_error = ISFS_ERROR_ENOENT;
   }
@@ -566,24 +572,7 @@ void IOS_Ioctl(CPUContext &ctx) {
 
   int32_t fd = (int32_t)ctx.gpr[3];
   uint32_t arg1 = ctx.gpr[4]; // cmd
-  uint32_t arg2 = ctx.gpr[5]; // arg (inbuf for ioctl)
-
-  // iosAllocAligned heuristic
-  // In iosAlloc, r3 = heap, r4 = size, r5 = align.
-  // In IOS_Ioctl, r3 = fd, r4 = cmd, r5 = inbuf.
-  // We can distinguish them because 'align' is typically a small positive integer (e.g., 32),
-  // whereas 'inbuf' is a pointer (>= 0x80000000) or NULL (0).
-  if (fd >= 0 && fd < 16 && arg1 > 0 && arg1 <= 0x100000) {
-    if (arg2 > 0 && arg2 < 0x80000000) {
-      uint32_t align = (arg2 >= 32) ? arg2 : 32;
-      uint32_t ptr = ios_guest_alloc(ctx, arg1, align, (int)fd);
-      std::cout << "[HLE IOS] iosAlloc: heap=" << fd << " size=" << arg1
-                << " align=" << align << " -> 0x" << std::hex << ptr << std::dec << std::endl;
-      ctx.gpr[3] = ptr;
-      ctx.pc = ctx.lr;
-      return;
-    }
-  }
+  uint32_t arg2 = ctx.gpr[5]; // inbuf
 
   std::cout << "[HLE IOS] IOS_Ioctl: fd=" << fd << " cmd=0x" << std::hex << arg1 << std::dec << std::endl;
   
@@ -663,251 +652,62 @@ void IOS_Ioctlv(CPUContext &ctx) {
   ctx.pc = ctx.lr;
 }
 
+// iosFree: frees a block from the IOS heap. Hook this at the real iosFree address.
+void iosFree(CPUContext &ctx) {
+  uint32_t heap_id = ctx.gpr[3];
+  uint32_t ptr = ctx.gpr[4];
+  std::cout << "[HLE IOS] iosFree: heap=" << heap_id
+            << " ptr=0x" << std::hex << ptr << std::dec << std::endl;
+  ctx.gpr[3] = 0; // IPC_OK
+  ctx.pc = ctx.lr;
+}
+
 void IOS_IoctlAsync(CPUContext &ctx) {
   if (Config::get().platform == Platform::GameCube) {
     ctx.gpr[3] = -1;
-    return;
-  }
-
-  uint32_t queue_id = ctx.gpr[3];
-  uint32_t ipc_ptr = ctx.gpr[4];
-
-  if (ipc_ptr >= 0x80000000 && ipc_ptr < 0x94000000) {
-    uint32_t cmd = ctx.mmu.read32(ipc_ptr + 0x00);
-    int32_t fd = (int32_t)ctx.mmu.read32(ipc_ptr + 0x08);
-    int32_t return_r3 = IPC_OK;
-
-    if (cmd == 0 || cmd > 7) {
-      std::cout << "[HLE IOS] iosQueueMessage: invalid cmd=" << cmd
-                << " ipc=0x" << std::hex << ipc_ptr << " lr=0x" << ctx.lr << std::dec << std::endl;
-      ctx.gpr[3] = IPC_EIO;
-      ctx.pc = ctx.lr;
-      return;
-    }
-
-    if (cmd == 1) { // IOS_Open
-      uint32_t arg0 = ctx.mmu.read32(ipc_ptr + 0x0C);
-      uint32_t path_ptr = arg0;
-      if (path_ptr < 0x80000000) {
-        if (path_ptr < 0x01800000 || (path_ptr >= 0x10000000 && path_ptr < 0x14000000))
-          path_ptr |= 0x80000000;
-      }
-      std::string path = read_guest_string(ctx, path_ptr);
-      
-      if (path.empty()) {
-        std::cout << "[HLE IOS] iosQueueMessage OPEN: empty path, faking failure" << std::endl;
-        ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)-106);
-      } else if (path.find("/dev/") == 0) {
-        int result_fd = get_device_fd(path);
-        std::cout << "[HLE IOS] iosQueueMessage OPEN: path='" << path << "' -> fd=" << result_fd << std::endl;
-        ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)result_fd);
-      } else {
-        // Try virtual NAND first (#4)
-        int vfd = vnand_open(path);
-        if (vfd >= 0) {
-          std::cout << "[HLE IOS] iosQueueMessage OPEN: VNAND '" << path << "' -> fd=" << vfd << std::endl;
-          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)vfd);
-        } else {
-          std::cout << "[HLE IOS] iosQueueMessage OPEN: NAND file '" << path << "' not found. Returning -106." << std::endl;
-          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)ISFS_ERROR_ENOENT);
-        }
-      }
-    } else if (cmd == 2) { // IOS_Close
-      std::cout << "[HLE IOS] iosQueueMessage CLOSE: fd=" << fd << std::endl;
-      if (fd >= VNAND_FD_BASE && fd < VNAND_FD_BASE + VNAND_FD_MAX)
-        g_vnand_handles[fd - VNAND_FD_BASE].open = false;
-      ctx.mmu.write32(ipc_ptr + 0x04, 0);
-    } else if (cmd == 3) { // IOS_Read
-      uint32_t buf = ctx.mmu.read32(ipc_ptr + 0x0C);
-      uint32_t len = ctx.mmu.read32(ipc_ptr + 0x10);
-      if (buf < 0x80000000 && buf != 0) {
-        if (buf < 0x01800000 || (buf >= 0x10000000 && buf < 0x14000000))
-          buf |= 0x80000000;
-      }
-      // Serve from virtual NAND if possible
-      if (fd >= VNAND_FD_BASE && fd < VNAND_FD_BASE + VNAND_FD_MAX) {
-        auto& h = g_vnand_handles[fd - VNAND_FD_BASE];
-        if (h.open && h.file_idx >= 0) {
-          auto& fdata = g_vnand_files[h.file_idx].data;
-          uint32_t avail = (h.pos < fdata.size()) ? (uint32_t)(fdata.size() - h.pos) : 0;
-          uint32_t to_read = std::min(len, avail);
-          for (uint32_t i = 0; i < to_read; ++i)
-            ctx.mmu.write8(buf + i, fdata[h.pos + i]);
-          h.pos += to_read;
-          std::cout << "[HLE IOS] iosQueueMessage READ VNAND: fd=" << fd << " len=" << to_read << "/" << len << std::endl;
-          ctx.mmu.write32(ipc_ptr + 0x04, to_read);
-        } else {
-          ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
-        }
-      } else {
-        for (uint32_t i = 0; i < len; ++i)
-          ctx.mmu.write8(buf + i, 0);
-        std::cout << "[HLE IOS] iosQueueMessage READ: fd=" << fd << " len=" << len << std::endl;
-        ctx.mmu.write32(ipc_ptr + 0x04, len);
-      }
-    } else if (cmd == 4) { // IOS_Write
-      uint32_t len = ctx.mmu.read32(ipc_ptr + 0x10);
-      std::cout << "[HLE IOS] iosQueueMessage WRITE: fd=" << fd << " len=" << len << std::endl;
-      ctx.mmu.write32(ipc_ptr + 0x04, len);
-    } else if (cmd == 5) { // IOS_Seek
-      std::cout << "[HLE IOS] iosQueueMessage SEEK: fd=" << fd << std::endl;
-      ctx.mmu.write32(ipc_ptr + 0x04, IPC_OK);
-    } else if (cmd == 6) { // IOS_Ioctl
-      uint32_t ioctl_cmd = ctx.mmu.read32(ipc_ptr + 0x0C);
-      uint32_t out_buf = ctx.mmu.read32(ipc_ptr + 0x18);
-      uint32_t out_len = ctx.mmu.read32(ipc_ptr + 0x1C);
-      std::cout << "[HLE IOS] iosQueueMessage IOCTL: fd=" << fd << " cmd=0x"
-                << std::hex << ioctl_cmd << std::dec << std::endl;
-
-      if (fd == 5 && ioctl_cmd == 0x1000) {
-        std::cout << "  -> STM_EVENTHOOK: leaving request pending\n";
-        ctx.gpr[3] = IPC_OK;
-        ctx.pc = ctx.lr;
-        return;
-      } else if (fd < 0) {
-        ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
-      } else if (fd == 2) {
-        // /dev/di ioctls
-        // IMPORTANT: DVDLow callbacks treat result=0 as error (IPC_OK is misleading here)
-        // Most ioctls must return 1 (success), ReadDiskID returns 32 (bytes), DI_Read returns bytes_read
-        if (ioctl_cmd == 0x86) {
-          std::cout << "  -> DI_ClearCoverInterrupt\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x12) {
-          // DVDLowInquiry - zero-fill output buffer (29-byte drive info struct)
-          std::cout << "  -> DI_Inquiry\n";
-          if (out_buf != 0 && out_len >= 4)
-            for (uint32_t i = 0; i < out_len; ++i) ctx.mmu.write8(out_buf + i, 0);
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x8E && out_buf != 0 && out_len >= 32) {
-          // DVDLowReadDiskID - write 32-byte disc header using config game_id (#10)
-          const std::string& gid = Config::get().game_id;
-          for (int i = 0; i < 32; i++) ctx.mmu.write8(out_buf + i, 0);
-          for (int i = 0; i < 4 && i < (int)gid.size(); ++i)
-            ctx.mmu.write8(out_buf + i, (uint8_t)gid[i]);
-          ctx.mmu.write32(out_buf + 0x18, 0x5D1C9EA3); // Wii disc magic
-          std::cout << "  -> DI_ReadDiskID: " << gid << "\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 32); // 32 bytes read
-        } else if (ioctl_cmd == 0x80) {
-          std::cout << "  -> DI_Reset\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0xE0) {
-          // DVDLowGetCoverRegister
-          std::cout << "  -> DI_GetCoverRegister\n";
-          if (out_buf != 0 && out_len >= 4) ctx.mmu.write32(out_buf, 0);
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x60) {
-          // DVDLowGetError
-          std::cout << "  -> DI_GetError\n";
-          if (out_buf != 0 && out_len >= 4) ctx.mmu.write32(out_buf, 0);
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0xE3) {
-          // DVDLowStopMotor
-          std::cout << "  -> DI_StopMotor\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x95) {
-          // DVDLowMotorStopped / motor status
-          std::cout << "  -> DI_0x95 (MotorStopped)\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x96) {
-          // DVDLow0x96 (unknown, likely drive ready check)
-          std::cout << "  -> DI_0x96\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        } else if (ioctl_cmd == 0x20 && out_buf != 0 && out_len > 0) {
-          // DI_Read - out_buf is the DICommand structure
-          std::cout << "  -> DI_Read inbuf=0x" << std::hex << out_buf << std::dec << "\n";
-          uint32_t callback_r = ctx.mmu.read32(ipc_ptr + 0x20);
-          uint32_t userdata_r = ctx.mmu.read32(ipc_ptr + 0x24);
-          di_read_internal(ctx, out_buf, callback_r, userdata_r, true);
-          // Result must be bytes transferred (>0 = success)
-          uint32_t bytes_read = ctx.mmu.read32(out_buf + 0x04); // transferredSize
-          if (bytes_read == 0) bytes_read = ctx.mmu.read32(out_buf + 0x18); // try length
-          if (bytes_read == 0) bytes_read = 1;
-          ctx.mmu.write32(ipc_ptr + 0x04, bytes_read);
-        } else {
-          std::cout << "  -> Unhandled DI ioctl: 0x" << std::hex << ioctl_cmd << std::dec << "\n";
-          ctx.mmu.write32(ipc_ptr + 0x04, 1); // default: success
-        }
-      } else {
-        ctx.mmu.write32(ipc_ptr + 0x04, IPC_OK);
-      }
-    } else if (cmd == 7) { // IOS_Ioctlv
-      uint32_t ioctl_cmd = ctx.mmu.read32(ipc_ptr + 0x0C);
-      uint32_t in_count = ctx.mmu.read32(ipc_ptr + 0x10);
-      uint32_t io_count = ctx.mmu.read32(ipc_ptr + 0x14);
-      uint32_t vector_list = ctx.mmu.read32(ipc_ptr + 0x18);
-      std::cout << "[HLE IOS] iosQueueMessage IOCTLV: fd=" << fd << " cmd=0x"
-                << std::hex << ioctl_cmd << " in=" << in_count << " io=" << io_count << std::dec << std::endl;
-      
-      std::cout << "  IPC dump: ";
-      for (int i = 0; i < 12; i++) {
-          std::cout << std::hex << ctx.mmu.read32(ipc_ptr + i*4) << " ";
-      }
-      std::cout << std::dec << std::endl;
-      
-      uint32_t real_vlist = vector_list & ~3; // aligned
-      std::cout << "  Vector list raw bytes at 0x" << std::hex << real_vlist << ": ";
-      for (int i = 0; i < (in_count + io_count) * 8 + 4; i++) {
-          std::cout << std::hex << (int)ctx.mmu.read8(real_vlist + i) << " ";
-      }
-      std::cout << std::dec << std::endl;
-      
-      for (uint32_t i = 0; i < in_count + io_count; i++) {
-        uint32_t vptr = vector_list + i * 8;
-        uint32_t buf = ctx.mmu.read32(vptr);
-        uint32_t len = ctx.mmu.read32(vptr + 4);
-        std::cout << "  vector[" << i << "]: ptr=0x" << std::hex << buf << " len=" << std::dec << len << std::endl;
-        if (i == 0 && len > 0 && buf != 0) {
-            uint32_t first_word = ctx.mmu.read32(buf);
-            std::cout << "  vector[0] data = 0x" << std::hex << first_word << std::dec << std::endl;
-        }
-      }
-      
-      if (fd < 0) {
-        ctx.mmu.write32(ipc_ptr + 0x04, (uint32_t)IPC_EIO);
-      } else if (fd == 15) {
-        std::cout << "  -> Fake USB IOCTLV: returning OK\n";
-        ctx.mmu.write32(ipc_ptr + 0x04, 1);
-      } else if (fd == 2) {
-        ctx.mmu.write32(ipc_ptr + 0x04, 1);
-        // Wait, if it's IOCTLV cmd=0 for fd=2, we might need to do something?
-        if (ioctl_cmd == 0 && io_count > 0) {
-           uint32_t vptr = vector_list + in_count * 8; // first output vector
-           uint32_t buf = ctx.mmu.read32(vptr);
-           // Let's just write something? We'll see what size it is first.
-        }
-      } else {
-        ctx.mmu.write32(ipc_ptr + 0x04, IPC_OK);
-      }
-    } else {
-      std::cout << "[HLE IOS] iosQueueMessage UNKNOWN CMD: " << cmd << " fd=" << fd << std::endl;
-      ctx.mmu.write32(ipc_ptr + 0x04, 0);
-    }
-
-    uint32_t callback = ctx.mmu.read32(ipc_ptr + 0x20);
-    uint32_t userdata = ctx.mmu.read32(ipc_ptr + 0x24);
-    int32_t result = ctx.mmu.read32(ipc_ptr + 0x04);
-
-    std::cout << "  -> callback=0x" << std::hex << callback << " userdata=0x"
-              << userdata << " result=" << std::dec << result << std::endl;
-
-    ipc_mark_sent(ctx);
-
-    if (valid_callback(callback)) {
-      std::cout << "  -> Triggering HW IPC interrupt for callback 0x" << std::hex << callback << std::dec << std::endl;
-      hle_set_ipc_arm_msg(ipc_ptr);
-    } else if (callback != 0 && callback != 0xFFFFFFFFu) {
-      std::cout << "  -> Ignoring invalid callback 0x" << std::hex << callback << std::dec << std::endl;
-    }
-
-    ctx.gpr[3] = return_r3;
     ctx.pc = ctx.lr;
     return;
   }
+  // Real IOS_IoctlAsync: fd=r3, cmd=r4, inbuf=r5, inlen=r6, outbuf=r7, outlen=r8, cb=r9, ud=r10
+  int32_t fd   = (int32_t)ctx.gpr[3];
+  uint32_t cmd = ctx.gpr[4];
+  uint32_t inbuf   = ctx.gpr[5];
+  uint32_t callback = ctx.gpr[9];
+  uint32_t userdata = ctx.gpr[10];
 
-  ctx.gpr[3] = 0;
+  std::cout << "[HLE IOS] IOS_IoctlAsync: fd=" << fd << " cmd=0x" << std::hex << cmd
+            << " inbuf=0x" << inbuf << " cb=0x" << callback << std::dec << std::endl;
+
+  int32_t result = IPC_OK;
+  if (fd == 2) {
+    // /dev/di async ioctls
+    if (cmd == 0x86) { // DI_ClearCoverInterrupt
+      std::cout << "[HLE IOS] IOS_IoctlAsync -> DI_ClearCoverInterrupt" << std::endl;
+      result = IPC_OK;
+    } else if (cmd == 0x12) { // DI_Inquiry
+      std::cout << "[HLE IOS] IOS_IoctlAsync -> DI_Inquiry" << std::endl;
+      result = IPC_OK;
+    } else if (cmd == 0x20) { // DI_ReadAsync
+      di_read_internal(ctx, inbuf, callback, userdata, true);
+      if (valid_callback(callback))
+        execute_callback(ctx, callback, ctx.gpr[3], userdata);
+      ctx.gpr[3] = IPC_OK;
+      ctx.pc = ctx.lr;
+      return;
+    } else {
+      result = IPC_OK;
+    }
+  } else {
+    result = IPC_OK;
+  }
+
+  if (valid_callback(callback))
+    execute_callback(ctx, callback, result, userdata);
+
+  ctx.gpr[3] = IPC_OK;
   ctx.pc = ctx.lr;
 }
+
 
 void IOS_IoctlvAsync(CPUContext &ctx) {
   if (Config::get().platform == Platform::GameCube) {
@@ -1005,6 +805,7 @@ void IOS_SeekAsync(CPUContext &ctx) {
   ctx.gpr[3] = 0;
   ctx.pc = ctx.lr;
 }
+} // extern "C"
 
 namespace nwii {
 namespace runtime {

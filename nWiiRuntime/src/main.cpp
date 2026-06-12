@@ -65,7 +65,11 @@ int main(int argc, char** argv) {
     ctx.mmu.mem1[0x24 + 0] = 0x00;
     ctx.mmu.mem1[0x24 + 1] = 0x00;
     ctx.mmu.mem1[0x24 + 2] = 0x00;
-    ctx.mmu.mem1[0x24 + 3] = 0x02; // Console Type: Wii Retail
+    if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
+        ctx.mmu.mem1[0x24 + 3] = 0x01; // Console Type: GameCube Retail
+    } else {
+        ctx.mmu.mem1[0x24 + 3] = 0x02; // Console Type: Wii Retail
+    }
 
     ctx.mmu.mem1[0x28 + 0] = (24u * 1024u * 1024u) >> 24;
     ctx.mmu.mem1[0x28 + 1] = ((24u * 1024u * 1024u) >> 16) & 0xFF;
@@ -82,16 +86,17 @@ int main(int argc, char** argv) {
     ctx.mmu.mem1[0x34 + 2] = 0x00;
     ctx.mmu.mem1[0x34 + 3] = 0x00;
     
-    // Initialize OS Globals (MEM2/Wii)
-    uint32_t mem2_size = __builtin_bswap32(64 * 1024 * 1024);
-    std::memcpy(ctx.mmu.mem1.data() + 0x3118, &mem2_size, 4);
-    std::memcpy(ctx.mmu.mem1.data() + 0x311C, &mem2_size, 4);
+    // MEM2 size: 64 MB big-endian at 0x3118 and 0x311C
+    ctx.mmu.mem1[0x3118 + 0] = 0x04; ctx.mmu.mem1[0x3118 + 1] = 0x00;
+    ctx.mmu.mem1[0x3118 + 2] = 0x00; ctx.mmu.mem1[0x3118 + 3] = 0x00;
+    ctx.mmu.mem1[0x311C + 0] = 0x04; ctx.mmu.mem1[0x311C + 1] = 0x00;
+    ctx.mmu.mem1[0x311C + 2] = 0x00; ctx.mmu.mem1[0x311C + 3] = 0x00;
 
     // Simulated MEM2 Arena (0x90000000 to 0x93E00000)
-    uint32_t arena2_lo = __builtin_bswap32(0x90000000);
-    uint32_t arena2_hi = __builtin_bswap32(0x93E00000);
-    std::memcpy(ctx.mmu.mem1.data() + 0x3124, &arena2_lo, 4);
-    std::memcpy(ctx.mmu.mem1.data() + 0x3128, &arena2_hi, 4);
+    ctx.mmu.mem1[0x3124 + 0] = 0x90; ctx.mmu.mem1[0x3124 + 1] = 0x00;
+    ctx.mmu.mem1[0x3124 + 2] = 0x00; ctx.mmu.mem1[0x3124 + 3] = 0x00;
+    ctx.mmu.mem1[0x3128 + 0] = 0x93; ctx.mmu.mem1[0x3128 + 1] = 0xE0;
+    ctx.mmu.mem1[0x3128 + 2] = 0x00; ctx.mmu.mem1[0x3128 + 3] = 0x00;
     
     // IOS IPC Arena
     ctx.mmu.mem1[0x3130 + 0] = 0x93;
@@ -104,15 +109,16 @@ int main(int argc, char** argv) {
     ctx.mmu.mem1[0x3134 + 2] = 0x00;
     ctx.mmu.mem1[0x3134 + 3] = 0x00;
 
-    // Memory Sizes
-    uint32_t mem1_size = __builtin_bswap32(24 * 1024 * 1024); // 24MB
-    std::memcpy(ctx.mmu.mem1.data() + 0x28, &mem1_size, 4);
-    std::memcpy(ctx.mmu.mem1.data() + 0x3118, &mem2_size, 4);
-    std::memcpy(ctx.mmu.mem1.data() + 0x311C, &mem2_size, 4);
+    // MEM2 size already written above at 0x3118/0x311C
     
     // Bus/CPU Frequency
-    ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
-    ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
+    if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
+        ctx.mmu.write32(0x800000F8u, 162'000'000u); // Bus Frequency = 162 MHz
+        ctx.mmu.write32(0x800000FCu, 486'000'000u); // CPU Frequency = 486 MHz
+    } else {
+        ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
+        ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
+    }
     
     std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << ctx.mmu.read32(0x24) << "\n";
     std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << ctx.mmu.read32(0x3118) << "\n";

@@ -20,6 +20,8 @@ static GXFifoObj g_gp_fifo = {0};
 
 
 
+extern "C" {
+
 void GXInitFifoBase(CPUContext& ctx) {
     uint32_t fifo_ptr = ctx.gpr[3];
     uint32_t base = ctx.gpr[4];
@@ -133,6 +135,8 @@ void GXSetVtxAttrFmt(CPUContext& ctx) {
     // Stub
 }
 
+} // extern "C"
+
 static void push_fifo(uint8_t* data, size_t size) {
     if (g_cpu_fifo.base == 0) return;
     
@@ -145,22 +149,59 @@ static void push_fifo(uint8_t* data, size_t size) {
     // Also increase count, though HLE might not need strict accounting unless polled
     g_cpu_fifo.count += size;
 }
+static int g_fifo_state = 0; // 0: Idle, 1: BP, 2: CP, 3: XF, 4: Vertex
+static int g_fifo_bytes_expected = 0;
+
+static void consume_fifo_bytes(int bytes) {
+    if (g_fifo_state != 0 && g_fifo_state != 4) {
+        g_fifo_bytes_expected -= bytes;
+        if (g_fifo_bytes_expected <= 0) {
+            g_fifo_state = 0;
+            g_fifo_bytes_expected = 0;
+        }
+    }
+}
+
 namespace nwii {
 namespace runtime {
 void GX_WGPIPE_Write8(uint8_t val) {
     push_fifo(&val, 1);
+    
+    if (g_fifo_state == 0) {
+        if (val == 0x61) { g_fifo_state = 1; g_fifo_bytes_expected = 4; }
+        else if (val == 0x08) { g_fifo_state = 2; g_fifo_bytes_expected = 5; }
+        else if (val == 0x10) { g_fifo_state = 3; g_fifo_bytes_expected = 4; } // Needs proper XF length parsing
+        else if (val >= 0x80 && val <= 0x9F) {
+            g_fifo_state = 4;
+            // Native draw command
+            int rl_mode = RL_TRIANGLES;
+            if (val == 0x80) rl_mode = RL_QUADS;
+            rlBegin(rl_mode);
+            g_in_begin = true;
+            g_vtx_idx = 0;
+        }
+    } else {
+        consume_fifo_bytes(1);
+    }
+    
     if (!g_in_begin) return;
-    // Assume 8-bit writes are colors (usually 4 bytes for RGBA)
-    // For simplicity, we just skip handling individual byte colors here unless fully tracked.
 }
 
 void GX_WGPIPE_Write16(uint16_t val) {
     push_fifo((uint8_t*)&val, 2);
+    if (g_fifo_state != 0 && g_fifo_state != 4) {
+        consume_fifo_bytes(2);
+        return;
+    }
     if (!g_in_begin) return;
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
     push_fifo((uint8_t*)&val, 4);
+    if (g_fifo_state != 0 && g_fifo_state != 4) {
+        consume_fifo_bytes(4);
+        return;
+    }
     if (!g_in_begin) return;
     // Usually a 32-bit integer write is an RGBA8 color
     rlColor4ub((val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF);
@@ -168,9 +209,15 @@ void GX_WGPIPE_Write32(uint32_t val) {
 
 void GX_WGPIPE_WriteF32(float val) {
     push_fifo((uint8_t*)&val, 4);
+    if (g_fifo_state != 0 && g_fifo_state != 4) {
+        consume_fifo_bytes(4);
+        return;
+    }
     if (!g_in_begin) return;
     
     g_vtx[g_vtx_idx++] = val;
+    // VERY Basic Vertex format handler: 3 floats = position. 
+    // Real emulation needs CP state tracking for Vertex Attributes.
     if (g_vtx_idx == 3) {
         rlVertex3f(g_vtx[0], g_vtx[1], g_vtx[2]);
         g_vtx_idx = 0;

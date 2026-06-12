@@ -47,6 +47,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     std::ofstream hout(header_path);
     hout << "#pragma once\n";
     hout << "#include \"runtime/cpu_context.h\"\n\n";
+    hout << "extern \"C\" {\n";
     hout << "void OSReport(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_Open(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_OpenAsync(nwii::runtime::CPUContext& ctx);\n";
@@ -56,10 +57,64 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void IOS_IoctlAsync(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_Ioctlv(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_IoctlvAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VIInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void PADInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VISetBlack(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VIGetNextField(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSDisableInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSEnableInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSRestoreInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSGetTime(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSTicksToMilliseconds(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSGetArenaLo(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSGetArenaHi(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSSetArenaLo(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSSetArenaHi(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXInitFifoBase(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXInitFifoPtrs(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXSetCPUFifo(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXGetCPUFifo(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXSetCopyClear(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXBegin(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXEnd(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXSetVtxDesc(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void GXSetVtxAttrFmt(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_Write(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_Seek(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_CloseAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_ReadAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_WriteAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void IOS_SeekAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXAcquireVoice(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXFreeVoice(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXSetVoiceState(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXSetVoiceMix(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXSetVoiceAdpcm(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXSetVoiceSrc(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void AXSetVoiceOffsets(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDOpen(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDReadAsyncPrio(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDClose(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDGetDriveStatus(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVDReadPrio(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void PADRead(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void WPADInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void WPADRead(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void KPADInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSInitAlloc(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSCreateHeap(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSAllocFromHeap(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSFreeToHeap(nwii::runtime::CPUContext& ctx);\n";
+    hout << "}\n";
 
     std::set<std::string> emitted_names;
     std::vector<std::string> all_func_names;
 
+    hout << "extern \"C\" {\n";
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name;
       if (symbols_ && symbols_->has_symbol(start_addr)) {
@@ -80,6 +135,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
       hout << "void " << func_name << "(nwii::runtime::CPUContext& ctx);\n";
     }
+    hout << "}\n";
     hout.close();
 
     // Generate output_X.cpp files
@@ -243,6 +299,69 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     std::vector<std::string> all_func_names;
 
     out << "// --- Forward Declarations ---\n";
+    out << "extern \"C\" {\n";
+    out << "void OSReport(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Open(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_OpenAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Close(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Read(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Ioctl(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_IoctlAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Ioctlv(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_IoctlvAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void VIInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void PADInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void VISetBlack(nwii::runtime::CPUContext& ctx);\n";
+    out << "void VIGetNextField(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSDisableInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSEnableInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSRestoreInterrupts(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSGetTime(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSTicksToMilliseconds(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSGetArenaLo(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSGetArenaHi(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSSetArenaLo(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSSetArenaHi(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXInitFifoBase(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXInitFifoPtrs(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXSetCPUFifo(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXGetCPUFifo(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXSetCopyClear(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXBegin(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXEnd(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXSetVtxDesc(nwii::runtime::CPUContext& ctx);\n";
+    out << "void GXSetVtxAttrFmt(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Write(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_Seek(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_CloseAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_ReadAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_WriteAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void IOS_SeekAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXAcquireVoice(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXFreeVoice(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXSetVoiceState(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXSetVoiceMix(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXSetVoiceAdpcm(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXSetVoiceSrc(nwii::runtime::CPUContext& ctx);\n";
+    out << "void AXSetVoiceOffsets(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDOpen(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDReadAsyncPrio(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDClose(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDGetDriveStatus(nwii::runtime::CPUContext& ctx);\n";
+    out << "void DVDReadPrio(nwii::runtime::CPUContext& ctx);\n";
+    out << "void PADRead(nwii::runtime::CPUContext& ctx);\n";
+    out << "void WPADInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void WPADRead(nwii::runtime::CPUContext& ctx);\n";
+    out << "void KPADInit(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSInitAlloc(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSCreateHeap(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSAllocFromHeap(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSFreeToHeap(nwii::runtime::CPUContext& ctx);\n";
+    out << "}\n";
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name;
       if (symbols_ && symbols_->has_symbol(start_addr)) {

@@ -149,23 +149,5 @@ void OSFreeToHeap(CPUContext& ctx) {
               << " -> Ptr: 0x" << std::hex << ptr << std::endl;
 }
 
-static uint32_t arena_lo = 0;
-static uint32_t arena_hi = 0;
-
-void OSGetArenaLo(CPUContext& ctx) {
-    ctx.gpr[3] = arena_lo;
-}
-
-void OSGetArenaHi(CPUContext& ctx) {
-    ctx.gpr[3] = arena_hi;
-}
-
-void OSSetArenaLo(CPUContext& ctx) {
-    arena_lo = ctx.gpr[3];
-}
-
-void OSSetArenaHi(CPUContext& ctx) {
-    arena_hi = ctx.gpr[3];
-}
 
 } // extern "C"
