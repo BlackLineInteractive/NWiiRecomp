@@ -4,8 +4,8 @@
 #include <csetjmp>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include <iostream>
+#include <vector>
 
 namespace nwii {
 namespace runtime {
@@ -30,8 +30,8 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val);
 void HW_Reg_Write32(uint32_t addr, uint32_t val);
 
 struct CPUContext;
-void init_ipc_client(CPUContext& ctx);
-void handle_syscall(CPUContext& ctx);
+void init_ipc_client(CPUContext &ctx);
+void handle_syscall(CPUContext &ctx);
 
 struct MMU {
   std::vector<uint8_t> mem1;
@@ -76,8 +76,14 @@ struct MMU {
   }
 
   uint16_t read16(uint32_t addr) {
-    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000)
-      return HW_Reg_Read16(addr);
+    uint32_t top8 = addr & 0xFFFF0000;
+    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
+        top8 == 0x0D000000) {
+      uint32_t virt_hw_addr =
+          (addr & 0x00FFFFFF) |
+          ((addr & 0x0F000000) == 0x0C000000 ? 0xCC000000 : 0xCD000000);
+      return HW_Reg_Read16(virt_hw_addr);
+    }
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
       return 0;
@@ -89,8 +95,13 @@ struct MMU {
       GX_WGPIPE_Write16(value);
       return;
     }
-    if ((addr & 0xFFFF0000) == 0xCC000000 || (addr & 0xFFFF0000) == 0xCD000000) {
-      HW_Reg_Write16(addr, value);
+    uint32_t top8 = addr & 0xFFFF0000;
+    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
+        top8 == 0x0D000000) {
+      uint32_t virt_hw_addr =
+          (addr & 0x00FFFFFF) |
+          ((addr & 0x0F000000) == 0x0C000000 ? 0xCC000000 : 0xCD000000);
+      HW_Reg_Write16(virt_hw_addr, value);
       return;
     }
     uint8_t *ptr = get_ptr(addr);
@@ -103,49 +114,73 @@ struct MMU {
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
     // Hardcode OS globals to fix MEM2 0MB issue
-    if (paddr == 0x00000024) return 0x00000002u;          // Console Type = Wii Retail
-    if (paddr == 0x00000028) return 24u * 1024u * 1024u;  // 24MB MEM1
+    if (paddr == 0x00000024)
+      return 0x00000002u; // Console Type = Wii Retail
+    if (paddr == 0x00000028)
+      return 24u * 1024u * 1024u; // 24MB MEM1
     if (paddr >= 0x3100 && paddr <= 0x3140) {
-      std::cout << "[DEBUG] Game read from OS Global: 0x" << std::hex << paddr << std::dec << "\n";
+      std::cout << "[DEBUG] Game read from OS Global: 0x" << std::hex << paddr
+                << std::dec << "\n";
     }
 
-    if (paddr == 0x00003118) return 64u * 1024u * 1024u;  // Physical MEM2
-    if (paddr == 0x0000311C) return 64u * 1024u * 1024u;  // Simulated MEM2
-    if (paddr == 0x00003124) return 0x90000000u;          // Usable MEM2 Start
-    if (paddr == 0x00003128) return 0x93E00000u;          // Usable MEM2 End
+    if (paddr == 0x00003118)
+      return 64u * 1024u * 1024u; // Physical MEM2
+    if (paddr == 0x0000311C)
+      return 64u * 1024u * 1024u; // Simulated MEM2
+    if (paddr == 0x00003124)
+      return 0x90000000u; // Usable MEM2 Start
+    if (paddr == 0x00003128)
+      return 0x93E00000u; // Usable MEM2 End
     // IOS IPC arena
-    if (paddr == 0x00003130) return 0x93E00000u;          // IOS ArenaLo
-    if (paddr == 0x00003134) return 0x94000000u;          // IOS ArenaHi
+    if (paddr == 0x00003130)
+      return 0x93E00000u; // IOS ArenaLo
+    if (paddr == 0x00003134)
+      return 0x94000000u; // IOS ArenaHi
 
-    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD)
-    if ((addr & 0xFF000000) == 0xCC000000 || (addr & 0xFF000000) == 0xCD000000)
-      return HW_Reg_Read32(addr);
+    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD, and physical 0x0C,
+    // 0x0D)
+    uint32_t top8 = addr & 0xFF000000;
+    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
+        top8 == 0x0D000000) {
+      uint32_t virt_hw_addr =
+          (addr & 0x00FFFFFF) |
+          (top8 == 0x0C000000 ? 0xCC000000
+                              : (top8 == 0x0D000000 ? 0xCD000000 : top8));
+      return HW_Reg_Read32(virt_hw_addr);
+    }
 
     uint8_t *ptr = get_ptr(addr);
     if (!ptr)
       return 0;
 
     return ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
-           ((uint32_t)ptr[2] << 8)  | (uint32_t)ptr[3];
+           ((uint32_t)ptr[2] << 8) | (uint32_t)ptr[3];
   }
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
 
     // Prevent OSInit from overwriting our hardcoded globals
-    if (paddr == 0x00000024 || paddr == 0x00000028 ||
-        paddr == 0x00003118 || paddr == 0x0000311C || paddr == 0x00003124 ||
-        paddr == 0x00003128 || paddr == 0x00003130 || paddr == 0x00003134) {
-      return; 
+    if (paddr == 0x00000024 || paddr == 0x00000028 || paddr == 0x00003118 ||
+        paddr == 0x0000311C || paddr == 0x00003124 || paddr == 0x00003128 ||
+        paddr == 0x00003130 || paddr == 0x00003134) {
+      return;
     }
 
     if (addr == 0xCC008000) {
       GX_WGPIPE_Write32(value);
       return;
     }
-    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD)
-    if ((addr & 0xFF000000) == 0xCC000000 || (addr & 0xFF000000) == 0xCD000000) {
-      HW_Reg_Write32(addr, value);
+    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD, and physical 0x0C,
+    // 0x0D)
+    uint32_t top8 = addr & 0xFF000000;
+    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
+        top8 == 0x0D000000) {
+      uint32_t virt_hw_addr =
+          (addr & 0x00FFFFFF) |
+          (top8 == 0x0C000000 ? 0xCC000000
+                              : (top8 == 0x0D000000 ? 0xCD000000 : top8));
+      HW_Reg_Write32(virt_hw_addr, value);
       return;
     }
 
@@ -154,7 +189,7 @@ struct MMU {
       return;
     ptr[0] = (value >> 24) & 0xFF;
     ptr[1] = (value >> 16) & 0xFF;
-    ptr[2] = (value >> 8)  & 0xFF;
+    ptr[2] = (value >> 8) & 0xFF;
     ptr[3] = value & 0xFF;
   }
 

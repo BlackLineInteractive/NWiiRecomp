@@ -71,17 +71,16 @@ void PADRead(CPUContext& ctx) {
     ctx.mmu.write8(pad_status_array_addr + 5, (uint8_t)substickY);
     ctx.mmu.write8(pad_status_array_addr + 6, trigL);
     ctx.mmu.write8(pad_status_array_addr + 7, trigR);
-    ctx.mmu.write8(pad_status_array_addr + 8, 0); // err = 0 (OK)
-    // Write 0 to the rest of the padding/analog fields
-    ctx.mmu.write8(pad_status_array_addr + 9, 0);
-    ctx.mmu.write8(pad_status_array_addr + 10, 0);
-    ctx.mmu.write8(pad_status_array_addr + 11, 0);
+    ctx.mmu.write8(pad_status_array_addr + 8, buttons & 0x0100 ? 0xFF : 0); // analogA
+    ctx.mmu.write8(pad_status_array_addr + 9, buttons & 0x0200 ? 0xFF : 0); // analogB
+    ctx.mmu.write8(pad_status_array_addr + 10, 0); // err = 0 (OK)
+    ctx.mmu.write8(pad_status_array_addr + 11, 0); // padding
     
     // Mark Controllers 1-3 as disconnected
     for (int i = 1; i < 4; i++) {
         uint32_t offset = pad_status_array_addr + (i * 12);
         ctx.mmu.write16(offset, 0);
-        ctx.mmu.write8(offset + 8, (uint8_t)-1); // err = PAD_ERR_NO_CONTROLLER (-1)
+        ctx.mmu.write8(offset + 10, (uint8_t)-1); // err = PAD_ERR_NO_CONTROLLER (-1)
     }
 }
 

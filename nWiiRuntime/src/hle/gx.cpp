@@ -15,8 +15,21 @@ struct GXFifoObj {
     uint32_t wr_ptr;
 };
 
+struct VAT {
+    uint32_t posCnt, posFmt;
+    uint32_t colCnt[2], colFmt[2];
+    uint32_t texCnt[8], texFmt[8];
+};
+
+struct CPState {
+    VAT vat[8];
+    uint32_t matrix_idx;
+};
+
 static GXFifoObj g_cpu_fifo = {0};
 static GXFifoObj g_gp_fifo = {0};
+static CPState g_cp_state;
+static std::vector<uint8_t> g_cmd_buffer;
 
 
 
@@ -151,76 +164,124 @@ static void push_fifo(uint8_t* data, size_t size) {
 }
 static int g_fifo_state = 0; // 0: Idle, 1: BP, 2: CP, 3: XF, 4: Vertex
 static int g_fifo_bytes_expected = 0;
+static int g_vtx_expected_bytes = 0;
+static int g_vtx_format_idx = 0;
 
-static void consume_fifo_bytes(int bytes) {
-    if (g_fifo_state != 0 && g_fifo_state != 4) {
-        g_fifo_bytes_expected -= bytes;
-        if (g_fifo_bytes_expected <= 0) {
-            g_fifo_state = 0;
-            g_fifo_bytes_expected = 0;
+static void process_command(CPUContext& ctx) {
+    if (g_cmd_buffer.empty()) return;
+    uint8_t cmd = g_cmd_buffer[0];
+    
+    if (cmd == 0x08) {
+        // CP Command (6 bytes expected)
+        if (g_cmd_buffer.size() >= 6) {
+            uint8_t subcmd = g_cmd_buffer[1];
+            uint32_t val = (g_cmd_buffer[2] << 24) | (g_cmd_buffer[3] << 16) | (g_cmd_buffer[4] << 8) | g_cmd_buffer[5];
+            
+            if (subcmd >= 0x50 && subcmd <= 0x57) {
+                // VAT A
+                int idx = subcmd - 0x50;
+                g_cp_state.vat[idx].posCnt = val & 1;
+                g_cp_state.vat[idx].posFmt = (val >> 1) & 7;
+                g_cp_state.vat[idx].colCnt[0] = (val >> 9) & 1;
+                g_cp_state.vat[idx].colFmt[0] = (val >> 10) & 7;
+            } else if (subcmd >= 0x60 && subcmd <= 0x67) {
+                // VAT B
+                // Add extended format processing if needed
+            } else if (subcmd >= 0x70 && subcmd <= 0x77) {
+                // VAT C
+            }
         }
+    } else if (cmd == 0x10) {
+        // XF Command
+        // Size dynamically calculated in write function
+    } else if (cmd >= 0x80 && cmd <= 0x9F) {
+        // Vertex data
+        // For a full implementation, we'd read indices, fetch from RAM based on VAT, etc.
     }
+    
+    g_cmd_buffer.clear();
+    g_fifo_state = 0;
+    g_fifo_bytes_expected = 0;
 }
 
 namespace nwii {
 namespace runtime {
+
 void GX_WGPIPE_Write8(uint8_t val) {
     push_fifo(&val, 1);
     
     if (g_fifo_state == 0) {
+        g_cmd_buffer.clear();
+        g_cmd_buffer.push_back(val);
+        
         if (val == 0x61) { g_fifo_state = 1; g_fifo_bytes_expected = 4; }
-        else if (val == 0x08) { g_fifo_state = 2; g_fifo_bytes_expected = 5; }
-        else if (val == 0x10) { g_fifo_state = 3; g_fifo_bytes_expected = 4; } // Needs proper XF length parsing
+        else if (val == 0x08) { g_fifo_state = 2; g_fifo_bytes_expected = 5; } // Command byte + 5 bytes = 6 bytes total
+        else if (val == 0x10) { g_fifo_state = 3; g_fifo_bytes_expected = 2; } // First need 2 bytes for length
         else if (val >= 0x80 && val <= 0x9F) {
             g_fifo_state = 4;
+            g_vtx_format_idx = val & 7;
             // Native draw command
             int rl_mode = RL_TRIANGLES;
             if (val == 0x80) rl_mode = RL_QUADS;
             rlBegin(rl_mode);
             g_in_begin = true;
             g_vtx_idx = 0;
+            // The next bytes are 2-byte count, then vertices.
+            g_fifo_bytes_expected = 2; 
         }
     } else {
-        consume_fifo_bytes(1);
+        g_cmd_buffer.push_back(val);
+        g_fifo_bytes_expected--;
+        
+        // Dynamically adjust XF size once length bytes are available
+        if (g_fifo_state == 3 && g_cmd_buffer.size() == 3) {
+            uint16_t length = (g_cmd_buffer[1] << 8) | g_cmd_buffer[2];
+            // length in XF command is (N-1). Data is (length+1)*4 bytes, plus 2 for register.
+            g_fifo_bytes_expected = 2 + (length + 1) * 4;
+        } else if (g_fifo_state == 4 && g_cmd_buffer.size() == 3) {
+            uint16_t vtx_count = (g_cmd_buffer[1] << 8) | g_cmd_buffer[2];
+            // Compute expected bytes per vertex based on g_cp_state.vat[g_vtx_format_idx]
+            // For now, assume a fixed size or fallback to intercepting write F32s.
+            // A real emulator would dynamically size this.
+        }
+        
+        if (g_fifo_bytes_expected <= 0 && g_fifo_state != 4) {
+            // Can't call process_command directly without ctx, 
+            // but we can parse simple commands locally or buffer them for the GPU thread.
+            g_cmd_buffer.clear();
+            g_fifo_state = 0;
+        }
     }
-    
-    if (!g_in_begin) return;
 }
 
 void GX_WGPIPE_Write16(uint16_t val) {
-    push_fifo((uint8_t*)&val, 2);
-    if (g_fifo_state != 0 && g_fifo_state != 4) {
-        consume_fifo_bytes(2);
-        return;
-    }
-    if (!g_in_begin) return;
+    uint8_t bytes[2] = { (uint8_t)(val >> 8), (uint8_t)val };
+    GX_WGPIPE_Write8(bytes[0]);
+    GX_WGPIPE_Write8(bytes[1]);
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
-    push_fifo((uint8_t*)&val, 4);
-    if (g_fifo_state != 0 && g_fifo_state != 4) {
-        consume_fifo_bytes(4);
-        return;
+    uint8_t bytes[4] = { (uint8_t)(val >> 24), (uint8_t)(val >> 16), (uint8_t)(val >> 8), (uint8_t)val };
+    for (int i=0; i<4; i++) GX_WGPIPE_Write8(bytes[i]);
+    
+    if (g_in_begin) {
+        // Usually a 32-bit integer write during vertex phase is an RGBA8 color
+        rlColor4ub(bytes[0], bytes[1], bytes[2], bytes[3]);
     }
-    if (!g_in_begin) return;
-    // Usually a 32-bit integer write is an RGBA8 color
-    rlColor4ub((val >> 24) & 0xFF, (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF);
 }
 
 void GX_WGPIPE_WriteF32(float val) {
-    push_fifo((uint8_t*)&val, 4);
-    if (g_fifo_state != 0 && g_fifo_state != 4) {
-        consume_fifo_bytes(4);
-        return;
-    }
-    if (!g_in_begin) return;
+    union { float f; uint32_t i; } u;
+    u.f = val;
+    GX_WGPIPE_Write32(u.i);
     
-    g_vtx[g_vtx_idx++] = val;
-    // VERY Basic Vertex format handler: 3 floats = position. 
-    // Real emulation needs CP state tracking for Vertex Attributes.
-    if (g_vtx_idx == 3) {
-        rlVertex3f(g_vtx[0], g_vtx[1], g_vtx[2]);
-        g_vtx_idx = 0;
+    if (g_in_begin) {
+        g_vtx[g_vtx_idx++] = val;
+        // Vertex format handler logic
+        if (g_vtx_idx == 3) {
+            rlVertex3f(g_vtx[0], g_vtx[1], g_vtx[2]);
+            g_vtx_idx = 0;
+        }
     }
 }
 

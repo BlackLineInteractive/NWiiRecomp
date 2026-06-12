@@ -1,15 +1,17 @@
 #include "runtime/cpu_context.h"
-#include <iostream>
-#include <string>
-#include <cstring>
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <iostream>
+#include <string>
 
 using namespace nwii::runtime;
 
 static uint64_t get_os_time() {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+  auto now = std::chrono::steady_clock::now();
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             now.time_since_epoch())
+      .count();
 }
 
 // Read a null-terminated string from the guest MMU memory
@@ -77,9 +79,11 @@ extern "C" void OSReport(CPUContext &ctx) {
         } else if (type == 'f') {
           char buf[64];
           if (fpr_idx <= 8) {
-            std::snprintf(buf, sizeof(buf), specifier.c_str(), ctx.fpr[fpr_idx++]);
+            std::snprintf(buf, sizeof(buf), specifier.c_str(),
+                          ctx.fpr[fpr_idx++]);
           } else {
-            // If more than 8 floats, they are passed on the stack or something, but usually there aren't that many.
+            // If more than 8 floats, they are passed on the stack or something,
+            // but usually there aren't that many.
             std::snprintf(buf, sizeof(buf), "[float_spilled]");
           }
           result += buf;
@@ -103,7 +107,7 @@ namespace nwii {
 namespace runtime {
 extern MMU *g_mmu;
 }
-}
+} // namespace nwii
 
 static uint32_t vi_vblank_counter = 0;
 
@@ -112,26 +116,26 @@ static uint16_t dsp_mbox_cpu_lo = 0;
 static uint16_t dsp_mbox_dsp_hi = 0;
 static uint16_t dsp_mbox_dsp_lo = 0;
 
-static uint32_t ipc_arm_msg = 0;  // HW_IPC_ARMMSG  (0xCD000008)
-static uint32_t ipc_arm_ctrl = 0; // HW_IPC_ARMCTRL (0xCD00000C)
-static uint32_t ipc_ppc_ctrl = 0; // HW_IPC_PPCCTRL (0xCD000004)
-static uint32_t pi_intsr = 0;     // PI_INTSR (0xCC003000)
+static uint32_t ipc_arm_msg = 0;    // HW_IPC_ARMMSG  (0xCD000008)
+static uint32_t ipc_arm_ctrl = 0;   // HW_IPC_ARMCTRL (0xCD00000C)
+static uint32_t ipc_ppc_ctrl = 0;   // HW_IPC_PPCCTRL (0xCD000004)
+static uint32_t pi_intsr = 0;       // PI_INTSR (0xCC003000)
 static uint32_t di_sr = 0x00000008; // DI_SR (0xCC006000)
-static uint32_t vi_dcr = 0;       // VI_DCR (0xCC002030)
+static uint32_t vi_dcr = 0;         // VI_DCR (0xCC002030)
 
 struct EXIChannel {
-    uint32_t status = 0;
-    uint32_t dma_addr = 0;
-    uint32_t dma_len = 0;
-    uint32_t cr = 0;
-    uint32_t data = 0;
+  uint32_t status = 0;
+  uint32_t dma_addr = 0;
+  uint32_t dma_len = 0;
+  uint32_t cr = 0;
+  uint32_t data = 0;
 };
 static EXIChannel exi_chan[3];
 
 struct SIChannel {
-    uint32_t out = 0;
-    uint32_t in_hi = 0;
-    uint32_t in_lo = 0;
+  uint32_t out = 0;
+  uint32_t in_hi = 0;
+  uint32_t in_lo = 0;
 };
 static SIChannel si_chan[4];
 static uint32_t si_poll = 0;
@@ -159,24 +163,26 @@ static uint32_t di_cfg = 0;
 
 namespace nwii {
 namespace runtime {
-extern MMU* g_mmu;
+extern MMU *g_mmu;
 
 void hle_set_ipc_arm_msg(uint32_t req_addr) {
   ipc_arm_msg = req_addr & 0x1FFFFFFF;
-  ipc_arm_ctrl = 0x00000002; // bit1 = Y2
+  ipc_arm_ctrl = 0x00000002;  // bit1 = Y2
   ipc_ppc_ctrl |= 0x00000004; // bit2 = X2 (response ready)
   pi_intsr |= 0x00001000; // Trigger PI interrupt for IPC (usually bit 12 or 14)
 }
-}
-}
+} // namespace runtime
+} // namespace nwii
 
+extern "C" void handle_ios_ipc(uint32_t request_addr);
 // g_mmu declaration moved outside extern "C"
 static void ipc_fake_ack(uint32_t request_addr) {
 
   // HW_IPC_ARMMSG
   ipc_arm_msg = request_addr & 0x1FFFFFFF;
   ipc_arm_ctrl = 0x00000003; // bit0 = Y1 (reply ready), bit1 = Y2 (cmd ack)
-  pi_intsr |= 0x00004000; // Trigger PI interrupt for IPC (INT_CAUSE_WII_IPC = 0x4000)
+  pi_intsr |=
+      0x00004000; // Trigger PI interrupt for IPC (INT_CAUSE_WII_IPC = 0x4000)
 
   if (nwii::runtime::g_mmu) {
     uint32_t cmd = nwii::runtime::g_mmu->read32(request_addr);
@@ -228,20 +234,21 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     if (addr == 0xCC003000) {
       // Dynamic interrupt checks
       if (ai_cr & 0x20) { // PSTAT (Audio Playing)
-          uint64_t current = get_os_time();
-          uint32_t samples = ((current - ai_start_time) * 48) / 1000;
-          uint32_t cur_scnt = ai_scnt + samples;
-          // Check if sample counter reached interrupt timing
-          if (ai_it > 0 && cur_scnt >= ai_it) {
-              ai_cr |= 0x04; // Set AIINT
-              if (ai_cr & 0x02) pi_intsr |= 0x20; // Trigger PI AI interrupt if unmasked
-          }
+        uint64_t current = get_os_time();
+        uint32_t samples = ((current - ai_start_time) * 48) / 1000;
+        uint32_t cur_scnt = ai_scnt + samples;
+        // Check if sample counter reached interrupt timing
+        if (ai_it > 0 && cur_scnt >= ai_it) {
+          ai_cr |= 0x04; // Set AIINT
+          if (ai_cr & 0x02)
+            pi_intsr |= 0x20; // Trigger PI AI interrupt if unmasked
+        }
       }
       return pi_intsr;
     }
     if (addr == 0xCC003004)
-      return 0;            // PI Interrupt Cause/Mask = 0 (no pending interrupts)
-    return 0;            // PI Interrupt Cause/Mask = 0 (no pending interrupts)
+      return 0; // PI Interrupt Cause/Mask = 0 (no pending interrupts)
+    return 0;   // PI Interrupt Cause/Mask = 0 (no pending interrupts)
   }
 
   // VI (Video Interface)
@@ -253,8 +260,8 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
       uint32_t current_line = (vi_vblank_counter % 262);
       uint32_t target_vct = (vi_dcr >> 16) & 0x3FF;
       if (current_line == target_vct) {
-         vi_dcr |= 0x80000000; // Set INT bit
-         pi_intsr |= 0x00000100; // Trigger PI_INTSR bit 8
+        vi_dcr |= 0x80000000;   // Set INT bit
+        pi_intsr |= 0x00000100; // Trigger PI_INTSR bit 8
       }
       return vi_dcr;
     }
@@ -274,9 +281,12 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     }
     if (addr == 0xCC005008 || addr == 0xCC00500A)
       return dsp_control;
-    if (addr == 0xCC005020) return ar_mmaddr;
-    if (addr == 0xCC005024) return ar_araddr;
-    if (addr == 0xCC005028) return ar_cnt;
+    if (addr == 0xCC005020)
+      return ar_mmaddr;
+    if (addr == 0xCC005024)
+      return ar_araddr;
+    if (addr == 0xCC005028)
+      return ar_cnt;
     return 0;
   }
 
@@ -285,11 +295,16 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     int ch = (addr - 0xCC006800) / 0x14;
     int reg = (addr - 0xCC006800) % 0x14;
     if (ch >= 0 && ch < 3) {
-      if (reg == 0x00) return exi_chan[ch].status | 0x1000; // Bit 12 = Device connected
-      if (reg == 0x04) return exi_chan[ch].dma_addr;
-      if (reg == 0x08) return exi_chan[ch].dma_len;
-      if (reg == 0x0C) return exi_chan[ch].cr;
-      if (reg == 0x10) return exi_chan[ch].data;
+      if (reg == 0x00)
+        return exi_chan[ch].status | 0x1000; // Bit 12 = Device connected
+      if (reg == 0x04)
+        return exi_chan[ch].dma_addr;
+      if (reg == 0x08)
+        return exi_chan[ch].dma_len;
+      if (reg == 0x0C)
+        return exi_chan[ch].cr;
+      if (reg == 0x10)
+        return exi_chan[ch].data;
     }
     return 0;
   }
@@ -300,34 +315,52 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
       int ch = (addr - 0xCC006400) / 0x0C;
       int reg = (addr - 0xCC006400) % 0x0C;
       if (ch >= 0 && ch < 4) {
-        if (reg == 0x00) return si_chan[ch].out;
+        if (reg == 0x00)
+          return si_chan[ch].out;
         if (reg == 0x04) {
-            // Return dummy controller data for ch0: 0x08000000 (standard controller ID)
-            if (ch == 0) return 0x08000000 | si_chan[ch].in_hi;
-            return si_chan[ch].in_hi | 0x80000000; // No device error for others
+          // Return dummy controller data for ch0: 0x08000000 (standard
+          // controller ID)
+          if (ch == 0)
+            return 0x08000000 | si_chan[ch].in_hi;
+          return si_chan[ch].in_hi | 0x80000000; // No device error for others
         }
-        if (reg == 0x08) return si_chan[ch].in_lo;
+        if (reg == 0x08)
+          return si_chan[ch].in_lo;
       }
     }
-    if (addr == 0xCC006430) return si_poll;
-    if (addr == 0xCC006434) return si_com_csr;
-    if (addr == 0xCC006438) return si_status;
-    if (addr == 0xCC00643C) return si_exi_clock;
+    if (addr == 0xCC006430)
+      return si_poll;
+    if (addr == 0xCC006434)
+      return si_com_csr;
+    if (addr == 0xCC006438)
+      return si_status;
+    if (addr == 0xCC00643C)
+      return si_exi_clock;
     return 0;
   }
 
   // DI (DVD Interface)
   if (addr >= 0xCC006000 && addr <= 0xCC0060FF) {
-    if (addr == 0xCC006000) return di_sr;
-    if (addr == 0xCC006004) return 1; // DI_COVER: cover closed, disc present
-    if (addr == 0xCC006008) return di_cmd[0];
-    if (addr == 0xCC00600C) return di_cmd[1];
-    if (addr == 0xCC006010) return di_cmd[2];
-    if (addr == 0xCC006014) return di_mar;
-    if (addr == 0xCC006018) return di_len;
-    if (addr == 0xCC00601C) return di_cr;
-    if (addr == 0xCC006020) return di_imm;
-    if (addr == 0xCC006024) return di_cfg;
+    if (addr == 0xCC006000)
+      return di_sr;
+    if (addr == 0xCC006004)
+      return 1; // DI_COVER: cover closed, disc present
+    if (addr == 0xCC006008)
+      return di_cmd[0];
+    if (addr == 0xCC00600C)
+      return di_cmd[1];
+    if (addr == 0xCC006010)
+      return di_cmd[2];
+    if (addr == 0xCC006014)
+      return di_mar;
+    if (addr == 0xCC006018)
+      return di_len;
+    if (addr == 0xCC00601C)
+      return di_cr;
+    if (addr == 0xCC006020)
+      return di_imm;
+    if (addr == 0xCC006024)
+      return di_cfg;
     return 0;
   }
 
@@ -352,13 +385,16 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
     }
     case 0x000004:
       // HW_IPC_PPCCTRL: game clears bits or sets them
-      // In a real Wii, writing 1 to X1/Y1 clears them. We'll simplify and just clear X2 if requested.
-      if (val & 0x00000008) ipc_ppc_ctrl &= ~0x00000004; // Clear X2 on Ack?
+      // In a real Wii, writing 1 to X1/Y1 clears them. We'll simplify and just
+      // clear X2 if requested.
+      if (val & 0x00000008)
+        ipc_ppc_ctrl &= ~0x00000004; // Clear X2 on Ack?
       break;
     case 0x00000C:
       // HW_IPC_ARMCTRL: game writes 1 to clear Y1, 2 to clear Y2
       ipc_arm_ctrl &= ~val;
-      if (!(ipc_arm_ctrl & 3)) pi_intsr &= ~0x00004000;
+      if (!(ipc_arm_ctrl & 3))
+        pi_intsr &= ~0x00004000;
       break;
     default:
       break;
@@ -394,7 +430,8 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
   if (addr >= 0xCC006000 && addr <= 0xCC0060FF) {
     if (addr == 0xCC006000) {
       di_sr &= ~val; // Clear interrupts
-      if (!(di_sr & 0x0A)) pi_intsr &= ~0x01; // Clear PI DI int (if TCINT and DEINT are clear)
+      if (!(di_sr & 0x0A))
+        pi_intsr &= ~0x01; // Clear PI DI int (if TCINT and DEINT are clear)
     } else if (addr == 0xCC006008) {
       di_cmd[0] = val;
     } else if (addr == 0xCC00600C) {
@@ -413,13 +450,14 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
         if (cmd == 0x12) { // Inquiry
           di_imm = 0;
         } else if (cmd == 0xAB) { // Request Error
-          di_imm = 0; // No error
+          di_imm = 0;             // No error
         } else if (cmd == 0xE0) { // Audio Status
           di_imm = 0;
         }
         // Dummy read/seek success
         di_sr |= 0x08; // TCINT (Transfer Complete)
-        if (di_sr & 0x04) pi_intsr |= 0x01; // Trigger PI DI interrupt if TCINTMASK=1
+        if (di_sr & 0x04)
+          pi_intsr |= 0x01; // Trigger PI DI interrupt if TCINTMASK=1
       }
     }
     return;
@@ -435,44 +473,55 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
         dsp_mbox_dsp_hi &= ~0x8000;
     } else if (addr == 0xCC005008 || addr == 0xCC00500A) {
       uint16_t val16 = val & 0xFFFF;
-      if (val16 & 0x0008) dsp_control &= ~0x0008; // Clear AID int
-      if (val16 & 0x0020) dsp_control &= ~0x0020; // Clear ARAM int
-      if (val16 & 0x0080) dsp_control &= ~0x0080; // Clear DSP int
-      
-      // DSPReset (bit 0): self-clearing — write 1 triggers reset, HW clears to 0.
+      if (val16 & 0x0008)
+        dsp_control &= ~0x0008; // Clear AID int
+      if (val16 & 0x0020)
+        dsp_control &= ~0x0020; // Clear ARAM int
+      if (val16 & 0x0080)
+        dsp_control &= ~0x0080; // Clear DSP int
+
+      // DSPReset (bit 0): self-clearing — write 1 triggers reset, HW clears to
+      // 0.
       if (val16 & 0x0001) {
-          // When DSP is reset, it sends an init message (0xDCD1) to the CPU
-          dsp_mbox_dsp_hi = 0xDCD1;
-          dsp_mbox_dsp_lo = 0x0000;
-          dsp_control |= 0x0080; // Set DSP interrupt flag
+        // When DSP is reset, it sends an init message (0xDCD1) to the CPU
+        dsp_mbox_dsp_hi = 0xDCD1;
+        dsp_mbox_dsp_lo = 0x0000;
+        dsp_control |= 0x0080; // Set DSP interrupt flag
       }
-      
+
       bool was_halted = (dsp_control & 0x0800) != 0;
       bool is_halted = (val16 & 0x0800) != 0;
-      
+
       // Simulate by never storing bit 0 (mask it out with ~0x00A9).
-      dsp_control = (dsp_control & 0x00A8) | (val16 & ~0x00A9); // bit 0 not stored
-      
+      dsp_control =
+          (dsp_control & 0x00A8) | (val16 & ~0x00A9); // bit 0 not stored
+
       // If DSP was un-halted, send the INIT message
       if (was_halted && !is_halted) {
-          dsp_mbox_dsp_hi = 0xDCD1;
-          dsp_mbox_dsp_lo = 0x0000;
-          dsp_control |= 0x0080;
+        dsp_mbox_dsp_hi = 0xDCD1;
+        dsp_mbox_dsp_lo = 0x0000;
+        dsp_control |= 0x0080;
       }
-      
+
       bool pi_int = false;
-      if ((dsp_control & 0x0008) && (dsp_control & 0x0010)) pi_int = true; // AID
-      if ((dsp_control & 0x0020) && (dsp_control & 0x0040)) pi_int = true; // ARAM
-      if ((dsp_control & 0x0080) && (dsp_control & 0x0100)) pi_int = true; // DSP
-      if (pi_int) pi_intsr |= 0x40; // Trigger PI DSP interrupt
-      else pi_intsr &= ~0x40;
+      if ((dsp_control & 0x0008) && (dsp_control & 0x0010))
+        pi_int = true; // AID
+      if ((dsp_control & 0x0020) && (dsp_control & 0x0040))
+        pi_int = true; // ARAM
+      if ((dsp_control & 0x0080) && (dsp_control & 0x0100))
+        pi_int = true; // DSP
+      if (pi_int)
+        pi_intsr |= 0x40; // Trigger PI DSP interrupt
+      else
+        pi_intsr &= ~0x40;
     } else if (addr == 0xCC005020) {
       ar_mmaddr = val;
     } else if (addr == 0xCC005024) {
       ar_araddr = val;
     } else if (addr == 0xCC005028) {
       // DMA starts on ANY write to AR_CNT.
-      // Bit 31 = direction (0=MRAM→ARAM, 1=ARAM→MRAM). Bits [30:0] = byte count.
+      // Bit 31 = direction (0=MRAM→ARAM, 1=ARAM→MRAM). Bits [30:0] = byte
+      // count.
       ar_cnt = val;
       {
         bool dir = (val & 0x80000000) != 0;
@@ -480,14 +529,17 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
         uint32_t mm = ar_mmaddr & 0x01FFFFFF;
         uint32_t ar_a = ar_araddr & 0x00FFFFFF;
         if (nwii::runtime::g_mmu && count > 0) {
-            uint8_t* mem1 = nwii::runtime::g_mmu->mem1.data();
-            uint8_t* mem2 = nwii::runtime::g_mmu->mem2.data();
-            if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, count); // MRAM->ARAM
-            else      std::memcpy(mem1 + mm, mem2 + ar_a, count); // ARAM->MRAM
+          uint8_t *mem1 = nwii::runtime::g_mmu->mem1.data();
+          uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
+          if (!dir)
+            std::memcpy(mem2 + ar_a, mem1 + mm, count); // MRAM->ARAM
+          else
+            std::memcpy(mem1 + mm, mem2 + ar_a, count); // ARAM->MRAM
         }
-        ar_cnt = 0; // DMA complete instantly
+        ar_cnt = 0;            // DMA complete instantly
         dsp_control |= 0x0020; // Set ARAM interrupt flag (bit 5)
-        if (dsp_control & 0x0040) pi_intsr |= 0x40; // Trigger PI if ARAM_mask set
+        if (dsp_control & 0x0040)
+          pi_intsr |= 0x40; // Trigger PI if ARAM_mask set
       }
     }
     return;
@@ -499,27 +551,34 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
     int reg = (addr - 0xCC006800) % 0x14;
     if (ch >= 0 && ch < 3) {
       if (reg == 0x00) {
-         if (val & 2) exi_chan[ch].status &= ~2; // Clear EXIINT
-         if (val & 8) exi_chan[ch].status &= ~8; // Clear TCINT
-         if (val & 0x800) exi_chan[ch].status &= ~0x800; // Clear EXTINT
-         exi_chan[ch].status = (exi_chan[ch].status & 0x80A) | (val & ~0x80A);
+        if (val & 2)
+          exi_chan[ch].status &= ~2; // Clear EXIINT
+        if (val & 8)
+          exi_chan[ch].status &= ~8; // Clear TCINT
+        if (val & 0x800)
+          exi_chan[ch].status &= ~0x800; // Clear EXTINT
+        exi_chan[ch].status = (exi_chan[ch].status & 0x80A) | (val & ~0x80A);
       }
-      if (reg == 0x04) exi_chan[ch].dma_addr = val;
-      if (reg == 0x08) exi_chan[ch].dma_len = val;
+      if (reg == 0x04)
+        exi_chan[ch].dma_addr = val;
+      if (reg == 0x08)
+        exi_chan[ch].dma_len = val;
       if (reg == 0x0C) {
-         exi_chan[ch].cr = val;
-         if (val & 1) { // TSTART
-            exi_chan[ch].cr &= ~1; // Complete instantly
-            exi_chan[ch].status |= 8; // Set TCINT
-            if (exi_chan[ch].status & 4) pi_intsr |= 0x10; // Trigger PI EXI interrupt
-            
-            // For reads, just return 0 to bypass cleanly
-            if ((val & 2) == 0 && ((val >> 2) & 3) != 1) { // Immediate read
-               exi_chan[ch].data = 0;
-            }
-         }
+        exi_chan[ch].cr = val;
+        if (val & 1) {              // TSTART
+          exi_chan[ch].cr &= ~1;    // Complete instantly
+          exi_chan[ch].status |= 8; // Set TCINT
+          if (exi_chan[ch].status & 4)
+            pi_intsr |= 0x10; // Trigger PI EXI interrupt
+
+          // For reads, just return 0 to bypass cleanly
+          if ((val & 2) == 0 && ((val >> 2) & 3) != 1) { // Immediate read
+            exi_chan[ch].data = 0;
+          }
+        }
       }
-      if (reg == 0x10) exi_chan[ch].data = val;
+      if (reg == 0x10)
+        exi_chan[ch].data = val;
     }
     return;
   }
@@ -530,66 +589,72 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
       int ch = (addr - 0xCC006400) / 0x0C;
       int reg = (addr - 0xCC006400) % 0x0C;
       if (ch >= 0 && ch < 4) {
-        if (reg == 0x00) si_chan[ch].out = val;
-        if (reg == 0x04) si_chan[ch].in_hi = val;
-        if (reg == 0x08) si_chan[ch].in_lo = val;
+        if (reg == 0x00)
+          si_chan[ch].out = val;
+        if (reg == 0x04)
+          si_chan[ch].in_hi = val;
+        if (reg == 0x08)
+          si_chan[ch].in_lo = val;
       }
     }
-    if (addr == 0xCC006430) si_poll = val;
+    if (addr == 0xCC006430)
+      si_poll = val;
     if (addr == 0xCC006434) {
-       si_com_csr = val;
-       if (val & 1) { // TSTART
-          si_com_csr &= ~1; // Complete instantly
-          si_com_csr |= 0x80000000; // Set TCINT (bit 31)
-          // Also set RDSTINT (bit 28)
-          if ((si_com_csr & 0x40000000) || (si_com_csr & 0x08000000)) pi_intsr |= 0x08; // Trigger PI SI int (bit 3)
-       }
+      si_com_csr = val;
+      if (val & 1) {              // TSTART
+        si_com_csr &= ~1;         // Complete instantly
+        si_com_csr |= 0x80000000; // Set TCINT (bit 31)
+        // Also set RDSTINT (bit 28)
+        if ((si_com_csr & 0x40000000) || (si_com_csr & 0x08000000))
+          pi_intsr |= 0x08; // Trigger PI SI int (bit 3)
+      }
     }
     if (addr == 0xCC006438) {
-       uint32_t clear_mask = val & 0x0F0F0F0F; // Write-1-to-clear error bits
-       si_status &= ~clear_mask;
-       if (val & 0x80000000) { // WR (bit 31)
-           // Game requesting to poll channels manually
-           si_status &= ~0x80000000;
-           si_status |= 0x20000000; // RDST0 (bit 29) set - data ready
-       }
+      uint32_t clear_mask = val & 0x0F0F0F0F; // Write-1-to-clear error bits
+      si_status &= ~clear_mask;
+      if (val & 0x80000000) { // WR (bit 31)
+        // Game requesting to poll channels manually
+        si_status &= ~0x80000000;
+        si_status |= 0x20000000; // RDST0 (bit 29) set - data ready
+      }
     }
-    if (addr == 0xCC00643C) si_exi_clock = val;
+    if (addr == 0xCC00643C)
+      si_exi_clock = val;
     return;
   }
 
   // AI (Audio Interface)
   if (addr >= 0xCC006C00 && addr <= 0xCC006C1F) {
     if (addr == 0xCC006C00) {
-       if (val & 0x04) {
-           ai_cr &= ~0x04; // Write 1 to clear AIINT
-           pi_intsr &= ~0x20; // Clear PI AI interrupt
-       }
-       if (val & 0x08) {
-           // SCRESET
-           ai_scnt = 0;
-           ai_start_time = get_os_time();
-       }
-       if ((val & 0x20) && !(ai_cr & 0x20)) {
-           // PSTAT (Play Status) turned on
-           ai_start_time = get_os_time();
-       }
-       ai_cr = (ai_cr & 0x04) | (val & ~0x04);
+      if (val & 0x04) {
+        ai_cr &= ~0x04;    // Write 1 to clear AIINT
+        pi_intsr &= ~0x20; // Clear PI AI interrupt
+      }
+      if (val & 0x08) {
+        // SCRESET
+        ai_scnt = 0;
+        ai_start_time = get_os_time();
+      }
+      if ((val & 0x20) && !(ai_cr & 0x20)) {
+        // PSTAT (Play Status) turned on
+        ai_start_time = get_os_time();
+      }
+      ai_cr = (ai_cr & 0x04) | (val & ~0x04);
     } else if (addr == 0xCC006C04) {
-       ai_vr = val;
+      ai_vr = val;
     } else if (addr == 0xCC006C08) {
-       ai_scnt = val;
-       ai_start_time = get_os_time();
+      ai_scnt = val;
+      ai_start_time = get_os_time();
     } else if (addr == 0xCC006C0C) {
-       ai_it = val;
+      ai_it = val;
     }
     return;
   }
-  
+
   // Other GC registers - ignored
 }
-}
-} // namespace nwii::runtime
+} // namespace runtime
+} // namespace nwii
 
 extern "C" {
 // Interrupt Management
@@ -646,9 +711,7 @@ void VISetBlack(CPUContext &ctx) {
   // Ignore
 }
 
-void VIGetNextField(CPUContext &ctx) {
-  ctx.gpr[3] = 0;
-}
+void VIGetNextField(CPUContext &ctx) { ctx.gpr[3] = 0; }
 
 void PADInit(CPUContext &ctx) {
   std::cout << "[HLE PAD] PADInit called" << std::endl;
