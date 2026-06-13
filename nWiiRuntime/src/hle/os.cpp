@@ -177,32 +177,23 @@ void hle_set_ipc_arm_msg(uint32_t req_addr) {
 extern "C" void handle_ios_ipc(uint32_t request_addr);
 // g_mmu declaration moved outside extern "C"
 static void ipc_fake_ack(uint32_t request_addr) {
+  // Translate physical address to virtual for MMU access:
+  // Physical MEM1: 0x00000000-0x017FFFFF -> Virtual: 0x80000000+
+  // Physical MEM2: 0x10000000-0x13FFFFFF -> Virtual: 0x90000000+
+  uint32_t virt_addr = request_addr;
+  if (virt_addr < 0x01800000) {
+    virt_addr |= 0x80000000;
+  } else if (virt_addr >= 0x10000000 && virt_addr < 0x14000000) {
+    virt_addr = (virt_addr & 0x03FFFFFF) | 0x90000000;
+  }
 
-  // HW_IPC_ARMMSG
+  // Delegate to the real IPC handler in ios.cpp for full command dispatch
+  handle_ios_ipc(virt_addr);
+
+  // Set HW IPC registers to signal reply ready
   ipc_arm_msg = request_addr & 0x1FFFFFFF;
   ipc_arm_ctrl = 0x00000003; // bit0 = Y1 (reply ready), bit1 = Y2 (cmd ack)
-  pi_intsr |=
-      0x00004000; // Trigger PI interrupt for IPC (INT_CAUSE_WII_IPC = 0x4000)
-
-  if (nwii::runtime::g_mmu) {
-    uint32_t cmd = nwii::runtime::g_mmu->read32(request_addr);
-    int32_t result = 0; // IPC_OK
-    if (cmd == 1 || cmd == 2) {
-      result = 1; // Return fake FD 1 for Open/Close
-    } else if (cmd == 3 || cmd == 4) {
-      // Read/Write: return length (from offset 20 usually, but let's just
-      // return what was requested if possible)
-      uint32_t length = nwii::runtime::g_mmu->read32(
-          request_addr + 20); // usually length is at offset 20
-      result = length;
-    }
-
-    std::cout << "[HW IPC] Processing command " << cmd << " at 0x" << std::hex
-              << request_addr << std::dec << ", returning result " << result
-              << "\n";
-
-    nwii::runtime::g_mmu->write32(request_addr + 4, (uint32_t)result);
-  }
+  pi_intsr |= 0x00004000;   // INT_CAUSE_WII_IPC
 }
 
 namespace nwii {

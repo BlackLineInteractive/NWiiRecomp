@@ -323,41 +323,69 @@ static void read_disc_data(uint8_t* dst, uint64_t offset, uint32_t length) {
     }
 }
 
+namespace nwii {
+namespace runtime {
+
+struct PendingCallback {
+    uint32_t callback;
+    uint32_t arg1;
+    uint32_t arg2;
+};
+
+static std::vector<PendingCallback> g_pending_callbacks;
+
 // Isolated callback execution - saves ALL non-volatile state including FPR/GQR (#9)
 void execute_callback(CPUContext &ctx, uint32_t callback, uint32_t arg1, uint32_t arg2) {
   if (callback == 0 || callback == 0xFFFFFFFF) return;
-
-  uint32_t b_gpr[32], b_lr = ctx.lr, b_ctr = ctx.ctr, b_xer = ctx.xer, b_pc = ctx.pc;
-  uint32_t b_msr = ctx.msr, b_fpscr = ctx.fpscr;
-  ConditionField b_cr[8];
-  double b_fpr[32], b_ps1[32];
-  uint32_t b_gqr[8];
-  for (int i = 0; i < 32; i++) b_gpr[i] = ctx.gpr[i];
-  for (int i = 0; i < 8;  i++) b_cr[i]  = ctx.cr[i];
-  for (int i = 0; i < 32; i++) { b_fpr[i] = ctx.fpr[i]; b_ps1[i] = ctx.ps1[i]; }
-  for (int i = 0; i < 8;  i++) b_gqr[i] = ctx.gqr[i];
-
-  ctx.gpr[3] = arg1;
-  ctx.gpr[4] = arg2;
-  ctx.lr = 0;
-  ctx.pc = callback;
-
-  run_game(ctx);
-
-  for (int i = 0; i < 32; i++) {
-    if (i == 3 || i == 4) continue;
-    ctx.gpr[i] = b_gpr[i];
-  }
-  for (int i = 0; i < 8;  i++) ctx.cr[i]  = b_cr[i];
-  for (int i = 0; i < 32; i++) { ctx.fpr[i] = b_fpr[i]; ctx.ps1[i] = b_ps1[i]; }
-  for (int i = 0; i < 8;  i++) ctx.gqr[i] = b_gqr[i];
-  ctx.lr    = b_lr;
-  ctx.ctr   = b_ctr;
-  ctx.xer   = b_xer;
-  ctx.fpscr = b_fpscr;
-  ctx.msr   = b_msr;
-  ctx.pc    = b_pc;
+  g_pending_callbacks.push_back({callback, arg1, arg2});
 }
+
+void process_pending_callbacks(CPUContext &ctx) {
+  if (g_pending_callbacks.empty()) {
+    return;
+  }
+  std::vector<PendingCallback> callbacks = g_pending_callbacks;
+  g_pending_callbacks.clear();
+  for (const auto& cb : callbacks) {
+    uint32_t callback = cb.callback;
+    uint32_t arg1 = cb.arg1;
+    uint32_t arg2 = cb.arg2;
+
+    uint32_t b_gpr[32], b_lr = ctx.lr, b_ctr = ctx.ctr, b_xer = ctx.xer, b_pc = ctx.pc;
+    uint32_t b_msr = ctx.msr, b_fpscr = ctx.fpscr;
+    ConditionField b_cr[8];
+    double b_fpr[32], b_ps1[32];
+    uint32_t b_gqr[8];
+    for (int i = 0; i < 32; i++) b_gpr[i] = ctx.gpr[i];
+    for (int i = 0; i < 8;  i++) b_cr[i]  = ctx.cr[i];
+    for (int i = 0; i < 32; i++) { b_fpr[i] = ctx.fpr[i]; b_ps1[i] = ctx.ps1[i]; }
+    for (int i = 0; i < 8;  i++) b_gqr[i] = ctx.gqr[i];
+
+    ctx.gpr[3] = arg1;
+    ctx.gpr[4] = arg2;
+    ctx.lr = 0;
+    ctx.pc = callback;
+
+    run_game(ctx);
+
+    for (int i = 0; i < 32; i++) {
+      if (i == 3 || i == 4) continue;
+      ctx.gpr[i] = b_gpr[i];
+    }
+    for (int i = 0; i < 8;  i++) ctx.cr[i]  = b_cr[i];
+    for (int i = 0; i < 32; i++) { ctx.fpr[i] = b_fpr[i]; ctx.ps1[i] = b_ps1[i]; }
+    for (int i = 0; i < 8;  i++) ctx.gqr[i] = b_gqr[i];
+    ctx.lr    = b_lr;
+    ctx.ctr   = b_ctr;
+    ctx.xer   = b_xer;
+    ctx.fpscr = b_fpscr;
+    ctx.msr   = b_msr;
+    ctx.pc    = b_pc;
+  }
+}
+
+} // namespace runtime
+} // namespace nwii
 
 // NEW: Proper DI_Read that handles both sync and async modes
 static void di_read_internal(nwii::runtime::MMU* mmu, uint32_t inbuf, uint32_t callback, uint32_t userdata, bool is_async) {
@@ -492,9 +520,9 @@ void IOS_Open(CPUContext &ctx) {
   
   int fd_or_error;
   if (path.find("/dev/") == 0) {
-    if (path.find("/dev/usb/") == 0) {
-      fd_or_error = 10; // Fake FD for USB devices
-      std::cout << "[HLE IOS] IOS_Open: faking /dev/usb -> fd=10" << std::endl;
+    if (path.find("/dev/usb") == 0) {
+      fd_or_error = 100; // Fake success for USB devices to avoid spin loops
+      std::cout << "[HLE IOS] IOS_Open: faking success for /dev/usb -> result=" << fd_or_error << std::endl;
     } else {
       fd_or_error = get_device_fd(path);
     }
@@ -529,9 +557,9 @@ void IOS_OpenAsync(CPUContext &ctx) {
 
   int fd_or_error;
   if (path.find("/dev/") == 0) {
-    if (path.find("/dev/usb/") == 0) {
-      fd_or_error = 10; // Fake FD for USB devices
-      std::cout << "[HLE IOS] IOS_Open: faking /dev/usb -> fd=10" << std::endl;
+    if (path.find("/dev/usb") == 0) {
+      fd_or_error = 100; // Fake success for USB devices to avoid spin loops
+      std::cout << "[HLE IOS] IOS_OpenAsync: faking success for /dev/usb -> result=" << fd_or_error << std::endl;
     } else {
       fd_or_error = get_device_fd(path);
     }
@@ -687,6 +715,16 @@ void IOS_Ioctlv(CPUContext &ctx) {
   } else {
     ctx.gpr[3] = 0;
   }
+  ctx.pc = ctx.lr;
+}
+
+void iosAlloc(CPUContext &ctx) {
+  uint32_t heap_id = ctx.gpr[3];
+  uint32_t size = ctx.gpr[4];
+  uint32_t align = ctx.gpr[5];
+  uint32_t ptr = ios_guest_alloc(ctx, size, align, heap_id);
+  std::cout << "[HLE IOS] iosAlloc: heap=" << heap_id << " size=" << size << " align=" << align << " -> ptr=0x" << std::hex << ptr << std::dec << std::endl;
+  ctx.gpr[3] = ptr;
   ctx.pc = ctx.lr;
 }
 
@@ -876,31 +914,73 @@ namespace runtime {
 }
 
 extern "C" void handle_ios_ipc(uint32_t request_addr) {
-    std::cout << "[DEBUG] handle_ios_ipc called with phys addr 0x" << std::hex << request_addr << std::dec << "\n";
     if (!nwii::runtime::g_mmu) return;
-    
-    // request_addr from HW_IPC_PPCMSG is a physical address. Convert to virtual.
+
+    // request_addr is now a virtual address (translated by ipc_fake_ack).
+    // If called directly from the old path it could still be physical, so
+    // normalise: MEM1 phys 0x00-0x017FFFFF -> 0x80+, MEM2 phys 0x10-0x13FFFFFF -> 0x90+
     uint32_t virt_addr = request_addr;
-    if (virt_addr < 0x01800000 || (virt_addr >= 0x10000000 && virt_addr < 0x14000000)) {
+    if (virt_addr < 0x01800000) {
         virt_addr |= 0x80000000;
+    } else if (virt_addr >= 0x10000000 && virt_addr < 0x14000000) {
+        virt_addr = (virt_addr & 0x03FFFFFF) | 0x90000000;
     }
-    
+
     uint32_t cmd = nwii::runtime::g_mmu->read32(virt_addr);
-    int32_t result = 0; // IPC_OK
-    
-    if (cmd == 1 || cmd == 2) {
-        result = 1; // Fake FD for Open/Close
-    } else if (cmd == 3 || cmd == 4) {
-        result = nwii::runtime::g_mmu->read32(virt_addr + 20); // Length for Read/Write
-    } else if (cmd == 6 || cmd == 7) { // IOS_Ioctl / IOS_Ioctlv
-        uint32_t fd = nwii::runtime::g_mmu->read32(virt_addr + 0x08);
+    int32_t result = IPC_OK;
+
+    if (cmd == 1) { // IOS_Open via HW IPC
+        // Path is at virt_addr+8, flags at virt_addr+12
+        uint32_t path_addr = nwii::runtime::g_mmu->read32(virt_addr + 8);
+        // path_addr may be virtual or physical; normalise
+        if (path_addr < 0x01800000) path_addr |= 0x80000000;
+        else if (path_addr >= 0x10000000 && path_addr < 0x14000000)
+            path_addr = (path_addr & 0x03FFFFFF) | 0x90000000;
+
+        std::string path;
+        for (int i = 0; i < 64; ++i) {
+            char c = (char)nwii::runtime::g_mmu->read8(path_addr + i);
+            if (c == '\0') break;
+            path += c;
+        }
+        result = get_device_fd(path);
+        if (result < 0) result = -6; // IOS_ERROR_NOEXISTS
+        std::cout << "[HW IPC] Open path='" << path << "' -> fd=" << result << "\n";
+    } else if (cmd == 2) { // IOS_Close
+        result = IPC_OK;
+    } else if (cmd == 3 || cmd == 4) { // Read / Write
+        result = (int32_t)nwii::runtime::g_mmu->read32(virt_addr + 20);
+    } else if (cmd == 6) { // IOS_Ioctl (async via HW IPC)
+        uint32_t fd        = nwii::runtime::g_mmu->read32(virt_addr + 0x08);
         uint32_t ioctl_cmd = nwii::runtime::g_mmu->read32(virt_addr + 0x0C);
-        uint32_t in_buf = nwii::runtime::g_mmu->read32(virt_addr + 0x10);
-        
+        uint32_t in_buf    = nwii::runtime::g_mmu->read32(virt_addr + 0x10);
+        uint32_t out_buf   = nwii::runtime::g_mmu->read32(virt_addr + 0x18);
+
+        std::cout << "[HW IPC] Ioctl fd=" << fd << " cmd=0x" << std::hex << ioctl_cmd << std::dec << "\n";
+
         if (fd == 2) { // /dev/di
             if (ioctl_cmd == 0x86) { // DI_ClearCoverInterrupt
                 result = IPC_OK;
-            } else if (ioctl_cmd == 0x12) { // DI_Inquiry
+            } else if (ioctl_cmd == 0x12 || ioctl_cmd == 0x01) { // DI_Inquiry
+                // Normalise outbuf
+                if (out_buf != 0 && out_buf < 0x80000000) {
+                    if (out_buf < 0x01800000) out_buf |= 0x80000000;
+                    else if (out_buf >= 0x10000000 && out_buf < 0x14000000)
+                        out_buf = (out_buf & 0x03FFFFFF) | 0x90000000;
+                }
+                if (out_buf >= 0x80000000 && out_buf < 0x94000000) {
+                    for (int i = 0; i < 32; i++) nwii::runtime::g_mmu->write8(out_buf + i, 0);
+                    nwii::runtime::g_mmu->write8(out_buf + 0, 'R');
+                    nwii::runtime::g_mmu->write8(out_buf + 1, 'S');
+                    nwii::runtime::g_mmu->write8(out_buf + 2, 'Z');
+                    nwii::runtime::g_mmu->write8(out_buf + 3, 'K');
+                    nwii::runtime::g_mmu->write8(out_buf + 4, '0');
+                    nwii::runtime::g_mmu->write8(out_buf + 5, '1');
+                    nwii::runtime::g_mmu->write8(out_buf + 6, '0');
+                    nwii::runtime::g_mmu->write8(out_buf + 7, '1');
+                    nwii::runtime::g_mmu->write32(out_buf + 0x18, 0x5D1C9EA3);
+                    std::cout << "[HW IPC] DI_Inquiry: wrote disc data to 0x" << std::hex << out_buf << std::dec << "\n";
+                }
                 result = IPC_OK;
             } else if (ioctl_cmd == 0x20) { // DI_Read
                 di_read_internal(nwii::runtime::g_mmu, in_buf, 0, 0, false);
@@ -911,17 +991,15 @@ extern "C" void handle_ios_ipc(uint32_t request_addr) {
         } else {
             result = IPC_OK;
         }
+    } else if (cmd == 7) { // IOS_Ioctlv
+        result = IPC_OK;
     }
-    
-    std::cout << "[HW IPC] Processing command " << cmd << " at 0x" << std::hex
-              << virt_addr << std::dec << ", returning result " << result
-              << "\n";
-              
-    // Write result back
-    nwii::runtime::g_mmu->write32(virt_addr + 4, (uint32_t)result);
-    
-    // Trigger reply interrupt
-    nwii::runtime::hle_set_ipc_arm_msg(request_addr);
+
+    std::cout << "[HW IPC] cmd=" << cmd << " virt=0x" << std::hex
+              << virt_addr << " -> result=" << (int32_t)result << std::dec << "\n";
+
+    // Write result back into the IPC request buffer
+    nwii::runtime::g_mmu->write32(virt_addr + 4, (uint32_t)(int32_t)result);
 }
 
 namespace nwii {
@@ -936,55 +1014,29 @@ void init_ipc_client(CPUContext &ctx) {
 
 void handle_syscall(CPUContext &ctx) {
   uint32_t syscall_id = ctx.gpr[0];
+  uint32_t old_pc = ctx.pc; // Preserve PC so 'sc' falls through correctly
 
-  if (syscall_id == 0x61) {
-    uint32_t path_ptr = ctx.gpr[3];
-    std::cout << "[HLE IOS] handle_syscall (sc) called with r3=0x" << std::hex << path_ptr
-              << " r4=0x" << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << " r6=0x" << ctx.gpr[6]
-              << " pc=0x" << ctx.pc << " lr=0x" << ctx.lr << std::dec << std::endl;
-
-    std::string path = read_guest_string(ctx, path_ptr);
-    if (path.empty()) {
-      std::cout << "[HLE IOS] IOS_Open via sc: empty path (ptr=0x" << std::hex << path_ptr << std::dec << "), faking failure" << std::endl;
-      ctx.gpr[3] = -106;
-      ctx.pc = ctx.lr;
-      return;
-    }
-    int fd_or_error;
-    if (path.find("/dev/") == 0) {
-      if (path.find("/dev/usb") == 0) {
-        fd_or_error = ISFS_ERROR_ENOENT; // user says: /dev/usb (повертає ENOENT, але гра може очікувати ENOENT для fallback)
-        std::cout << "[HLE IOS] IOS_Open via sc: faking /dev/usb -> ENOENT" << std::endl;
-      } else {
-        fd_or_error = get_device_fd(path);
-      }
-    } else {
-      fd_or_error = ISFS_ERROR_ENOENT;
-    }
-    std::cout << "[HLE IOS] IOS_Open via sc, path='" << path << "' -> result=" << fd_or_error << std::endl;
-    ctx.gpr[3] = fd_or_error;
-
-  } else if (syscall_id == 0x62) {
-    std::cout << "[HLE IOS] IOS_Close via sc, fd=" << ctx.gpr[3] << std::endl;
-    ctx.gpr[3] = 0;
-
-  } else if (syscall_id == 0x6B || syscall_id == 0x6C) {
-    std::cout << "[HLE IOS] IOS_Ioctl(v)Async via sc: " << std::hex
-              << syscall_id << " fd=" << ctx.gpr[3] << " cmd=" << ctx.gpr[4]
-              << std::dec << std::endl;
-    uint32_t callback = (syscall_id == 0x6B) ? ctx.gpr[9] : ctx.gpr[8];
-    uint32_t userdata = (syscall_id == 0x6B) ? ctx.gpr[10] : ctx.gpr[9];
-
-    if (valid_callback(callback)) {
-      execute_callback(ctx, callback, 0, userdata);
-    }
-
-    ctx.gpr[3] = 0;
-    ctx.pc = ctx.lr;
-
-  } else {
-    // Unknown syscall - don't corrupt registers
+  switch (syscall_id) {
+    case 0x61: IOS_Open(ctx); break;
+    case 0x62: IOS_Close(ctx); break;
+    case 0x63: IOS_Read(ctx); break;
+    case 0x64: IOS_Write(ctx); break;
+    case 0x65: IOS_Seek(ctx); break;
+    case 0x66: IOS_Ioctl(ctx); break;
+    case 0x67: IOS_Ioctlv(ctx); break;
+    case 0x68: IOS_OpenAsync(ctx); break;
+    case 0x69: IOS_CloseAsync(ctx); break;
+    case 0x6A: IOS_ReadAsync(ctx); break;
+    case 0x6B: IOS_IoctlAsync(ctx); break;
+    case 0x6C: IOS_IoctlvAsync(ctx); break;
+    default:
+      std::cout << "[HLE IOS] Unknown syscall ID: 0x" << std::hex << syscall_id << std::dec << " at PC=0x" << std::hex << old_pc << std::dec << std::endl;
+      // Treat unknown syscalls as OS traps (e.g. OSYieldThread) and process pending callbacks.
+      process_pending_callbacks(ctx);
+      break;
   }
+
+  ctx.pc = old_pc; // Restore PC
 }
 
 } // namespace runtime

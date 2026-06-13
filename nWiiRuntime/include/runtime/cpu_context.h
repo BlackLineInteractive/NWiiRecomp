@@ -32,6 +32,7 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val);
 struct CPUContext;
 void init_ipc_client(CPUContext &ctx);
 void handle_syscall(CPUContext &ctx);
+void process_pending_callbacks(CPUContext &ctx);
 
 struct MMU {
   std::vector<uint8_t> mem1;

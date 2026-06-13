@@ -57,6 +57,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void IOS_IoctlAsync(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_Ioctlv(nwii::runtime::CPUContext& ctx);\n";
     hout << "void IOS_IoctlvAsync(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void iosAlloc(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void iosFree(nwii::runtime::CPUContext& ctx);\n";
     hout << "void VIInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void GXInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void PADInit(nwii::runtime::CPUContext& ctx);\n";
@@ -219,6 +221,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase << entry_point
         << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
+    out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
@@ -309,6 +312,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "void IOS_IoctlAsync(nwii::runtime::CPUContext& ctx);\n";
     out << "void IOS_Ioctlv(nwii::runtime::CPUContext& ctx);\n";
     out << "void IOS_IoctlvAsync(nwii::runtime::CPUContext& ctx);\n";
+    out << "void iosAlloc(nwii::runtime::CPUContext& ctx);\n";
+    out << "void iosFree(nwii::runtime::CPUContext& ctx);\n";
     out << "void VIInit(nwii::runtime::CPUContext& ctx);\n";
     out << "void GXInit(nwii::runtime::CPUContext& ctx);\n";
     out << "void PADInit(nwii::runtime::CPUContext& ctx);\n";
@@ -427,6 +432,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase << entry_point
         << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
+    out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
@@ -590,12 +596,12 @@ void Recompiler::emit_function(std::ostream &out,
     return;
   } else if (func.start_address == 0x802438a0 ||
              func.start_address == 0x802436a0) {
-    out << "    IOS_Ioctl(ctx);\n";
+    out << "    iosAlloc(ctx);\n";
     out << "    return;\n";
     out << "}\n\n";
     return;
   } else if (func.start_address == 0x802438b0) {
-    out << "    IOS_IoctlAsync(ctx);\n";
+    out << "    iosFree(ctx);\n";
     out << "    return;\n";
     out << "}\n\n";
     return;
@@ -617,6 +623,11 @@ void Recompiler::emit_function(std::ostream &out,
   } else if (func.start_address == 0x80243c80) {
     out << "    IOS_IoctlvAsync(ctx);\n";
     out << "    return;\n";
+    out << "}\n\n";
+    return;
+  } else if (func.start_address == 0x8024c330) {
+    out << "    process_pending_callbacks(ctx);\n";
+    out << "    ctx.pc = ctx.lr; return;\n";
     out << "}\n\n";
     return;
   }
