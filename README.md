@@ -42,7 +42,7 @@ NWiiRecomp/
 - Automatic discovery of function boundaries via branch analysis
 - Function pointer recovery from data sections (vtables, jump tables)
 - Hardcoded entry point hints for OS dispatch stubs that are computed at runtime via `lis`/`addi` patterns
-- Discovered **16,600+** functions from a real Wii game
+- Discovered **~38,400+** functions from a **"Silent Hill SM"** Wii 
 
 ### Recompiler (`nWiiRecomp`)
 - Translates PowerPC instructions to C++ that operates on a `CPUContext` struct
