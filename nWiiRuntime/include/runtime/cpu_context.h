@@ -34,8 +34,8 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val);
 
 struct CPUContext;
 void init_ipc_client(CPUContext &ctx);
-void handle_syscall(CPUContext &ctx);
-void process_pending_callbacks(CPUContext &ctx);
+bool handle_syscall(CPUContext &ctx);
+bool process_pending_callbacks(CPUContext &ctx);
 
 struct CallbackInfo {
     uint32_t cb_addr;

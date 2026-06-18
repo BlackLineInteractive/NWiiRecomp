@@ -1199,7 +1199,7 @@ void init_ipc_client(CPUContext &ctx) {
   ctx.mmu.write32(0x804BA454, 0);           // ios heap id
 }
 
-void handle_syscall(CPUContext &ctx) {
+bool handle_syscall(CPUContext &ctx) {
   uint32_t syscall_id = ctx.gpr[0];
   uint32_t old_pc = ctx.pc; // Preserve PC so 'sc' falls through correctly
 
@@ -1244,11 +1244,12 @@ void handle_syscall(CPUContext &ctx) {
     // Treat unknown syscalls as OS traps (e.g. OSYieldThread) and process
     // pending callbacks. Silenced to prevent massive log spam from standard
     // threading loops.
-    process_pending_callbacks(ctx);
+    if (process_pending_callbacks(ctx)) return true;
     break;
   }
 
   ctx.pc = old_pc; // Restore PC
+  return false;
 }
 
 } // namespace runtime
@@ -1260,7 +1261,7 @@ namespace nwii::runtime {
 
 // Обробка черги колбеків. Ця функція повинна викликатись у диспетчері 
 // (наприклад, у while (ctx.pc != 0) у згенерованому рекомпілятором коді).
-void process_pending_callbacks(CPUContext &ctx) {
+bool process_pending_callbacks(CPUContext &ctx) {
     if (ctx.pc == 0x8024DB24) {
         uint32_t flag_addr = ctx.gpr[13] - 23072;
         ctx.mmu.write32(flag_addr, 0);
@@ -1268,7 +1269,7 @@ void process_pending_callbacks(CPUContext &ctx) {
     CallbackInfo cb;
     {
         std::lock_guard<std::mutex> lock(ctx.cb_mutex);
-        if (ctx.pending_callbacks.empty()) return;
+        if (ctx.pending_callbacks.empty()) return false;
         cb = ctx.pending_callbacks.front();
         ctx.pending_callbacks.pop();
     }
@@ -1284,6 +1285,7 @@ void process_pending_callbacks(CPUContext &ctx) {
     // Викликаємо функцію через згенерований код або прямий стрибок
     ctx.lr = return_pc; 
     ctx.pc = cb.cb_addr;
+    return true;
 }
 
 }
