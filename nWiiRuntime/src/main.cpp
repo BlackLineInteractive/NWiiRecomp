@@ -68,13 +68,15 @@ int main(int argc, char** argv) {
     }
     
     std::cout << "DOL LOADED! Value at 0x80528A30: 0x" << std::hex << ctx->mmu.read32(0x80528A30) << std::endl;
+    std::cout << "Value at 0x8052A588 (r13 - 16792): 0x" << std::hex << ctx->mmu.read32(0x8052A588) << std::endl;
+
     arena_lo = (arena_lo + 31) & ~31;
     
     // OS Globals setup
     ctx->mmu.mem1[0x24+3] = (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) ? 0x01 : 0x02;
     uint32_t mem1_size = 24 * 1024 * 1024;
     ctx->mmu.write32(0x80000028, mem1_size);
-    ctx->mmu.write32(0x80000030, arena_lo);
+    ctx->mmu.write32(0x80000030, arena_lo); ctx->mmu.write32(0x8052A588, 0x80003000); for (int i=0; i<256; i+=4) ctx->mmu.write32(0x80003000 + i, 0x80003000);
     
     if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
         ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK

@@ -101,7 +101,18 @@ extern "C" void OSReport(CPUContext &ctx) {
 
 // Basic stubs for other OS functions to prevent linker errors
 extern "C" void OSInit(CPUContext &ctx) {
-  std::cout << "[OSInit] System initialized." << std::endl;
+  static bool os_initialized = false;
+  if (!os_initialized) {
+    std::cout << "[OSInit] System initialized. Setting up HLE r13-relative structures." << std::endl;
+    // Set r13 - 16792 (0x8052A588) to a valid dummy thread pointer
+    uint32_t dummy_thread = 0x80003000;
+    ctx.mmu.write32(ctx.gpr[13] - 16792, dummy_thread);
+    // Initialize the dummy thread to point to itself or something valid to prevent NULL derefs
+    for (int i = 0; i < 256; i += 4) {
+      ctx.mmu.write32(dummy_thread + i, dummy_thread); // point everything to dummy_thread just in case
+    }
+    os_initialized = true;
+  }
 }
 
 namespace nwii {

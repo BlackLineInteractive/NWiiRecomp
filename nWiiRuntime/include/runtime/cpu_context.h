@@ -83,7 +83,6 @@ struct MMU {
 
   void write8(uint32_t addr, uint8_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr >= 0x00528A20 && paddr <= 0x00528A30) std::cout << "WATCHPOINT write8: " << std::hex << paddr << " val: " << (int)value << std::endl;
     if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
 
@@ -122,12 +121,14 @@ struct MMU {
     if (is_hw_reg(paddr)) return HW_Reg_Read32(paddr);
 
     uint8_t *ptr = get_ptr(addr);
-    return ptr ? ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) | ((uint32_t)ptr[2] << 8) | ptr[3] : 0;
+    if (!ptr) return 0;
+    uint32_t val = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) | ((uint32_t)ptr[2] << 8) | ptr[3];
+
+    return val;
   }
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x00528A30) { std::cout << "WATCHPOINT write32: " << std::hex << paddr << " val: " << value << std::endl; }
     
     // Protect OS Globals
     if (paddr == 0x00000024 || paddr == 0x00000028 || paddr == 0x00003118 ||
