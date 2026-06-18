@@ -711,7 +711,5 @@ void VISetBlack(CPUContext &ctx) {
 
 void VIGetNextField(CPUContext &ctx) { ctx.gpr[3] = 0; }
 
-void PADInit(CPUContext &ctx) {
-  std::cout << "[HLE PAD] PADInit called" << std::endl;
-}
+
 }

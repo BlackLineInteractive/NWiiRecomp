@@ -190,6 +190,17 @@ struct CPUContext {
   // Graphics Quantization Registers (GQR0-GQR7) for Paired Singles Load/Store
   std::array<uint32_t, 8> gqr;
 
+  // Backup state for HLE callbacks
+  std::array<uint32_t, 32> backup_gpr;
+  std::array<double, 32> backup_fpr;
+  std::array<double, 32> backup_ps1;
+  std::array<ConditionField, 8> backup_cr;
+  uint32_t backup_lr;
+  uint32_t backup_ctr;
+  uint32_t backup_xer;
+  uint32_t backup_pc;
+  bool in_callback = false;
+
   // Memory Management Unit
   MMU mmu;
 
@@ -200,6 +211,9 @@ struct CPUContext {
   std::atomic<bool> is_running;
   std::mutex cb_mutex;
   std::queue<CallbackInfo> pending_callbacks;
+
+  // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
+  uint32_t reservation_addr = 0xFFFFFFFF;
 
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 
                  msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true) {}

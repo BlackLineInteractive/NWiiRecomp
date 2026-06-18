@@ -144,7 +144,7 @@ static bool valid_callback(uint32_t cb) {
   return cb != 0 && cb != 0xFFFFFFFFu && cb >= 0x80000000u && cb < 0x82000000u;
 }
 
-// ── Virtual NAND filesystem (#4 fix) ────────────────────────────────────────
+// ── Virtual NAND filesystem
 // Provides minimal system files so SDK doesn't endlessly retry missing files.
 
 struct VNandFile {
@@ -716,7 +716,7 @@ void IOS_Ioctl(CPUContext &ctx) {
                     << std::hex << outbuf << std::dec << std::endl;
         }
       }
-      ctx.gpr[3] = IPC_OK;      // success (0)
+      ctx.gpr[3] = IPC_OK;     // success (0)
     } else if (arg1 == 0x8E) { // DI_ReadDiskID
       uint32_t buf = arg2;
       if (buf != 0 && buf < 0x80000000) {
@@ -868,7 +868,7 @@ void IOS_IoctlAsync(CPUContext &ctx) {
                     << std::hex << outbuf << std::dec << std::endl;
         }
       }
-      result = IPC_OK;         // success (0) - game interprets non-zero as pending
+      result = IPC_OK; // success (0) - game interprets non-zero as pending
     } else if (cmd == 0x86) { // DI_ClearCoverInterrupt
       std::cout << "[HLE IOS] IOS_IoctlAsync -> DI_ClearCoverInterrupt"
                 << std::endl;
@@ -931,7 +931,8 @@ void IOS_IoctlvAsync(CPUContext &ctx) {
           uint8_t op_lsb = ctx.mmu.read8(data_ptr);
           uint8_t op_msb = ctx.mmu.read8(data_ptr + 1);
           last_hci_opcode = (op_msb << 8) | op_lsb;
-          std::cout << "[HLE IOS] Bluetooth HCI Command received: 0x" << std::hex << last_hci_opcode << std::dec << std::endl;
+          std::cout << "[HLE IOS] Bluetooth HCI Command received: 0x"
+                    << std::hex << last_hci_opcode << std::dec << std::endl;
         }
       }
     } else if (cmd == 13) { // USB_SUBMIT_INTR_URB
@@ -940,33 +941,34 @@ void IOS_IoctlvAsync(CPUContext &ctx) {
         uint32_t out_ptr = ctx.mmu.read32(vec_out_ptr);
         uint32_t out_len = ctx.mmu.read32(vec_out_ptr + 4);
         if (out_ptr != 0 && out_len >= 6) {
-          std::cout << "[HLE IOS] Responding to HCI Interrupt for opcode: 0x" << std::hex << last_hci_opcode << std::dec << std::endl;
+          std::cout << "[HLE IOS] Responding to HCI Interrupt for opcode: 0x"
+                    << std::hex << last_hci_opcode << std::dec << std::endl;
           ctx.mmu.write8(out_ptr + 0, 0x0E); // Command Complete
           ctx.mmu.write8(out_ptr + 2, 0x01); // Num HCI Command Packets
           ctx.mmu.write8(out_ptr + 3, last_hci_opcode & 0xFF);
           ctx.mmu.write8(out_ptr + 4, last_hci_opcode >> 8);
           ctx.mmu.write8(out_ptr + 5, 0x00); // Success
 
-          if (last_hci_opcode == 0x1001) { // Read Local Version
-             ctx.mmu.write8(out_ptr + 1, 0x0C); // Length
-             ctx.mmu.write8(out_ptr + 6, 0x06); // HCI Version
-             ctx.mmu.write8(out_ptr + 7, 0x00); // HCI Revision LSB
-             ctx.mmu.write8(out_ptr + 8, 0x00); // HCI Revision MSB
-             ctx.mmu.write8(out_ptr + 9, 0x00); // LMP Version
-             ctx.mmu.write8(out_ptr + 10, 0x0F); // Manufacturer LSB
-             ctx.mmu.write8(out_ptr + 11, 0x00); // Manufacturer MSB
-             ctx.mmu.write8(out_ptr + 12, 0x00); // LMP Subversion LSB
-             ctx.mmu.write8(out_ptr + 13, 0x00); // LMP Subversion MSB
+          if (last_hci_opcode == 0x1001) {        // Read Local Version
+            ctx.mmu.write8(out_ptr + 1, 0x0C);    // Length
+            ctx.mmu.write8(out_ptr + 6, 0x06);    // HCI Version
+            ctx.mmu.write8(out_ptr + 7, 0x00);    // HCI Revision LSB
+            ctx.mmu.write8(out_ptr + 8, 0x00);    // HCI Revision MSB
+            ctx.mmu.write8(out_ptr + 9, 0x00);    // LMP Version
+            ctx.mmu.write8(out_ptr + 10, 0x0F);   // Manufacturer LSB
+            ctx.mmu.write8(out_ptr + 11, 0x00);   // Manufacturer MSB
+            ctx.mmu.write8(out_ptr + 12, 0x00);   // LMP Subversion LSB
+            ctx.mmu.write8(out_ptr + 13, 0x00);   // LMP Subversion MSB
           } else if (last_hci_opcode == 0x1009) { // Read BD ADDR
-             ctx.mmu.write8(out_ptr + 1, 0x0A); // Length
-             ctx.mmu.write8(out_ptr + 6, 0x11); // BD ADDR
-             ctx.mmu.write8(out_ptr + 7, 0x22);
-             ctx.mmu.write8(out_ptr + 8, 0x33);
-             ctx.mmu.write8(out_ptr + 9, 0x44);
-             ctx.mmu.write8(out_ptr + 10, 0x55);
-             ctx.mmu.write8(out_ptr + 11, 0x66);
+            ctx.mmu.write8(out_ptr + 1, 0x0A);    // Length
+            ctx.mmu.write8(out_ptr + 6, 0x11);    // BD ADDR
+            ctx.mmu.write8(out_ptr + 7, 0x22);
+            ctx.mmu.write8(out_ptr + 8, 0x33);
+            ctx.mmu.write8(out_ptr + 9, 0x44);
+            ctx.mmu.write8(out_ptr + 10, 0x55);
+            ctx.mmu.write8(out_ptr + 11, 0x66);
           } else {
-             ctx.mmu.write8(out_ptr + 1, 0x04); // Length
+            ctx.mmu.write8(out_ptr + 1, 0x04); // Length
           }
         }
       }
@@ -1244,7 +1246,8 @@ bool handle_syscall(CPUContext &ctx) {
     // Treat unknown syscalls as OS traps (e.g. OSYieldThread) and process
     // pending callbacks. Silenced to prevent massive log spam from standard
     // threading loops.
-    if (process_pending_callbacks(ctx)) return true;
+    if (process_pending_callbacks(ctx))
+      return true;
     break;
   }
 
@@ -1259,34 +1262,45 @@ bool handle_syscall(CPUContext &ctx) {
 
 namespace nwii::runtime {
 
-// Обробка черги колбеків. Ця функція повинна викликатись у диспетчері 
+// Обробка черги колбеків. Ця функція повинна викликатись у диспетчері
 // (наприклад, у while (ctx.pc != 0) у згенерованому рекомпілятором коді).
 bool process_pending_callbacks(CPUContext &ctx) {
-    if (ctx.pc == 0x8024DB24) {
-        uint32_t flag_addr = ctx.gpr[13] - 23072;
-        ctx.mmu.write32(flag_addr, 0);
-    }
-    CallbackInfo cb;
-    {
-        std::lock_guard<std::mutex> lock(ctx.cb_mutex);
-        if (ctx.pending_callbacks.empty()) return false;
-        cb = ctx.pending_callbacks.front();
-        ctx.pending_callbacks.pop();
-    }
+  if (ctx.pc == 0x8024DB24) {
+    uint32_t flag_addr = ctx.gpr[13] - 23072;
+    ctx.mmu.write32(flag_addr, 0);
+  }
 
-    // Симуляція апаратного переривання/виклику функції
-    // Зберігаємо поточний стан (Link Register) щоб повернутися сюди після колбеку
-    uint32_t return_pc = ctx.pc;
-    
-    // Встановлюємо аргументи для колбеку (r3 = arg1, r4 = arg2)
-    ctx.gpr[3] = cb.arg1;
-    ctx.gpr[4] = cb.arg2;
-    
-    // Викликаємо функцію через згенерований код або прямий стрибок
-    ctx.lr = return_pc; 
-    ctx.pc = cb.cb_addr;
-    return true;
+  if (ctx.in_callback)
+    return false;
+
+  CallbackInfo cb;
+  {
+    std::lock_guard<std::mutex> lock(ctx.cb_mutex);
+    if (ctx.pending_callbacks.empty())
+      return false;
+    cb = ctx.pending_callbacks.front();
+    ctx.pending_callbacks.pop();
+  }
+
+  // Backup state
+  ctx.backup_gpr = ctx.gpr;
+  ctx.backup_fpr = ctx.fpr;
+  ctx.backup_ps1 = ctx.ps1;
+  ctx.backup_cr = ctx.cr;
+  ctx.backup_lr = ctx.lr;
+  ctx.backup_ctr = ctx.ctr;
+  ctx.backup_xer = ctx.xer;
+  ctx.backup_pc = ctx.pc;
+  ctx.in_callback = true;
+
+  // Set callback arguments (r3 = arg1, r4 = arg2)
+  ctx.gpr[3] = cb.arg1;
+  ctx.gpr[4] = cb.arg2;
+
+  // Call the function via generated code
+  ctx.lr = 0xFFFFFFFC;
+  ctx.pc = cb.cb_addr;
+  return true;
 }
 
-}
-
+} // namespace nwii::runtime

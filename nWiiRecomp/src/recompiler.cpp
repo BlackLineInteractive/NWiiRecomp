@@ -223,7 +223,15 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         << entry_point << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
     out << "        process_pending_callbacks(ctx);\n";
-    out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
+    out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
+    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; ctx.ps1 = ctx.backup_ps1;\n";
+    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; ctx.ctr = ctx.backup_ctr;\n";
+    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; ctx.in_callback = false;\n";
+    out << "            continue;\n";
+    out << "        }\n";
+    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x80000000;\n";
+    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
+    out << "        else if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
            "target << std::endl;\n";
@@ -434,7 +442,15 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
         << entry_point << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
     out << "        process_pending_callbacks(ctx);\n";
-    out << "        if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
+    out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
+    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; ctx.ps1 = ctx.backup_ps1;\n";
+    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; ctx.ctr = ctx.backup_ctr;\n";
+    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; ctx.in_callback = false;\n";
+    out << "            continue;\n";
+    out << "        }\n";
+    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x80000000;\n";
+    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
+    out << "        else if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
            "target << std::endl;\n";
@@ -904,7 +920,8 @@ void Recompiler::emit_instruction(std::ostream &out,
 
     if (target <= inst.address && is_local) {
       out << "    ++ctx.inst_count;\n";
-      out << "    process_pending_callbacks(ctx);\n";
+      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address << std::dec << ";\n";
+      out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
           << std::uppercase << std::hex << inst.address << std::dec
@@ -1011,7 +1028,8 @@ void Recompiler::emit_instruction(std::ostream &out,
 
     if (target <= inst.address && is_local) {
       out << "    ++ctx.inst_count;\n";
-      out << "    process_pending_callbacks(ctx);\n";
+      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address << std::dec << ";\n";
+      out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
           << std::uppercase << std::hex << inst.address << std::dec

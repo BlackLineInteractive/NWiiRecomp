@@ -101,7 +101,7 @@ NWiiRecomp/
 ## What's Next
 
 - **More HLE coverage** — DVD, AX (audio), VI (video interface), EXI, SI
-- **Wii U research** — longer term, not a priority
+- **Wii U support** — foundational work for Cafe OS and Latte GPU is underway
 
 ---
 
