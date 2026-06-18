@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Static recompilation toolkit for Nintendo Wii (Broadway/PowerPC) games.
+  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii Ugames.
 </p>
 
 <p align="center">

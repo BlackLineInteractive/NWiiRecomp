@@ -12,7 +12,7 @@ using namespace nwii::runtime::gx;
 GXState nwii::runtime::gx::g_state = {};
 
 namespace nwii::runtime {
-    extern MMU* g_mmu; // Доступ до фізичної пам'яті для Index Array
+    extern MMU* g_mmu; // Access to physical memory for Index Array
 }
 
 std::mutex g_fifo_mutex;
@@ -28,7 +28,7 @@ inline uint32_t Read32(size_t offset) {
     return (g_hw_fifo[offset] << 24) | (g_hw_fifo[offset+1] << 16) | (g_hw_fifo[offset+2] << 8) | g_hw_fifo[offset+3];
 }
 
-// Декодування BP регістрів (TEV, Texture, Z-Buffer)
+// Decode BP registers (TEV, Texture, Z-Buffer)
 void ParseBP(uint8_t reg, uint32_t val) {
     // GenMode
     if (reg == 0x00) {
@@ -49,16 +49,16 @@ void ParseBP(uint8_t reg, uint32_t val) {
         g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
         g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
     }
-    // TODO: Додати розбір регістрів текстур (0x80-0x9F) та Z-Mode (0x40)
+    // TODO: Add texture register parsing (0x80-0x9F) and Z-Mode (0x40)
 }
 
-// Декодування CP регістрів (Array Pointers, VAT)
+// Decode CP registers (Array Pointers, VAT)
 void ParseCP(uint8_t reg, uint32_t val) {
-    // Базові вказівники на масиви (Array Base)
+    // Array Base pointers
     if (reg >= 0xA0 && reg <= 0xAC) {
-        g_state.arrayBase[reg - 0xA0] = val & 0x3FFFFFFF; // Тільки фізична пам'ять
+        g_state.arrayBase[reg - 0xA0] = val & 0x3FFFFFFF; // Physical memory only
     }
-    // Крок масивів (Array Stride)
+    // Array Stride
     else if (reg >= 0xB0 && reg <= 0xBC) {
         g_state.arrayStride[reg - 0xB0] = val & 0xFF;
     }
@@ -74,14 +74,14 @@ void ParseCP(uint8_t reg, uint32_t val) {
     }
 }
 
-// Читання компоненти вершини (Direct або Indexed з пам'яті)
+// Read a vertex attribute component (Direct or Indexed from memory)
 float ReadAttribute(size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type, uint8_t shift, uint32_t array_idx) {
     if (mask == VtxAttrMask::None) return 0.0f;
     
     uint32_t data_addr = 0;
     
     if (mask == VtxAttrMask::Direct) {
-        // Дані лежать прямо в FIFO
+        // Data is inline in FIFO
         if (type == VtxAttrType::F32) {
             uint32_t v = Read32(fifo_offset); fifo_offset += 4;
             float f; std::memcpy(&f, &v, 4); return f;
@@ -89,9 +89,9 @@ float ReadAttribute(size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type, uin
             uint8_t v = g_hw_fifo[fifo_offset++];
             return (float)v / (float)(1 << shift);
         }
-        // ... (Інші типи Direct)
+        // ... (Other Direct types)
     } else {
-        // Дані лежать в пам'яті (MEM1/MEM2). У FIFO лише індекс.
+        // Data is in memory (MEM1/MEM2). FIFO contains only the index.
         uint32_t index = 0;
         if (mask == VtxAttrMask::Index8) { index = g_hw_fifo[fifo_offset++]; }
         else if (mask == VtxAttrMask::Index16) { index = (g_hw_fifo[fifo_offset] << 8) | g_hw_fifo[fifo_offset+1]; fifo_offset += 2; }
@@ -147,7 +147,7 @@ void ProcessGXFifo() {
             if (offset + 3 > g_hw_fifo.size()) break;
             
             uint16_t vtx_count = (g_hw_fifo[offset + 1] << 8) | g_hw_fifo[offset + 2];
-            uint8_t vat_idx = cmd & 0x07; // 3 нижні біти - це номер VAT
+            uint8_t vat_idx = cmd & 0x07; // Lower 3 bits = VAT index
             uint8_t prim_type = cmd & 0xF8;
             
             VATSlot& vat = g_state.vat[vat_idx];
@@ -162,7 +162,7 @@ void ProcessGXFifo() {
             
             rlBegin(gl_mode);
             
-            // Динамічний парсинг вершин згідно апаратного VAT
+            // Dynamic vertex parsing according to hardware VAT
             for (int i = 0; i < vtx_count; i++) {
                 // 1. Position Matrices (Index 8 bit usually)
                 // if (vat.posMatMask) { curr_offset++; }
@@ -209,7 +209,7 @@ void ProcessGXFifo() {
             
             rlEnd();
             
-            // Якщо ми не змогли розпарсити повну вершину (через брак даних), перериваємо
+            // If we failed to parse a complete vertex (insufficient data), break
             if (curr_offset > g_hw_fifo.size()) break;
             offset = curr_offset;
         }

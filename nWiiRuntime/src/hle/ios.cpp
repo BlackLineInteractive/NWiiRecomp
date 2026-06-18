@@ -1262,8 +1262,14 @@ bool handle_syscall(CPUContext &ctx) {
 
 namespace nwii::runtime {
 
-// Обробка черги колбеків. Ця функція повинна викликатись у диспетчері
-// (наприклад, у while (ctx.pc != 0) у згенерованому рекомпілятором коді).
+// Callback stack: placed at the end of MEM1, below the OS stack.
+// 4KB stack frame dedicated to HLE-dispatched callbacks so their prologue/epilogue
+// (mflr r0; stw r0, 4(r1) / lwz r0, 4(r1); mtlr r0; blr) does not corrupt LR
+// by reading garbage from the game's own mid-spinlock stack frame.
+static constexpr uint32_t CALLBACK_STACK_TOP = 0x816F0000;
+
+// Process the callback queue. This function should be called in the dispatcher
+// (for example, in while (ctx.pc != 0) in the generated recompiler code).
 bool process_pending_callbacks(CPUContext &ctx) {
   if (ctx.pc == 0x8024DB24) {
     uint32_t flag_addr = ctx.gpr[13] - 23072;
@@ -1282,7 +1288,11 @@ bool process_pending_callbacks(CPUContext &ctx) {
     ctx.pending_callbacks.pop();
   }
 
-  // Backup state
+  std::cout << "[HLE Callback] Dispatching cb=0x" << std::hex << cb.cb_addr
+            << " arg1=0x" << cb.arg1 << " arg2=0x" << cb.arg2
+            << " from PC=0x" << ctx.pc << std::dec << std::endl;
+
+  // Backup full CPU state
   ctx.backup_gpr = ctx.gpr;
   ctx.backup_fpr = ctx.fpr;
   ctx.backup_ps1 = ctx.ps1;
@@ -1297,7 +1307,18 @@ bool process_pending_callbacks(CPUContext &ctx) {
   ctx.gpr[3] = cb.arg1;
   ctx.gpr[4] = cb.arg2;
 
-  // Call the function via generated code
+  // Point r1 (stack pointer) to a dedicated safe callback stack.
+  // The stack frame must have room for the standard ABI:
+  //   offset 0: back-chain pointer
+  //   offset 4: LR save slot (where mflr r0; stw r0, 4(r1) stores LR)
+  ctx.gpr[1] = CALLBACK_STACK_TOP - 16;
+  // Write a NULL back-chain
+  ctx.mmu.write32(ctx.gpr[1], 0);
+  // Pre-fill the LR save slot with our sentinel so even if the callback
+  // reads LR from the stack it gets 0xFFFFFFFC
+  ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
+
+  // Set LR to sentinel
   ctx.lr = 0xFFFFFFFC;
   ctx.pc = cb.cb_addr;
   return true;
