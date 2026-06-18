@@ -66,6 +66,10 @@ NWiiRecomp/
 
 ### Runtime (`nWiiRuntime`)
 
+<p align="center">
+  <img src="GUI_image/gx-fifo-test.gif" alt="NWiiRuntime GX FIFO test" width="95%"/>
+</p>
+
 - **TOML Configuration**: A fully integrated `tomlplusplus` config setup allows dynamic targeting of the host platform (`GameCube` or `Wii`), graphical toggles, and bypassing of OS sub-systems.
 - **Zero-Latency Gamepad Input**: Native integration with modern gamepads (Xbox/PlayStation) via Raylib Gamepad APIs. By mimicking the GameCube `PADStatus` polling directly from memory, the engine experiences literal zero-lag inputs and sidesteps Wiimote requirements for compatible games.
 - **GX Graphics FIFO**: Accurate structure tracking and ring-buffer streaming from `WGPIPE` memory bounds for Display List reconstruction.
