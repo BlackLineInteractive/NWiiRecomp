@@ -1,3 +1,4 @@
+#include "runtime/config.h"
 #include "runtime/cpu_context.h"
 #include <algorithm>
 #include <chrono>
@@ -207,11 +208,11 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     case 0x000000:
       return 0; // HW_IPC_PPCMSG
     case 0x000004:
-      return ipc_ppc_ctrl; // HW_IPC_PPCCTRL
+      std::cout << "[HW IPC] Read PPCCTRL: " << ipc_ppc_ctrl << "\n"; return ipc_ppc_ctrl; // HW_IPC_PPCCTRL
     case 0x000008:
       return ipc_arm_msg; // HW_IPC_ARMMSG
     case 0x00000C:
-      return ipc_arm_ctrl; // HW_IPC_ARMCTRL
+      std::cout << "[HW IPC] Read ARMCTRL: " << ipc_arm_ctrl << "\n"; return ipc_arm_ctrl; // HW_IPC_ARMCTRL
     default:
       return 0;
     }
@@ -239,6 +240,12 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     }
     if (addr == 0xCC003004)
       return 0; // PI Interrupt Cause/Mask = 0 (no pending interrupts)
+    if (addr == 0xCC00302C) {
+      if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube)
+        return 0x00000001; // GC Retail
+      else
+        return 0x00000002; // Wii Retail
+    }
     return 0;   // PI Interrupt Cause/Mask = 0 (no pending interrupts)
   }
 
@@ -674,17 +681,17 @@ void OSRestoreInterrupts(CPUContext &ctx) {
 
 // Timer Management
 void OSGetTime(CPUContext &ctx) {
-  uint64_t t = get_os_time();
-  // Return 64-bit time: r3 = upper 32 bits, r4 = lower 32 bits
-  ctx.gpr[3] = (uint32_t)(t >> 32);
-  ctx.gpr[4] = (uint32_t)(t & 0xFFFFFFFF);
+  uint64_t micros = get_os_time();
+  uint64_t tb_freq = (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) ? 40500000 : 60750000;
+  uint64_t ticks = (micros * tb_freq) / 1000000;
+  ctx.gpr[3] = (uint32_t)(ticks >> 32);
+  ctx.gpr[4] = (uint32_t)(ticks & 0xFFFFFFFF);
 }
 
 void OSTicksToMilliseconds(CPUContext &ctx) {
   uint64_t ticks = ((uint64_t)ctx.gpr[3] << 32) | ctx.gpr[4];
-  // In Gekko, timebase ticks at 1/4 of bus speed (Bus = 162 MHz -> TB = 40.5
-  // MHz) 40,500 ticks per millisecond
-  uint64_t ms = ticks / 40500;
+  uint64_t tb_freq = (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) ? 40500000 : 60750000;
+  uint64_t ms = (ticks * 1000) / tb_freq;
   ctx.gpr[3] = (uint32_t)(ms >> 32);
   ctx.gpr[4] = (uint32_t)(ms & 0xFFFFFFFF);
 }

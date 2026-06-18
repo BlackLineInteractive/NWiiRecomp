@@ -1,28 +1,33 @@
 #include <iostream>
+#include <thread>
+#include <atomic>
+#include <raylib.h>
 #include "runtime/cpu_context.h"
 #include "runtime/config.h"
+#include "loader/loader.h"
+#include "input/input_manager.h"
+
+// Forward declarations of GX FIFO processing
+extern void ProcessGXFifo();
 
 namespace nwii::runtime {
-
 MMU* g_mmu = nullptr;
-
 bool init() {
-    std::cout << "init runtime" << std::endl;
     Config::get().load("config.toml");
-    // TODO: setup hle, gfx, input
     return true;
 }
-
-void shutdown() {
-    std::cout << "shutdown runtime\n";
+void shutdown() {}
 }
 
-} // namespace nwii::runtime
 extern "C" void run_game(nwii::runtime::CPUContext& ctx);
 
-#include "loader/loader.h"
+// CPU Execution Thread
+void cpu_thread_func(nwii::runtime::CPUContext* ctx) {
+    std::cout << "[Thread] CPU Core started." << std::endl;
+    run_game(*ctx);
+    std::cout << "[Thread] CPU Core exited. Final PC: 0x" << std::hex << ctx->pc << ", LR: 0x" << ctx->lr << std::dec << std::endl;
+}
 
-// Default entry point for the standalone Mac application
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <path_to_unpacked_game_dir>\n";
@@ -30,108 +35,89 @@ int main(int argc, char** argv) {
     }
 
     if (!nwii::runtime::init()) return 1;
-    
     nwii::runtime::Config::get().game_dir = argv[1];
     
-    std::cout << "nWiiRecomp: Standalone app started." << std::endl;
-    
-    nwii::runtime::CPUContext ctx;
+    // Initialize graphics context FIRST in the main thread
+    InitWindow(nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height, "NWiiRecomp");
+    SetTargetFPS(60);
+
+    // Context allocation
+    auto ctx = std::make_unique<nwii::runtime::CPUContext>();
+    nwii::runtime::g_mmu = &ctx->mmu;
     
     // Load DOL
     nwii::loader::Executable exe;
-    if (!exe.load_unpacked_game(argv[1])) {
-        std::cerr << "Failed to load game DOL from " << argv[1] << "\n";
-        return 1;
-    }
+    if (!exe.load_unpacked_game(argv[1])) return 1;
     
     uint32_t arena_lo = 0x80000000;
+    // First pass: Clear BSS sections
     for (const auto& sec : exe.sections) {
         uint32_t end_addr = sec.address + sec.size;
-        if (end_addr > arena_lo) {
-            arena_lo = end_addr;
+        if (end_addr > arena_lo) arena_lo = end_addr;
+        
+        if (sec.is_bss) {
+            for (size_t i = 0; i < sec.size; ++i) ctx->mmu.write8(sec.address + i, 0);
         }
-        if (sec.is_bss) continue; // BSS is already zeroed in MMU
-        for (size_t i = 0; i < sec.size; ++i) {
-            ctx.mmu.write8(sec.address + i, sec.data[i]);
+    }
+
+    // Second pass: Load Data and Text sections (overwriting BSS if overlapping)
+    for (const auto& sec : exe.sections) {
+        if (!sec.is_bss) {
+            for (size_t i = 0; i < sec.size; ++i) ctx->mmu.write8(sec.address + i, sec.data[i]);
         }
     }
     
-    // Align ArenaLo to 32 bytes
+    std::cout << "DOL LOADED! Value at 0x80528A30: 0x" << std::hex << ctx->mmu.read32(0x80528A30) << std::endl;
     arena_lo = (arena_lo + 31) & ~31;
     
-    std::cout << "DOL loaded into memory. ArenaLo: 0x" << std::hex << arena_lo << std::dec << std::endl;
+    // OS Globals setup
+    ctx->mmu.mem1[0x24+3] = (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) ? 0x01 : 0x02;
+    uint32_t mem1_size = 24 * 1024 * 1024;
+    ctx->mmu.write32(0x80000028, mem1_size);
+    ctx->mmu.write32(0x80000030, arena_lo);
     
-    // Initialize OS Globals (MEM1)
-    ctx.mmu.mem1[0x24 + 0] = 0x00;
-    ctx.mmu.mem1[0x24 + 1] = 0x00;
-    ctx.mmu.mem1[0x24 + 2] = 0x00;
     if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
-        ctx.mmu.mem1[0x24 + 3] = 0x01; // Console Type: GameCube Retail
+        ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK
+        ctx->mmu.write32(0x800000FC, 162000000); // OS_BUS_CLOCK
     } else {
-        ctx.mmu.mem1[0x24 + 3] = 0x02; // Console Type: Wii Retail
-    }
-
-    ctx.mmu.mem1[0x28 + 0] = (24u * 1024u * 1024u) >> 24;
-    ctx.mmu.mem1[0x28 + 1] = ((24u * 1024u * 1024u) >> 16) & 0xFF;
-    ctx.mmu.mem1[0x28 + 2] = ((24u * 1024u * 1024u) >> 8) & 0xFF;
-    ctx.mmu.mem1[0x28 + 3] = (24u * 1024u * 1024u) & 0xFF;
-    
-    ctx.mmu.mem1[0x30 + 0] = arena_lo >> 24;
-    ctx.mmu.mem1[0x30 + 1] = (arena_lo >> 16) & 0xFF;
-    ctx.mmu.mem1[0x30 + 2] = (arena_lo >> 8) & 0xFF;
-    ctx.mmu.mem1[0x30 + 3] = arena_lo & 0xFF;
-
-    ctx.mmu.mem1[0x34 + 0] = 0x81;
-    ctx.mmu.mem1[0x34 + 1] = 0x80;
-    ctx.mmu.mem1[0x34 + 2] = 0x00;
-    ctx.mmu.mem1[0x34 + 3] = 0x00;
-    
-    // MEM2 size: 64 MB big-endian at 0x3118 and 0x311C
-    ctx.mmu.mem1[0x3118 + 0] = 0x04; ctx.mmu.mem1[0x3118 + 1] = 0x00;
-    ctx.mmu.mem1[0x3118 + 2] = 0x00; ctx.mmu.mem1[0x3118 + 3] = 0x00;
-    ctx.mmu.mem1[0x311C + 0] = 0x04; ctx.mmu.mem1[0x311C + 1] = 0x00;
-    ctx.mmu.mem1[0x311C + 2] = 0x00; ctx.mmu.mem1[0x311C + 3] = 0x00;
-
-    // Simulated MEM2 Arena (0x90000000 to 0x93E00000)
-    ctx.mmu.mem1[0x3124 + 0] = 0x90; ctx.mmu.mem1[0x3124 + 1] = 0x00;
-    ctx.mmu.mem1[0x3124 + 2] = 0x00; ctx.mmu.mem1[0x3124 + 3] = 0x00;
-    ctx.mmu.mem1[0x3128 + 0] = 0x93; ctx.mmu.mem1[0x3128 + 1] = 0xE0;
-    ctx.mmu.mem1[0x3128 + 2] = 0x00; ctx.mmu.mem1[0x3128 + 3] = 0x00;
-    
-    // IOS IPC Arena
-    ctx.mmu.mem1[0x3130 + 0] = 0x93;
-    ctx.mmu.mem1[0x3130 + 1] = 0xE0;
-    ctx.mmu.mem1[0x3130 + 2] = 0x00;
-    ctx.mmu.mem1[0x3130 + 3] = 0x00;
-
-    ctx.mmu.mem1[0x3134 + 0] = 0x94;
-    ctx.mmu.mem1[0x3134 + 1] = 0x00;
-    ctx.mmu.mem1[0x3134 + 2] = 0x00;
-    ctx.mmu.mem1[0x3134 + 3] = 0x00;
-
-    // MEM2 size already written above at 0x3118/0x311C
-    
-    // Bus/CPU Frequency
-    if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
-        ctx.mmu.write32(0x800000F8u, 162'000'000u); // Bus Frequency = 162 MHz
-        ctx.mmu.write32(0x800000FCu, 486'000'000u); // CPU Frequency = 486 MHz
-    } else {
-        ctx.mmu.write32(0x800000F8u, 243'000'000u); // Bus Frequency = 243 MHz
-        ctx.mmu.write32(0x800000FCu, 729'000'000u); // CPU Frequency = 729 MHz
+        ctx->mmu.write32(0x800000F8, 60750000);  // OS_TIMER_CLOCK
+        ctx->mmu.write32(0x800000FC, 243000000); // OS_BUS_CLOCK
     }
     
-    std::cout << "[DEBUG] Before DOL load, mem1[0x24] = " << std::hex << ctx.mmu.read32(0x24) << "\n";
-    std::cout << "[DEBUG] Before DOL load, mem1[0x3118] = " << std::hex << ctx.mmu.read32(0x3118) << "\n";
+    // MEM2 & IPC Setup
+    ctx->mmu.write32(0x80003118, 64 * 1024 * 1024);
+    ctx->mmu.write32(0x8000311C, 64 * 1024 * 1024);
+    ctx->mmu.write32(0x80003124, 0x90000000);
+    ctx->mmu.write32(0x80003128, 0x93E00000);
+    ctx->mmu.write32(0x80003130, 0x93E00000);
+    ctx->mmu.write32(0x80003134, 0x94000000);
 
-    // ConsoleType was already set to 0x00000002 (Wii Retail) above - do NOT overwrite it here!
+    nwii::runtime::init_ipc_client(*ctx);
 
-    std::cout << "[DEBUG] Before Game Run, mem1[0x24] = " << std::hex << ctx.mmu.read32(0x24) << "\n";
-    std::cout << "[DEBUG] Before Game Run, mem1[0x3118] = " << std::hex << ctx.mmu.read32(0x3118) << "\n";
+    // Launch CPU emulation in a background thread
+    std::thread cpu_thread(cpu_thread_func, ctx.get());
+
+    // Main Raylib/GPU Thread Loop
+    while (!WindowShouldClose() && ctx->is_running) {
+        // Poll Inputs exactly once per frame
+        nwii::runtime::input::InputManager::get().update();
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        
+        // Drain GX FIFO and issue OpenGL/rlgl calls safely in the main thread
+        ProcessGXFifo();
+        
+        EndDrawing();
+    }
+
+    // Teardown
+    ctx->is_running = false;
+    ctx->pc = 0; // Trigger run_game to exit
+    if (cpu_thread.joinable()) cpu_thread.join();
     
-    nwii::runtime::g_mmu = &ctx.mmu;
-    nwii::runtime::init_ipc_client(ctx);
-    run_game(ctx);
-    
+    CloseWindow();
     nwii::runtime::shutdown();
     return 0;
 }
+

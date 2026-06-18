@@ -1,289 +1,256 @@
+#include "runtime/gx_state.h"
 #include "runtime/cpu_context.h"
 #include <iostream>
+#include <vector>
+#include <mutex>
 #include <raylib.h>
 #include <rlgl.h>
 
 using namespace nwii::runtime;
+using namespace nwii::runtime::gx;
 
-// GX FIFO structure representing the Graphics FIFO
-struct GXFifoObj {
-    uint32_t base;
-    uint32_t top;
-    uint32_t size;
-    uint32_t count;
-    uint32_t rd_ptr;
-    uint32_t wr_ptr;
-};
+GXState nwii::runtime::gx::g_state = {};
 
-struct VAT {
-    uint32_t posCnt, posFmt;
-    uint32_t colCnt[2], colFmt[2];
-    uint32_t texCnt[8], texFmt[8];
-};
-
-struct CPState {
-    VAT vat[8];
-    uint32_t matrix_idx;
-};
-
-static GXFifoObj g_cpu_fifo = {0};
-static GXFifoObj g_gp_fifo = {0};
-static CPState g_cp_state;
-static std::vector<uint8_t> g_cmd_buffer;
-
-
-
-extern "C" {
-
-void GXInitFifoBase(CPUContext& ctx) {
-    uint32_t fifo_ptr = ctx.gpr[3];
-    uint32_t base = ctx.gpr[4];
-    uint32_t size = ctx.gpr[5];
-    
-    // Simulate writing to the GXFifoObj structure in guest memory
-    ctx.mmu.write32(fifo_ptr + 0, base);
-    ctx.mmu.write32(fifo_ptr + 4, base + size);
-    ctx.mmu.write32(fifo_ptr + 8, size);
-    ctx.mmu.write32(fifo_ptr + 12, 0);
-    ctx.mmu.write32(fifo_ptr + 16, base);
-    ctx.mmu.write32(fifo_ptr + 20, base);
-    
-    std::cout << "[HLE GX] GXInitFifoBase: fifo_ptr=" << std::hex << fifo_ptr 
-              << ", base=" << base << ", size=" << std::dec << size << std::endl;
+namespace nwii::runtime {
+    extern MMU* g_mmu; // Доступ до фізичної пам'яті для Index Array
 }
 
-void GXInitFifoPtrs(CPUContext& ctx) {
-    uint32_t fifo_ptr = ctx.gpr[3];
-    uint32_t rd_ptr = ctx.gpr[4];
-    uint32_t wr_ptr = ctx.gpr[5];
-    
-    ctx.mmu.write32(fifo_ptr + 16, rd_ptr);
-    ctx.mmu.write32(fifo_ptr + 20, wr_ptr);
+std::mutex g_fifo_mutex;
+std::vector<uint8_t> g_hw_fifo;
+
+namespace {
+
+inline uint32_t Read24(size_t offset) {
+    return (g_hw_fifo[offset] << 16) | (g_hw_fifo[offset+1] << 8) | g_hw_fifo[offset+2];
 }
 
-void GXSetCPUFifo(CPUContext& ctx) {
-    uint32_t fifo_ptr = ctx.gpr[3];
-    
-    g_cpu_fifo.base = ctx.mmu.read32(fifo_ptr + 0);
-    g_cpu_fifo.top = ctx.mmu.read32(fifo_ptr + 4);
-    g_cpu_fifo.size = ctx.mmu.read32(fifo_ptr + 8);
-    g_cpu_fifo.count = ctx.mmu.read32(fifo_ptr + 12);
-    g_cpu_fifo.rd_ptr = ctx.mmu.read32(fifo_ptr + 16);
-    g_cpu_fifo.wr_ptr = ctx.mmu.read32(fifo_ptr + 20);
-    
-    std::cout << "[HLE GX] GXSetCPUFifo: base=" << std::hex << g_cpu_fifo.base << std::endl;
+inline uint32_t Read32(size_t offset) {
+    return (g_hw_fifo[offset] << 24) | (g_hw_fifo[offset+1] << 16) | (g_hw_fifo[offset+2] << 8) | g_hw_fifo[offset+3];
 }
 
-void GXGetCPUFifo(CPUContext& ctx) {
-    // Return a dummy pointer or the one previously set
-    // For simplicity, we just return a pointer to an internal dummy if needed,
-    // but typically it returns a ptr to the active GXFifoObj.
-    // Let's assume we allocated a dummy object in high memory or just return 0.
-    ctx.gpr[3] = 0; // Stub
+// Декодування BP регістрів (TEV, Texture, Z-Buffer)
+void ParseBP(uint8_t reg, uint32_t val) {
+    // GenMode
+    if (reg == 0x00) {
+        g_state.numTexGens = (val & 0xF);
+        g_state.numChans = ((val >> 4) & 0x7);
+        g_state.numTevStages = ((val >> 10) & 0xF) + 1;
+    }
+    // TEV Color Env
+    else if (reg >= 0xC0 && reg <= 0xCF) {
+        int stage = reg - 0xC0;
+        g_state.tevStages[stage].colorInA = (val >> 12) & 0x1F;
+        g_state.tevStages[stage].colorInB = (val >> 8) & 0x1F;
+        g_state.tevStages[stage].colorInC = (val >> 4) & 0x1F;
+        g_state.tevStages[stage].colorInD = val & 0x1F;
+        g_state.tevStages[stage].colorOp = (val >> 18) & 0xF;
+        g_state.tevStages[stage].colorBias = (val >> 16) & 0x3;
+        g_state.tevStages[stage].colorScale = (val >> 20) & 0x3;
+        g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
+        g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
+    }
+    // TODO: Додати розбір регістрів текстур (0x80-0x9F) та Z-Mode (0x40)
 }
 
-void VIInit(CPUContext& ctx) {
-    std::cout << "[HLE GX] VIInit: Initializing Video Interface" << std::endl;
-    if (!IsWindowReady()) {
-        InitWindow(640, 480, "NWiiRecomp - HLE Window");
-        SetTargetFPS(60);
+// Декодування CP регістрів (Array Pointers, VAT)
+void ParseCP(uint8_t reg, uint32_t val) {
+    // Базові вказівники на масиви (Array Base)
+    if (reg >= 0xA0 && reg <= 0xAC) {
+        g_state.arrayBase[reg - 0xA0] = val & 0x3FFFFFFF; // Тільки фізична пам'ять
+    }
+    // Крок масивів (Array Stride)
+    else if (reg >= 0xB0 && reg <= 0xBC) {
+        g_state.arrayStride[reg - 0xB0] = val & 0xFF;
+    }
+    // VAT A (Format for Pos, Norm, Color)
+    else if (reg >= 0x50 && reg <= 0x57) {
+        int vatIdx = reg - 0x50;
+        g_state.vat[vatIdx].posMask = (VtxAttrMask)((val >> 9) & 3);
+        g_state.vat[vatIdx].posType = (VtxAttrType)((val >> 0) & 7);
+        g_state.vat[vatIdx].posShift = (val >> 5) & 0x1F;
+        
+        g_state.vat[vatIdx].clrMask[0] = (VtxAttrMask)((val >> 13) & 3);
+        g_state.vat[vatIdx].clrType[0] = (VtxAttrType)((val >> 11) & 7);
     }
 }
 
-void GXInit(CPUContext& ctx) {
-    uint32_t gx_fifo_addr = ctx.gpr[3];
-    uint32_t gx_fifo_size = ctx.gpr[4];
-    std::cout << "[HLE GX] GXInit: fifo=" << std::hex << gx_fifo_addr 
-              << ", size=" << std::dec << gx_fifo_size << std::endl;
-}
-
-void GXSetCopyClear(CPUContext& ctx) {
-    // r3 = color (RGBA8)
-    // r4 = clear z (usually 0x00FFFFFF)
-    uint32_t color = ctx.gpr[3];
-    uint32_t z = ctx.gpr[4];
+// Читання компоненти вершини (Direct або Indexed з пам'яті)
+float ReadAttribute(size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type, uint8_t shift, uint32_t array_idx) {
+    if (mask == VtxAttrMask::None) return 0.0f;
     
-    Color clearColor;
-    clearColor.r = (color >> 24) & 0xFF;
-    clearColor.g = (color >> 16) & 0xFF;
-    clearColor.b = (color >> 8) & 0xFF;
-    clearColor.a = color & 0xFF;
+    uint32_t data_addr = 0;
     
-    ClearBackground(clearColor);
-    std::cout << "[HLE GX] GXSetCopyClear: color=" << std::hex << color << std::endl;
-}
-
-static bool g_in_begin = false;
-static float g_vtx[3];
-static int g_vtx_idx = 0;
-
-void GXBegin(CPUContext& ctx) {
-    uint32_t primitive_type = ctx.gpr[3];
-    uint32_t vertex_format = ctx.gpr[4];
-    uint32_t vertex_count = ctx.gpr[5];
-    
-    // Map Wii primitive types to rlgl
-    int rl_mode = RL_TRIANGLES;
-    if (primitive_type == 0x80) rl_mode = RL_QUADS;
-    else if (primitive_type == 0x90) rl_mode = RL_TRIANGLES;
-    else if (primitive_type == 0x98) rl_mode = RL_TRIANGLES; // Actually Triangle Strip, but fallback
-    
-    rlBegin(rl_mode);
-    g_in_begin = true;
-    g_vtx_idx = 0;
-}
-
-void GXEnd(CPUContext& ctx) {
-    if (g_in_begin) {
-        rlEnd();
-        g_in_begin = false;
-    }
-}
-
-void GXSetVtxDesc(CPUContext& ctx) {
-    // Stub
-}
-
-void GXSetVtxAttrFmt(CPUContext& ctx) {
-    // Stub
-}
-
-} // extern "C"
-
-static void push_fifo(uint8_t* data, size_t size) {
-    if (g_cpu_fifo.base == 0) return;
-    
-    // In a real implementation we would write to MMU and wrap around
-    // For now, we simulate the write pointer advancing
-    g_cpu_fifo.wr_ptr += size;
-    if (g_cpu_fifo.wr_ptr >= g_cpu_fifo.top) {
-        g_cpu_fifo.wr_ptr = g_cpu_fifo.base;
-    }
-    // Also increase count, though HLE might not need strict accounting unless polled
-    g_cpu_fifo.count += size;
-}
-static int g_fifo_state = 0; // 0: Idle, 1: BP, 2: CP, 3: XF, 4: Vertex
-static int g_fifo_bytes_expected = 0;
-static int g_vtx_expected_bytes = 0;
-static int g_vtx_format_idx = 0;
-
-static void process_command(CPUContext& ctx) {
-    if (g_cmd_buffer.empty()) return;
-    uint8_t cmd = g_cmd_buffer[0];
-    
-    if (cmd == 0x08) {
-        // CP Command (6 bytes expected)
-        if (g_cmd_buffer.size() >= 6) {
-            uint8_t subcmd = g_cmd_buffer[1];
-            uint32_t val = (g_cmd_buffer[2] << 24) | (g_cmd_buffer[3] << 16) | (g_cmd_buffer[4] << 8) | g_cmd_buffer[5];
-            
-            if (subcmd >= 0x50 && subcmd <= 0x57) {
-                // VAT A
-                int idx = subcmd - 0x50;
-                g_cp_state.vat[idx].posCnt = val & 1;
-                g_cp_state.vat[idx].posFmt = (val >> 1) & 7;
-                g_cp_state.vat[idx].colCnt[0] = (val >> 9) & 1;
-                g_cp_state.vat[idx].colFmt[0] = (val >> 10) & 7;
-            } else if (subcmd >= 0x60 && subcmd <= 0x67) {
-                // VAT B
-                // Add extended format processing if needed
-            } else if (subcmd >= 0x70 && subcmd <= 0x77) {
-                // VAT C
-            }
+    if (mask == VtxAttrMask::Direct) {
+        // Дані лежать прямо в FIFO
+        if (type == VtxAttrType::F32) {
+            uint32_t v = Read32(fifo_offset); fifo_offset += 4;
+            float f; std::memcpy(&f, &v, 4); return f;
+        } else if (type == VtxAttrType::U8) {
+            uint8_t v = g_hw_fifo[fifo_offset++];
+            return (float)v / (float)(1 << shift);
         }
-    } else if (cmd == 0x10) {
-        // XF Command
-        // Size dynamically calculated in write function
-    } else if (cmd >= 0x80 && cmd <= 0x9F) {
-        // Vertex data
-        // For a full implementation, we'd read indices, fetch from RAM based on VAT, etc.
+        // ... (Інші типи Direct)
+    } else {
+        // Дані лежать в пам'яті (MEM1/MEM2). У FIFO лише індекс.
+        uint32_t index = 0;
+        if (mask == VtxAttrMask::Index8) { index = g_hw_fifo[fifo_offset++]; }
+        else if (mask == VtxAttrMask::Index16) { index = (g_hw_fifo[fifo_offset] << 8) | g_hw_fifo[fifo_offset+1]; fifo_offset += 2; }
+        
+        data_addr = g_state.arrayBase[array_idx] + (index * g_state.arrayStride[array_idx]);
+        
+        if (type == VtxAttrType::F32) {
+            return g_mmu->read_f32(data_addr);
+        } else if (type == VtxAttrType::S16) {
+            int16_t v = (int16_t)g_mmu->read16(data_addr);
+            return (float)v / (float)(1 << shift);
+        }
     }
-    
-    g_cmd_buffer.clear();
-    g_fifo_state = 0;
-    g_fifo_bytes_expected = 0;
+    return 0.0f;
 }
 
-namespace nwii {
-namespace runtime {
+} // anon namespace
+
+void ProcessGXFifo() {
+    std::lock_guard<std::mutex> lock(g_fifo_mutex);
+    if (g_hw_fifo.empty()) return;
+
+    size_t offset = 0;
+    while (offset < g_hw_fifo.size()) {
+        uint8_t cmd = g_hw_fifo[offset];
+
+        // BP Register Write
+        if (cmd == 0x61) {
+            if (offset + 5 > g_hw_fifo.size()) break;
+            uint8_t reg = g_hw_fifo[offset + 1];
+            uint32_t val = Read24(offset + 2);
+            ParseBP(reg, val);
+            offset += 5;
+        }
+        // CP Register Write
+        else if (cmd == 0x08) {
+            if (offset + 6 > g_hw_fifo.size()) break;
+            uint8_t reg = g_hw_fifo[offset + 1];
+            uint32_t val = Read32(offset + 2);
+            ParseCP(reg, val);
+            offset += 6;
+        }
+        // XF Register Write
+        else if (cmd == 0x10) {
+            if (offset + 5 > g_hw_fifo.size()) break;
+            uint16_t length = (g_hw_fifo[offset + 1] << 8) | g_hw_fifo[offset + 2];
+            uint32_t total_size = 5 + ((length + 1) * 4);
+            if (offset + total_size > g_hw_fifo.size()) break;
+            offset += total_size;
+        }
+        // Draw Primitives
+        else if (cmd >= 0x80 && cmd <= 0x9F) {
+            if (offset + 3 > g_hw_fifo.size()) break;
+            
+            uint16_t vtx_count = (g_hw_fifo[offset + 1] << 8) | g_hw_fifo[offset + 2];
+            uint8_t vat_idx = cmd & 0x07; // 3 нижні біти - це номер VAT
+            uint8_t prim_type = cmd & 0xF8;
+            
+            VATSlot& vat = g_state.vat[vat_idx];
+            size_t vtx_start_offset = offset + 3;
+            size_t curr_offset = vtx_start_offset;
+            
+            // Map GX Primitives to OpenGL Primitives
+            int gl_mode = RL_TRIANGLES;
+            if (prim_type == 0x90) gl_mode = RL_TRIANGLES;
+            else if (prim_type == 0x98) gl_mode = RL_TRIANGLES; // Triangle Strip (Requires manual unrolling or specific GL mode)
+            else if (prim_type == 0x80) gl_mode = RL_QUADS;
+            
+            rlBegin(gl_mode);
+            
+            // Динамічний парсинг вершин згідно апаратного VAT
+            for (int i = 0; i < vtx_count; i++) {
+                // 1. Position Matrices (Index 8 bit usually)
+                // if (vat.posMatMask) { curr_offset++; }
+                
+                // 2. Tex Matrices
+                // ...
+                
+                // 3. Position (X, Y, Z) - Array Index 0
+                if (vat.posMask != VtxAttrMask::None) {
+                    float x = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
+                    float y = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
+                    float z = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
+                    rlVertex3f(x, y, z);
+                }
+                
+                // 4. Normal - Array Index 1
+                if (vat.nrmMask != VtxAttrMask::None) {
+                    float nx = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
+                    float ny = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
+                    float nz = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
+                    rlNormal3f(nx, ny, nz);
+                }
+                
+                // 5. Colors (RGBA) - Array Index 2, 3
+                if (vat.clrMask[0] != VtxAttrMask::None) {
+                    // For colors, type defines RGB565, RGBA8, etc. 
+                    // Simplifying to U32 read for RGBA8 for this snippet
+                    if (vat.clrMask[0] == VtxAttrMask::Direct) {
+                        uint32_t c = Read32(curr_offset); curr_offset+=4;
+                        rlColor4ub(c>>24, (c>>16)&0xFF, (c>>8)&0xFF, c&0xFF);
+                    }
+                }
+                
+                // 6. TexCoords - Array Index 4..11
+                for(int t=0; t<8; t++) {
+                    if (vat.texMask[t] != VtxAttrMask::None) {
+                        float u = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t);
+                        float v = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t);
+                        // rlSetTexCoord(t, u, v); (Requires multi-tex support)
+                        if (t==0) rlTexCoord2f(u, v);
+                    }
+                }
+            }
+            
+            rlEnd();
+            
+            // Якщо ми не змогли розпарсити повну вершину (через брак даних), перериваємо
+            if (curr_offset > g_hw_fifo.size()) break;
+            offset = curr_offset;
+        }
+        else {
+            // NOP
+            offset++;
+        }
+    }
+
+    if (offset > 0 && offset <= g_hw_fifo.size()) {
+        g_hw_fifo.erase(g_hw_fifo.begin(), g_hw_fifo.begin() + offset);
+    }
+}
+
+
+namespace nwii::runtime {
 
 void GX_WGPIPE_Write8(uint8_t val) {
-    push_fifo(&val, 1);
-    
-    if (g_fifo_state == 0) {
-        g_cmd_buffer.clear();
-        g_cmd_buffer.push_back(val);
-        
-        if (val == 0x61) { g_fifo_state = 1; g_fifo_bytes_expected = 4; }
-        else if (val == 0x08) { g_fifo_state = 2; g_fifo_bytes_expected = 5; } // Command byte + 5 bytes = 6 bytes total
-        else if (val == 0x10) { g_fifo_state = 3; g_fifo_bytes_expected = 2; } // First need 2 bytes for length
-        else if (val >= 0x80 && val <= 0x9F) {
-            g_fifo_state = 4;
-            g_vtx_format_idx = val & 7;
-            // Native draw command
-            int rl_mode = RL_TRIANGLES;
-            if (val == 0x80) rl_mode = RL_QUADS;
-            rlBegin(rl_mode);
-            g_in_begin = true;
-            g_vtx_idx = 0;
-            // The next bytes are 2-byte count, then vertices.
-            g_fifo_bytes_expected = 2; 
-        }
-    } else {
-        g_cmd_buffer.push_back(val);
-        g_fifo_bytes_expected--;
-        
-        // Dynamically adjust XF size once length bytes are available
-        if (g_fifo_state == 3 && g_cmd_buffer.size() == 3) {
-            uint16_t length = (g_cmd_buffer[1] << 8) | g_cmd_buffer[2];
-            // length in XF command is (N-1). Data is (length+1)*4 bytes, plus 2 for register.
-            g_fifo_bytes_expected = 2 + (length + 1) * 4;
-        } else if (g_fifo_state == 4 && g_cmd_buffer.size() == 3) {
-            uint16_t vtx_count = (g_cmd_buffer[1] << 8) | g_cmd_buffer[2];
-            // Compute expected bytes per vertex based on g_cp_state.vat[g_vtx_format_idx]
-            // For now, assume a fixed size or fallback to intercepting write F32s.
-            // A real emulator would dynamically size this.
-        }
-        
-        if (g_fifo_bytes_expected <= 0 && g_fifo_state != 4) {
-            // Can't call process_command directly without ctx, 
-            // but we can parse simple commands locally or buffer them for the GPU thread.
-            g_cmd_buffer.clear();
-            g_fifo_state = 0;
-        }
-    }
+    std::lock_guard<std::mutex> lock(g_fifo_mutex);
+    g_hw_fifo.push_back(val);
 }
 
 void GX_WGPIPE_Write16(uint16_t val) {
-    uint8_t bytes[2] = { (uint8_t)(val >> 8), (uint8_t)val };
-    GX_WGPIPE_Write8(bytes[0]);
-    GX_WGPIPE_Write8(bytes[1]);
+    std::lock_guard<std::mutex> lock(g_fifo_mutex);
+    g_hw_fifo.push_back(val >> 8);
+    g_hw_fifo.push_back(val & 0xFF);
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
-    uint8_t bytes[4] = { (uint8_t)(val >> 24), (uint8_t)(val >> 16), (uint8_t)(val >> 8), (uint8_t)val };
-    for (int i=0; i<4; i++) GX_WGPIPE_Write8(bytes[i]);
-    
-    if (g_in_begin) {
-        // Usually a 32-bit integer write during vertex phase is an RGBA8 color
-        rlColor4ub(bytes[0], bytes[1], bytes[2], bytes[3]);
-    }
+    std::lock_guard<std::mutex> lock(g_fifo_mutex);
+    g_hw_fifo.push_back(val >> 24);
+    g_hw_fifo.push_back((val >> 16) & 0xFF);
+    g_hw_fifo.push_back((val >> 8) & 0xFF);
+    g_hw_fifo.push_back(val & 0xFF);
 }
 
 void GX_WGPIPE_WriteF32(float val) {
-    union { float f; uint32_t i; } u;
-    u.f = val;
+    union { float f; uint32_t i; } u; u.f = val;
     GX_WGPIPE_Write32(u.i);
-    
-    if (g_in_begin) {
-        g_vtx[g_vtx_idx++] = val;
-        // Vertex format handler logic
-        if (g_vtx_idx == 3) {
-            rlVertex3f(g_vtx[0], g_vtx[1], g_vtx[2]);
-            g_vtx_idx = 0;
-        }
-    }
 }
 
-}
-}
+} // namespace
+
+// Dolphin-accurate CP FIFO Drainer

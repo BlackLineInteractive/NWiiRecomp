@@ -1,5 +1,5 @@
 #include "runtime/config.h"
-#include <toml++/toml.h>
+#include <toml++/toml.hpp>
 #include <iostream>
 #include <filesystem>
 

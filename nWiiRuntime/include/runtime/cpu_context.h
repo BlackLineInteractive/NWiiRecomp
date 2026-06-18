@@ -6,6 +6,9 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <mutex>
+#include <atomic>
+#include <queue>
 
 namespace nwii {
 namespace runtime {
@@ -34,219 +37,131 @@ void init_ipc_client(CPUContext &ctx);
 void handle_syscall(CPUContext &ctx);
 void process_pending_callbacks(CPUContext &ctx);
 
+struct CallbackInfo {
+    uint32_t cb_addr;
+    uint32_t arg1;
+    uint32_t arg2;
+};
+
+// Strict Dolphin-accurate MMU
 struct MMU {
   std::vector<uint8_t> mem1;
   std::vector<uint8_t> mem2;
 
-  uint64_t inst_count = 0;
-
   MMU() {
-    mem1.resize(24 * 1024 * 1024); // 24MB MEM1
-    mem2.resize(64 * 1024 * 1024); // 64MB MEM2
+    mem1.resize(24 * 1024 * 1024, 0); // 24MB MEM1 (Physical 0x00000000)
+    mem2.resize(64 * 1024 * 1024, 0); // 64MB MEM2 (Physical 0x10000000)
   }
 
-  uint8_t *get_ptr(uint32_t addr) {
-    if ((addr & 0xF0000000) == 0x80000000 ||
-        (addr & 0xF0000000) == 0xC0000000) {
-      uint32_t offset = addr & 0x01FFFFFF;
-      if (offset < mem1.size())
-        return &mem1[offset];
-    }
-    if ((addr & 0xF0000000) == 0x90000000 ||
-        (addr & 0xF0000000) == 0xD0000000) {
-      uint32_t offset = addr & 0x03FFFFFF;
-      if (offset < mem2.size())
-        return &mem2[offset];
+  // Translates Virtual (EA) to Physical (PA) pointer based on RVL standard BAT mappings
+  inline uint8_t *get_ptr(uint32_t addr) {
+    uint32_t paddr = addr & 0x3FFFFFFF; 
+    if (paddr < 0x01800000) {
+        return &mem1[paddr];
+    } else if (paddr >= 0x10000000 && paddr < 0x14000000) {
+        return &mem2[paddr - 0x10000000];
     }
     return nullptr;
   }
 
+  inline bool is_hw_reg(uint32_t paddr) const {
+      return (paddr >= 0x0C000000 && paddr < 0x0C010000) || 
+             (paddr >= 0x0D000000 && paddr < 0x0D010000);
+  }
+
   uint8_t read8(uint32_t addr) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (is_hw_reg(paddr)) {
+        // HW registers are typically 32-bit/16-bit, 8-bit reads are rare but happen
+        uint32_t val = HW_Reg_Read32(paddr & ~3);
+        int shift = 24 - ((paddr & 3) * 8);
+        return (val >> shift) & 0xFF;
+    }
     uint8_t *ptr = get_ptr(addr);
     return ptr ? *ptr : 0;
   }
 
   void write8(uint32_t addr, uint8_t value) {
-    if (addr == 0xCC008000) {
-      GX_WGPIPE_Write8(value);
-      return;
-    }
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr >= 0x00528A20 && paddr <= 0x00528A30) std::cout << "WATCHPOINT write8: " << std::hex << paddr << " val: " << (int)value << std::endl;
+    if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
+    if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
+
     uint8_t *ptr = get_ptr(addr);
-    if (ptr)
-      *ptr = value;
+    if (ptr) *ptr = value;
   }
 
   uint16_t read16(uint32_t addr) {
-    uint32_t top8 = addr & 0xFFFF0000;
-    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
-        top8 == 0x0D000000) {
-      uint32_t virt_hw_addr =
-          (addr & 0x00FFFFFF) |
-          ((addr & 0x0F000000) == 0x0C000000 ? 0xCC000000 : 0xCD000000);
-      return HW_Reg_Read16(virt_hw_addr);
-    }
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (is_hw_reg(paddr)) return HW_Reg_Read16(paddr);
+    
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return 0;
-    return (uint16_t)(ptr[0] << 8 | ptr[1]);
+    return ptr ? (uint16_t)(ptr[0] << 8 | ptr[1]) : 0;
   }
 
   void write16(uint32_t addr, uint16_t value) {
-    if (addr == 0xCC008000) {
-      GX_WGPIPE_Write16(value);
-      return;
-    }
-    uint32_t top8 = addr & 0xFFFF0000;
-    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
-        top8 == 0x0D000000) {
-      uint32_t virt_hw_addr =
-          (addr & 0x00FFFFFF) |
-          ((addr & 0x0F000000) == 0x0C000000 ? 0xCC000000 : 0xCD000000);
-      HW_Reg_Write16(virt_hw_addr, value);
-      return;
-    }
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; }
+    if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
+
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return;
-    ptr[0] = (value >> 8) & 0xFF;
-    ptr[1] = value & 0xFF;
+    if (ptr) { ptr[0] = value >> 8; ptr[1] = value & 0xFF; }
   }
 
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    // Hardcode OS globals to fix MEM2 0MB issue
-    if (paddr == 0x00000024)
-      return 0x00000002u; // Console Type = Wii Retail
-    if (paddr == 0x00000028)
-      return 24u * 1024u * 1024u; // 24MB MEM1
-    if (paddr >= 0x3100 && paddr <= 0x3140) {
-      std::cout << "[DEBUG] Game read from OS Global: 0x" << std::hex << paddr
-                << std::dec << "\n";
-    }
+    
+    // Strict Global OS bounds (Wii)
+    if (paddr == 0x00000024) return 0x00000002u; // Console Type
+    if (paddr == 0x00000028) return 24u * 1024u * 1024u; // MEM1 Size
+    if (paddr == 0x00003118 || paddr == 0x0000311C) return 64u * 1024u * 1024u; // MEM2 Size
+    if (paddr == 0x00003124) return 0x90000000u; // MEM2 Usable Start
+    if (paddr == 0x00003128 || paddr == 0x00003130) return 0x93E00000u; // MEM2 Usable End
+    if (paddr == 0x00003134) return 0x94000000u; // IPC Arena End
 
-    if (paddr == 0x00003118)
-      return 64u * 1024u * 1024u; // Physical MEM2
-    if (paddr == 0x0000311C)
-      return 64u * 1024u * 1024u; // Simulated MEM2
-    if (paddr == 0x00003124)
-      return 0x90000000u; // Usable MEM2 Start
-    if (paddr == 0x00003128)
-      return 0x93E00000u; // Usable MEM2 End
-    // IOS IPC arena
-    if (paddr == 0x00003130)
-      return 0x93E00000u; // IOS ArenaLo
-    if (paddr == 0x00003134)
-      return 0x94000000u; // IOS ArenaHi
-
-    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD, and physical 0x0C,
-    // 0x0D)
-    uint32_t top8 = addr & 0xFF000000;
-    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
-        top8 == 0x0D000000) {
-      uint32_t virt_hw_addr =
-          (addr & 0x00FFFFFF) |
-          (top8 == 0x0C000000 ? 0xCC000000
-                              : (top8 == 0x0D000000 ? 0xCD000000 : top8));
-      return HW_Reg_Read32(virt_hw_addr);
-    }
+    if (is_hw_reg(paddr)) return HW_Reg_Read32(paddr);
 
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return 0;
-
-    return ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
-           ((uint32_t)ptr[2] << 8) | (uint32_t)ptr[3];
+    return ptr ? ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) | ((uint32_t)ptr[2] << 8) | ptr[3] : 0;
   }
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-
-    // Prevent OSInit from overwriting our hardcoded globals
+    if (paddr == 0x00528A30) { std::cout << "WATCHPOINT write32: " << std::hex << paddr << " val: " << value << std::endl; }
+    
+    // Protect OS Globals
     if (paddr == 0x00000024 || paddr == 0x00000028 || paddr == 0x00003118 ||
         paddr == 0x0000311C || paddr == 0x00003124 || paddr == 0x00003128 ||
-        paddr == 0x00003130 || paddr == 0x00003134) {
-      return;
-    }
+        paddr == 0x00003130 || paddr == 0x00003134) return;
 
-    if (addr == 0xCC008000) {
-      GX_WGPIPE_Write32(value);
-      return;
-    }
-    // Route hardware registers (GC: 0xCC, Wii IOS IPC: 0xCD, and physical 0x0C,
-    // 0x0D)
-    uint32_t top8 = addr & 0xFF000000;
-    if (top8 == 0xCC000000 || top8 == 0xCD000000 || top8 == 0x0C000000 ||
-        top8 == 0x0D000000) {
-      uint32_t virt_hw_addr =
-          (addr & 0x00FFFFFF) |
-          (top8 == 0x0C000000 ? 0xCC000000
-                              : (top8 == 0x0D000000 ? 0xCD000000 : top8));
-      HW_Reg_Write32(virt_hw_addr, value);
-      return;
-    }
+    if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
+    if (is_hw_reg(paddr)) { HW_Reg_Write32(paddr, value); return; }
 
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return;
-    ptr[0] = (value >> 24) & 0xFF;
-    ptr[1] = (value >> 16) & 0xFF;
-    ptr[2] = (value >> 8) & 0xFF;
-    ptr[3] = value & 0xFF;
+    if (ptr) { ptr[0] = value >> 24; ptr[1] = (value >> 16) & 0xFF; ptr[2] = (value >> 8) & 0xFF; ptr[3] = value & 0xFF; }
   }
 
-  float read_f32(uint32_t addr) {
-    uint32_t val = read32(addr);
-    float f;
-    std::memcpy(&f, &val, 4);
-    return f;
+  float read_f32(uint32_t addr) { uint32_t val = read32(addr); float f; std::memcpy(&f, &val, 4); return f; }
+  void write_f32(uint32_t addr, float value) { 
+      uint32_t paddr = addr & 0x3FFFFFFF;
+      if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; }
+      uint32_t val; std::memcpy(&val, &value, 4); write32(addr, val); 
   }
-
-  void write_f32(uint32_t addr, float value) {
-    if (addr == 0xCC008000) {
-      GX_WGPIPE_WriteF32(value);
-      return;
-    }
-    uint32_t val;
-    std::memcpy(&val, &value, 4);
-    write32(addr, val);
-  }
-
+  
   uint64_t read64(uint32_t addr) {
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return 0;
-    return ((uint64_t)ptr[0] << 56) | ((uint64_t)ptr[1] << 48) |
-           ((uint64_t)ptr[2] << 40) | ((uint64_t)ptr[3] << 32) |
-           ((uint64_t)ptr[4] << 24) | ((uint64_t)ptr[5] << 16) |
-           ((uint64_t)ptr[6] << 8) | (uint64_t)ptr[7];
+    if (!ptr) return 0;
+    return ((uint64_t)ptr[0] << 56) | ((uint64_t)ptr[1] << 48) | ((uint64_t)ptr[2] << 40) | ((uint64_t)ptr[3] << 32) |
+           ((uint64_t)ptr[4] << 24) | ((uint64_t)ptr[5] << 16) | ((uint64_t)ptr[6] << 8) | ptr[7];
   }
-
   void write64(uint32_t addr, uint64_t value) {
     uint8_t *ptr = get_ptr(addr);
-    if (!ptr)
-      return;
-    ptr[0] = (value >> 56) & 0xFF;
-    ptr[1] = (value >> 48) & 0xFF;
-    ptr[2] = (value >> 40) & 0xFF;
-    ptr[3] = (value >> 32) & 0xFF;
-    ptr[4] = (value >> 24) & 0xFF;
-    ptr[5] = (value >> 16) & 0xFF;
-    ptr[6] = (value >> 8) & 0xFF;
-    ptr[7] = value & 0xFF;
+    if (!ptr) return;
+    ptr[0] = value >> 56; ptr[1] = (value >> 48) & 0xFF; ptr[2] = (value >> 40) & 0xFF; ptr[3] = (value >> 32) & 0xFF;
+    ptr[4] = (value >> 24) & 0xFF; ptr[5] = (value >> 16) & 0xFF; ptr[6] = (value >> 8) & 0xFF; ptr[7] = value & 0xFF;
   }
-
-  double read_f64(uint32_t addr) {
-    uint64_t val = read64(addr);
-    double d;
-    std::memcpy(&d, &val, 8);
-    return d;
-  }
-
-  void write_f64(uint32_t addr, double value) {
-    uint64_t val;
-    std::memcpy(&val, &value, 8);
-    write64(addr, val);
-  }
+  double read_f64(uint32_t addr) { uint64_t val = read64(addr); double d; std::memcpy(&d, &val, 8); return d; }
+  void write_f64(uint32_t addr, double value) { uint64_t val; std::memcpy(&val, &value, 8); write64(addr, val); }
 };
 
 struct CPUContext {
@@ -280,13 +195,20 @@ struct CPUContext {
 
   // Exception handling for control flow
   uint32_t exception_pc;
-  jmp_buf jump_env;
-
-  // Default constructor to zero init
-  CPUContext()
-      : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), msr(0),
-        fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0) {}
   uint64_t inst_count = 0;
+  
+  std::atomic<bool> is_running;
+  std::mutex cb_mutex;
+  std::queue<CallbackInfo> pending_callbacks;
+
+  CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 
+                 msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true) {}
+
+  void queue_callback(uint32_t cb, uint32_t arg1, uint32_t arg2) {
+      if (cb == 0 || cb == 0xFFFFFFFF) return;
+      std::lock_guard<std::mutex> lock(cb_mutex);
+      pending_callbacks.push({cb, arg1, arg2});
+  }
 
   // Paired Single Quantized Load
   void psq_load(uint32_t frD, uint32_t addr, uint32_t W, uint32_t I) {

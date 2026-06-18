@@ -16,5 +16,5 @@ target_include_directories(nwiirecomp_lib PUBLIC
 target_link_libraries(nwiirecomp_lib PUBLIC nwiiruntime nwiianalyzer)
 
 add_executable(nwiirecomp "src/main.cpp")
-target_link_libraries(nwiirecomp PRIVATE nwiirecomp_lib)
+target_link_libraries(nwiirecomp PRIVATE nwiirecomp_lib tomlplusplus::tomlplusplus)
 
