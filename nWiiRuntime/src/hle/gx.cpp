@@ -74,30 +74,43 @@ void ParseCP(uint8_t reg, uint32_t val) {
     }
 }
 
-// Read a vertex attribute component (Direct or Indexed from memory)
-float ReadAttribute(size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type, uint8_t shift, uint32_t array_idx) {
+// Read a vertex attribute component (Direct or Indexed from memory).
+// fifo_size is passed for bounds checking; on underflow sets fifo_offset past end
+// so the caller's guard (curr_offset > fifo_size) will trigger a clean break.
+float ReadAttribute(size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type,
+                    uint8_t shift, uint32_t array_idx, size_t fifo_size) {
     if (mask == VtxAttrMask::None) return 0.0f;
-    
-    uint32_t data_addr = 0;
-    
+
     if (mask == VtxAttrMask::Direct) {
         // Data is inline in FIFO
         if (type == VtxAttrType::F32) {
+            if (fifo_offset + 4 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
             uint32_t v = Read32(fifo_offset); fifo_offset += 4;
             float f; std::memcpy(&f, &v, 4); return f;
         } else if (type == VtxAttrType::U8) {
+            if (fifo_offset + 1 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
             uint8_t v = g_hw_fifo[fifo_offset++];
             return (float)v / (float)(1 << shift);
+        } else if (type == VtxAttrType::S16) {
+            if (fifo_offset + 2 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
+            int16_t v = (int16_t)((g_hw_fifo[fifo_offset] << 8) | g_hw_fifo[fifo_offset+1]);
+            fifo_offset += 2;
+            return (float)v / (float)(1 << shift);
         }
-        // ... (Other Direct types)
     } else {
         // Data is in memory (MEM1/MEM2). FIFO contains only the index.
         uint32_t index = 0;
-        if (mask == VtxAttrMask::Index8) { index = g_hw_fifo[fifo_offset++]; }
-        else if (mask == VtxAttrMask::Index16) { index = (g_hw_fifo[fifo_offset] << 8) | g_hw_fifo[fifo_offset+1]; fifo_offset += 2; }
-        
-        data_addr = g_state.arrayBase[array_idx] + (index * g_state.arrayStride[array_idx]);
-        
+        if (mask == VtxAttrMask::Index8) {
+            if (fifo_offset + 1 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
+            index = g_hw_fifo[fifo_offset++];
+        } else if (mask == VtxAttrMask::Index16) {
+            if (fifo_offset + 2 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
+            index = (g_hw_fifo[fifo_offset] << 8) | g_hw_fifo[fifo_offset+1];
+            fifo_offset += 2;
+        }
+
+        uint32_t data_addr = g_state.arrayBase[array_idx] + (index * g_state.arrayStride[array_idx]);
+
         if (type == VtxAttrType::F32) {
             return g_mmu->read_f32(data_addr);
         } else if (type == VtxAttrType::S16) {
@@ -151,66 +164,77 @@ void ProcessGXFifo() {
             uint8_t prim_type = cmd & 0xF8;
             
             VATSlot& vat = g_state.vat[vat_idx];
-            size_t vtx_start_offset = offset + 3;
-            size_t curr_offset = vtx_start_offset;
-            
+            const size_t fifo_size = g_hw_fifo.size();
+            size_t curr_offset = offset + 3;
+
             // Map GX Primitives to OpenGL Primitives
             int gl_mode = RL_TRIANGLES;
-            if (prim_type == 0x90) gl_mode = RL_TRIANGLES;
-            else if (prim_type == 0x98) gl_mode = RL_TRIANGLES; // Triangle Strip (Requires manual unrolling or specific GL mode)
+            if      (prim_type == 0x90) gl_mode = RL_TRIANGLES;
+            else if (prim_type == 0x98) gl_mode = RL_TRIANGLES; // TriStrip (unrolled)
             else if (prim_type == 0x80) gl_mode = RL_QUADS;
-            
+
             rlBegin(gl_mode);
-            
+
+            // If no color attribute in VAT, reset to white so we don't
+            // inherit the last color set by DrawGrid or other raylib calls.
+            if (vat.clrMask[0] == VtxAttrMask::None) {
+                rlColor4ub(255, 255, 255, 255);
+            }
+
+            bool parse_ok = true;
             // Dynamic vertex parsing according to hardware VAT
-            for (int i = 0; i < vtx_count; i++) {
-                // 1. Position Matrices (Index 8 bit usually)
-                // if (vat.posMatMask) { curr_offset++; }
-                
+            for (int i = 0; i < vtx_count && parse_ok; i++) {
+                // 1. Position Matrices (Index 8-bit)
+                // if (vat.posMatMask) { if (curr_offset+1 > fifo_size) { parse_ok=false; break; } curr_offset++; }
+
                 // 2. Tex Matrices
                 // ...
-                
-                // 3. Position (X, Y, Z) - Array Index 0
+
+                // 3. Color0 BEFORE position — rlgl latches color per-vertex.
+                //    RGB8 = 3 bytes (what PushColor() writes).
+                if (vat.clrMask[0] == VtxAttrMask::Direct) {
+                    if (curr_offset + 3 > fifo_size) { parse_ok = false; break; }
+                    uint8_t r = g_hw_fifo[curr_offset+0];
+                    uint8_t g = g_hw_fifo[curr_offset+1];
+                    uint8_t b = g_hw_fifo[curr_offset+2];
+                    curr_offset += 3;
+                    rlColor4ub(r, g, b, 255);
+                }
+
+                // 4. Position (X, Y, Z) — Array Index 0
                 if (vat.posMask != VtxAttrMask::None) {
-                    float x = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
-                    float y = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
-                    float z = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0);
+                    float x = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size);
+                    float y = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size);
+                    float z = ReadAttribute(curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size);
+                    if (curr_offset > fifo_size) { parse_ok = false; break; }
                     rlVertex3f(x, y, z);
                 }
-                
-                // 4. Normal - Array Index 1
+
+                // 5. Normal — Array Index 1
                 if (vat.nrmMask != VtxAttrMask::None) {
-                    float nx = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
-                    float ny = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
-                    float nz = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1);
+                    float nx = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
+                    float ny = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
+                    float nz = ReadAttribute(curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
+                    if (curr_offset > fifo_size) { parse_ok = false; break; }
                     rlNormal3f(nx, ny, nz);
                 }
-                
-                // 5. Colors (RGBA) - Array Index 2, 3
-                if (vat.clrMask[0] != VtxAttrMask::None) {
-                    // For colors, type defines RGB565, RGBA8, etc. 
-                    // Simplifying to U32 read for RGBA8 for this snippet
-                    if (vat.clrMask[0] == VtxAttrMask::Direct) {
-                        uint32_t c = Read32(curr_offset); curr_offset+=4;
-                        rlColor4ub(c>>24, (c>>16)&0xFF, (c>>8)&0xFF, c&0xFF);
-                    }
-                }
-                
-                // 6. TexCoords - Array Index 4..11
-                for(int t=0; t<8; t++) {
+
+                // 6. TexCoords — Array Index 4..11
+                for (int t = 0; t < 8 && parse_ok; t++) {
                     if (vat.texMask[t] != VtxAttrMask::None) {
-                        float u = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t);
-                        float v = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t);
-                        // rlSetTexCoord(t, u, v); (Requires multi-tex support)
-                        if (t==0) rlTexCoord2f(u, v);
+                        float u = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t, fifo_size);
+                        float v = ReadAttribute(curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4+t, fifo_size);
+                        if (curr_offset > fifo_size) { parse_ok = false; break; }
+                        if (t == 0) rlTexCoord2f(u, v);
                     }
                 }
             }
-            
+
             rlEnd();
-            
-            // If we failed to parse a complete vertex (insufficient data), break
-            if (curr_offset > g_hw_fifo.size()) break;
+            // Flush rlgl batch — default holds only 8192 verts; large meshes need explicit flush.
+            rlDrawRenderBatchActive();
+
+            if (!parse_ok || curr_offset > fifo_size) break;
             offset = curr_offset;
         }
         else {

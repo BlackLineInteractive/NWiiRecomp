@@ -93,11 +93,11 @@ NWiiRecomp/
 - **Premium Themes**: Includes "Nintendo" theme (GameCube Indigo / Wii aesthetic) for a polished user experience.
 
 <p align="center">
-  <img src="GUI_image/1.png" alt="NWiiStudio Disassembly" width="95%"/>
+  <img src="GUI_image/1.png" alt="NWiiStudio Disassembly" width="105%"/>
   &nbsp;
-  <img src="GUI_image/2.png" alt="NWiiStudio Settings" width="95%"/>
-  <img src="GUI_image/3.png" alt="NWiiStudio Settings" width="95%"/>
-    <img src="GUI_image/4.png" alt="NWiiStudio Settings" width="95%"/>
+  <img src="GUI_image/2.png" alt="NWiiStudio Settings" width="105%"/>
+  <img src="GUI_image/3.png" alt="NWiiStudio Settings" width="105%"/>
+    <img src="GUI_image/4.png" alt="NWiiStudio Settings" width="105%"/>
 </p>
 
 ---
