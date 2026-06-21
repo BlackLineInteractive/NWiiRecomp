@@ -213,6 +213,7 @@ namespace runtime {
 uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 
 uint32_t HW_Reg_Read32(uint32_t addr) {
+  std::cout << "[HW_REG] Read32: 0x" << std::hex << addr << std::dec << "\n";
   // --- IOS IPC registers (Wii, 0xCD000000–0xCD00FFFF) ---
   if ((addr & 0xFF000000) == 0xCD000000) {
     switch (addr & 0x00FFFFFF) {
@@ -255,7 +256,7 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
       if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube)
         return 0x00000001; // GC Retail
       else
-        return 0x00000002; // Wii Retail
+        return 0x00000021; // Wii Retail
     }
     return 0;   // PI Interrupt Cause/Mask = 0 (no pending interrupts)
   }
@@ -717,10 +718,25 @@ void OSSetArenaLo(CPUContext &ctx) { ctx.mmu.write32(0x80000030, ctx.gpr[3]); }
 void OSSetArenaHi(CPUContext &ctx) { ctx.mmu.write32(0x80000034, ctx.gpr[3]); }
 
 void VISetBlack(CPUContext &ctx) {
-  // Ignore
+  // Unused stub
+}
+
+void VIInit(CPUContext &ctx) {
+  // Initialize VI (Video Interface)
+}
+
+void VIConfigure(CPUContext &ctx) {
+  // Configure VI (Video Interface)
+}
+
+void VIConfigurePan(CPUContext &ctx) {
+  // Configure VI Pan
 }
 
 void VIGetNextField(CPUContext &ctx) { ctx.gpr[3] = 0; }
 
+void DVD_Callback(CPUContext &ctx) {
+  // DVD callback stub
+}
 
 }

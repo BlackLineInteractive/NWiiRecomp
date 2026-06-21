@@ -19,6 +19,7 @@ struct Instruction {
 struct Function {
     uint32_t start_address;
     uint32_t end_address; // Address of the return instruction (blr) or similar
+    std::string hle_hook_name; // Set if this function matches an HLE signature
     std::vector<Instruction> instructions;
     std::set<uint32_t> jump_table_targets;
 };
@@ -27,8 +28,8 @@ class Analyzer {
 public:
     Analyzer(const loader::Executable& executable);
 
-    // Run the recursive descent analysis starting from the entry point
-    void analyze();
+    // Run the recursive descent analysis starting from the entry point and optional roots
+    void analyze(const std::vector<uint32_t>& additional_roots = {});
 
     const std::map<uint32_t, Function>& get_functions() const { return functions_; }
 
@@ -36,7 +37,7 @@ private:
     bool read_instruction(uint32_t address, uint32_t& out_inst) const;
     bool is_text_address(uint32_t address) const;
     uint32_t read_data32(uint32_t address) const;
-    void analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uint32_t>& insts, std::queue<uint32_t>& block_queue, std::set<uint32_t>& jump_targets);
+    void analyze_jump_table(uint32_t bctr_pc, const std::map<uint32_t, uint32_t>& insts, std::queue<uint32_t>& block_queue, std::set<uint32_t>& jump_targets, const std::set<uint32_t>& known_functions);
 
     const loader::Executable& executable_;
     

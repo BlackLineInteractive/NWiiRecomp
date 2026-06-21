@@ -37,24 +37,29 @@ int main(int argc, char** argv) {
     std::cout << "Entry point: 0x" << std::hex << (uint32_t)exec.entry_point << std::dec << "\n";
     std::cout << "Sections loaded: " << exec.sections.size() << "\n";
 
-    std::cout << "Running Code Analyzer...\n";
-    nwii::analyzer::Analyzer analyzer(exec);
-    analyzer.analyze();
-
-    const auto& functions = analyzer.get_functions();
-    std::cout << "Analysis complete. Discovered " << functions.size() << " functions.\n";
-
     nwii::recomp::SymbolTable symbols;
     bool has_symbols = false;
+    std::vector<uint32_t> symbol_addresses;
+
     if (!config.symbols_csv.empty()) {
         std::cout << "Loading symbols from " << config.symbols_csv << "...\n";
         if (symbols.load_csv(config.symbols_csv)) {
             std::cout << "Symbols loaded successfully.\n";
             has_symbols = true;
+            for (const auto& [addr, name] : symbols.get_all_symbols()) {
+                symbol_addresses.push_back(addr);
+            }
         } else {
             std::cerr << "Failed to load symbols.\n";
         }
     }
+
+    std::cout << "Running Code Analyzer...\n";
+    nwii::analyzer::Analyzer analyzer(exec);
+    analyzer.analyze(symbol_addresses);
+
+    const auto& functions = analyzer.get_functions();
+    std::cout << "Analysis complete. Discovered " << functions.size() << " functions.\n";
 
     std::cout << "Generating CMake Project...\n";
     nwii::recomp::Recompiler recompiler(analyzer, has_symbols ? &symbols : nullptr, config);

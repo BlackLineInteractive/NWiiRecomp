@@ -1,9 +1,11 @@
 #include "analyzer/analyzer.h"
 #include "common/endian.h"
 #include "ppc/instruction.h"
+#include "analyzer/signature_scanner.h"
 #include <iostream>
 #include <map>
 #include <queue>
+#include <algorithm>
 
 namespace nwii {
 namespace analyzer {
@@ -58,7 +60,8 @@ uint32_t Analyzer::read_data32(uint32_t address) const {
 void Analyzer::analyze_jump_table(uint32_t bctr_pc,
                                   const std::map<uint32_t, uint32_t> &insts,
                                   std::queue<uint32_t> &block_queue,
-                                  std::set<uint32_t> &jump_targets) {
+                                  std::set<uint32_t> &jump_targets,
+                                  const std::set<uint32_t> &known_functions) {
   // Scan backwards from bctr_pc to find mtctr
   int32_t mtctr_reg = -1;
   uint32_t curr_pc = bctr_pc - 4;
@@ -134,10 +137,17 @@ void Analyzer::analyze_jump_table(uint32_t bctr_pc,
       if (!is_text_address(ptr))
         break;
 
-      // Typical switch case is local, within +/- 1MB of bctr_pc
+      // Typical switch case is local, within +/- 32KB of bctr_pc
       int32_t diff = (int32_t)ptr - (int32_t)bctr_pc;
-      if (std::abs(diff) > 0x100000)
+      if (std::abs(diff) > 0x8000)
         break;
+
+      // Also if it points to a known function, it's a VTable or callback array, not a local switch!
+      if (known_functions.find(ptr) != known_functions.end()) {
+          // It's a pointer to another function, ignore for jump table
+          scan_addr += 4;
+          continue;
+      }
 
       block_queue.push(ptr);
       jump_targets.insert(ptr);
@@ -157,7 +167,7 @@ void Analyzer::analyze_jump_table(uint32_t bctr_pc,
   }
 }
 
-void Analyzer::analyze() {
+void Analyzer::analyze(const std::vector<uint32_t>& additional_roots) {
   std::queue<uint32_t> function_queue;
   std::set<uint32_t> known_functions;
 
@@ -166,76 +176,12 @@ void Analyzer::analyze() {
     known_functions.insert(executable_.entry_point);
   }
 
-  // Hardcoded dynamic dispatch entry points (OS functions computed via
-  // lis/addi)
-  std::vector<uint32_t> hints = {
-      0x8010beb4,
-      0x80218070,
-      0x802180F0,
-      // STM/IPC thread callbacks (IOS_IoctlAsync)
-      0x8021cc70,
-      0x8021c000,
-      0x8021d000,
-      // FS/ISFS async callbacks (IOS_OpenAsync / iosQueueMessage)
-      0x80240680,
-      0x80244e30,
-      0x802464b0,
-      0x80247730,
-      0x8019BA08,
-      0x8019ba60,
-      0x8018fea8,
-      0x801a98fc,
-      0x801aa550,
-      // IOS/DVD callbacks discovered at runtime
-      0x80222f80, // missing DVD callback (fallback dispatch crash point)
-      0x80222f90,
-      0x80223000,
-      0x80223100,
-      0x80223200,
-      0x80223300,
-      0x80223400,
-      0x80223500,
-      0x80223600,
-      0x80223700,
-      0x80223800,
-      0x80223900,
-      0x80225190,
-      0x80225230,
-      0x802252c0,
-      0x802258a0,
-      0x80225920,
-      0x802259a0,
-      0x80225a20,
-      0x80225aa0,
-      0x80225b20,
-      0x8027c310,
-      0x80225ba0,
-      0x80225c20,
-      0x80211060, // <-- DVD Callback
-      0x80009ccc, // <-- OS Error Handler
-          // Additional callback ranges
-      0x80220000,
-      0x80221000,
-      0x80222000,
-      0x80223000,
-      0x80224000,
-      0x80225000,
-      0x80226000,
-      0x80227000,
-      0x80228000,
-      0x80229000,
-      0x8022a000,
-      0x8022b000,
-  };
-  // RVL_SDK IPC/FS module: callbacks are often registered at runtime only.
-  for (uint32_t addr = 0x80210000; addr < 0x80260000; addr += 0x10) {
-    hints.push_back(addr);
-  }
-  for (uint32_t hint : hints) {
-    if (is_text_address(hint) &&
-        known_functions.find(hint) == known_functions.end()) {
-      known_functions.insert(hint);
-      function_queue.push(hint);
+  // Seed with additional roots (e.g. from symbols.csv)
+  for (uint32_t root : additional_roots) {
+    if (is_text_address(root) &&
+        known_functions.find(root) == known_functions.end()) {
+      known_functions.insert(root);
+      function_queue.push(root);
     }
   }
 
@@ -243,13 +189,41 @@ void Analyzer::analyze() {
   for (const auto &section : executable_.sections) {
     if (!section.is_text) {
       for (size_t i = 0; i + 4 <= section.data.size(); i += 4) {
-        uint32_t ptr;
-        std::memcpy(&ptr, section.data.data() + i, 4);
-        ptr = swap_endian(ptr);
+        uint32_t ptr = read_data32(section.address + i);
         if (is_text_address(ptr) &&
             known_functions.find(ptr) == known_functions.end()) {
           known_functions.insert(ptr);
           function_queue.push(ptr);
+        }
+      }
+    } else {
+      // Universal lis/addi heuristic scanner for OS callbacks in .text
+      // This eliminates the need for hardcoded OS callback addresses!
+      uint32_t lis_regs[32] = {0};
+      for (size_t i = 0; i + 4 <= section.data.size(); i += 4) {
+        uint32_t inst = read_data32(section.address + i);
+        uint32_t opcode = inst >> 26;
+        uint32_t rD = (inst >> 21) & 0x1F;
+        uint32_t rA = (inst >> 16) & 0x1F;
+        int16_t simm = inst & 0xFFFF;
+
+        if (opcode == 15 && rA == 0) { // lis rD, simm
+          lis_regs[rD] = (uint32_t)simm << 16;
+        } else if (opcode == 14) { // addi rD, rA, simm
+          if (lis_regs[rA] != 0) {
+            uint32_t target = lis_regs[rA] + (int32_t)simm;
+            if (is_text_address(target) && known_functions.find(target) == known_functions.end()) {
+              known_functions.insert(target);
+              function_queue.push(target);
+            }
+          }
+          lis_regs[rD] = 0; // Clear it so we don't carry false positives
+        } else if (opcode == 18 || opcode == 19 || opcode == 16) {
+           // Clear all on branch to avoid cross-block false positives
+           for (int r = 0; r < 32; r++) lis_regs[r] = 0;
+        } else {
+           // If a register is overwritten by something else, clear its lis value
+           lis_regs[rD] = 0;
         }
       }
     }
@@ -305,9 +279,10 @@ void Analyzer::analyze() {
           }
         } else if (inst.is_unconditional_indirect_branch()) {
           // It's a bctr or bclr
-          if (inst.opcode() == 19 && inst.extended_opcode() == 528) { // bctr
+          if (inst.opcode() == 19 && (inst.value() & 0x3FF) == 528) {
+            // bctr
             analyze_jump_table(current_pc, insts, block_queue,
-                               local_jump_targets);
+                               local_jump_targets, known_functions);
           }
           break;
         } else if (inst.is_unconditional_branch()) {
@@ -358,6 +333,20 @@ void Analyzer::analyze() {
                 << " functions. Queue size: " << function_queue.size() << "\n";
     }
   }
+  SignatureScanner scanner;
+  for (auto &pair : functions_) {
+    Function &func = pair.second;
+    std::vector<uint32_t> opcodes;
+    for (const auto &inst : func.instructions) {
+      opcodes.push_back(inst.opcode);
+    }
+    func.hle_hook_name = scanner.match(opcodes);
+    if (!func.hle_hook_name.empty()) {
+      std::cout << "[Analyzer] Signature matched at 0x" << std::hex << func.start_address 
+                << " -> " << func.hle_hook_name << std::dec << "\n";
+    }
+  }
+
   std::cout << "[Analyzer] Analysis complete. Total functions found: "
             << functions_.size() << "\n";
 }

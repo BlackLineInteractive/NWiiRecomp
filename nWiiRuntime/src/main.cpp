@@ -69,14 +69,42 @@ int main(int argc, char** argv) {
     
     std::cout << "DOL LOADED! Value at 0x80528A30: 0x" << std::hex << ctx->mmu.read32(0x80528A30) << std::endl;
     std::cout << "Value at 0x8052A588 (r13 - 16792): 0x" << std::hex << ctx->mmu.read32(0x8052A588) << std::endl;
+    std::cout << "Console Type at 0x80000024 (read32): 0x" << std::hex << ctx->mmu.read32(0x80000024) << std::endl;
+    std::cout << "Console Type at 0x80000024 (mem1): 0x" << std::hex << (int)ctx->mmu.mem1[0x24] << (int)ctx->mmu.mem1[0x25] << (int)ctx->mmu.mem1[0x26] << (int)ctx->mmu.mem1[0x27] << std::endl;
 
     arena_lo = (arena_lo + 31) & ~31;
     
-    // OS Globals setup
-    ctx->mmu.mem1[0x24+3] = (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) ? 0x01 : 0x02;
+    uint32_t console_type = 0x21; // Wii Retail
     uint32_t mem1_size = 24 * 1024 * 1024;
+    uint32_t mem2_size = 64 * 1024 * 1024;
+    
+    // 0x24: Simulated MEM1 Size
+    ctx->mmu.write32(0x80000024, mem1_size);
+    
+    // 0x28: Physical MEM1 Size
     ctx->mmu.write32(0x80000028, mem1_size);
-    ctx->mmu.write32(0x80000030, arena_lo); ctx->mmu.write32(0x8052A588, 0x80003000); for (int i=0; i<256; i+=4) ctx->mmu.write32(0x80003000 + i, 0x80003000);
+
+    // 0x2C: Console Type
+    ctx->mmu.write32(0x8000002C, console_type);
+    
+    // 0x3118: Simulated MEM1 Size
+    ctx->mmu.write32(0x80003118, mem1_size);
+    
+    // 0x311C: Physical MEM2 Size
+    ctx->mmu.write32(0x8000311C, mem2_size);
+    
+    // 0x3124 - 0x3134: MEM2 bounds
+    ctx->mmu.write32(0x80003124, 0x90000000);
+    ctx->mmu.write32(0x80003128, 0x93e00000);
+    ctx->mmu.write32(0x80003130, 0x93e00000);
+    ctx->mmu.write32(0x80003134, 0x94000000);
+
+    ctx->mmu.write32(0x80000030, arena_lo); 
+    ctx->mmu.write32(0x8052A588, 0x80003000); 
+    for (int i=0; i<256; i+=4) ctx->mmu.write32(0x80003000 + i, 0x80003000);
+
+    // Initial SP
+    ctx->gpr[1] = 0x816FFFF0;
     
     if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube) {
         ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK
@@ -85,14 +113,7 @@ int main(int argc, char** argv) {
         ctx->mmu.write32(0x800000F8, 60750000);  // OS_TIMER_CLOCK
         ctx->mmu.write32(0x800000FC, 243000000); // OS_BUS_CLOCK
     }
-    
-    // MEM2 & IPC Setup
-    ctx->mmu.write32(0x80003118, 64 * 1024 * 1024);
-    ctx->mmu.write32(0x8000311C, 64 * 1024 * 1024);
-    ctx->mmu.write32(0x80003124, 0x90000000);
-    ctx->mmu.write32(0x80003128, 0x93E00000);
-    ctx->mmu.write32(0x80003130, 0x93E00000);
-    ctx->mmu.write32(0x80003134, 0x94000000);
+
 
     nwii::runtime::init_ipc_client(*ctx);
 

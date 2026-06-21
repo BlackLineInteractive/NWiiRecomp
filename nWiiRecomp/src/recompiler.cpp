@@ -61,6 +61,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void iosAlloc(nwii::runtime::CPUContext& ctx);\n";
     hout << "void iosFree(nwii::runtime::CPUContext& ctx);\n";
     hout << "void VIInit(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VIConfigure(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VIConfigurePan(nwii::runtime::CPUContext& ctx);\n";
     hout << "void GXInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void PADInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSInit(nwii::runtime::CPUContext& ctx);\n";
@@ -100,6 +102,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void AXSetVoiceOffsets(nwii::runtime::CPUContext& ctx);\n";
     hout << "void DVDInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void DVDOpen(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void DVD_Callback(nwii::runtime::CPUContext& ctx);\n";
     hout << "void DVDReadAsyncPrio(nwii::runtime::CPUContext& ctx);\n";
     hout << "void DVDClose(nwii::runtime::CPUContext& ctx);\n";
     hout << "void DVDGetDriveStatus(nwii::runtime::CPUContext& ctx);\n";
@@ -165,9 +168,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
       std::string func_name = all_func_names[func_idx++];
 
-      if (symbols_ && symbols_->has_symbol(start_addr) &&
-          is_hle_function(symbols_->get_symbol(start_addr))) {
-        out << "// [HLE Hook] Skipping generation for " << func_name << "\n\n";
+      if (!func.hle_hook_name.empty()) {
+        out << "void " << func_name << "(nwii::runtime::CPUContext& ctx) {\n";
+        out << "    " << func.hle_hook_name << "(ctx);\n";
+        out << "    ctx.pc = ctx.lr;\n";
+        out << "}\n\n";
       } else {
         emit_function(out, func, func_name);
       }
@@ -207,8 +212,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) &&
-                     is_hle_function(symbols_->get_symbol(start_addr)));
+      bool is_hle = !func.hle_hook_name.empty();
       if (!is_hle) {
         out << "    {0x" << std::hex << std::uppercase << start_addr << ", 0x"
             << func.end_address << ", " << func_name << "},\n";
@@ -222,15 +226,21 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
+    out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
-    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; ctx.ps1 = ctx.backup_ps1;\n";
-    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; ctx.ctr = ctx.backup_ctr;\n";
-    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; ctx.in_callback = false;\n";
+    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; "
+           "ctx.ps1 = ctx.backup_ps1;\n";
+    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; "
+           "ctx.ctr = ctx.backup_ctr;\n";
+    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; "
+           "ctx.in_callback = false;\n";
     out << "            continue;\n";
     out << "        }\n";
-    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x80000000;\n";
-    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
+    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc "
+           "& 0x0FFFFFFF) | 0x80000000;\n";
+    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = "
+           "(ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
     out << "        else if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
@@ -242,13 +252,12 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) &&
-                     is_hle_function(symbols_->get_symbol(start_addr)));
+      bool is_hle = !func.hle_hook_name.empty();
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
           out << "            case 0x" << std::hex << std::uppercase
-              << start_addr << std::dec << ": " << func_name
+              << start_addr << std::dec << ": " << func.hle_hook_name
               << "(ctx); ctx.pc = ctx.lr; break;\n";
         } else {
           out << "            case 0x" << std::hex << std::uppercase
@@ -296,6 +305,9 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                if (!found) std::exit(1);\n";
     out << "            }\n";
     out << "        }\n";
+    out << "      } catch (const nwii::runtime::CallbackInterrupt&) {\n";
+    out << "          continue;\n";
+    out << "      }\n";
     out << "    }\n";
     out << "}\n";
     out.close();
@@ -400,8 +412,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     int func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      if (symbols_ && symbols_->has_symbol(start_addr) &&
-          is_hle_function(symbols_->get_symbol(start_addr))) {
+      if (!func.hle_hook_name.empty()) {
         out << "// [HLE Hook] Skipping generation for " << func_name << "\n\n";
       } else {
         emit_function(out, func, func_name);
@@ -426,8 +437,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) &&
-                     is_hle_function(symbols_->get_symbol(start_addr)));
+      bool is_hle = !func.hle_hook_name.empty();
       if (!is_hle) {
         out << "    {0x" << std::hex << std::uppercase << start_addr << ", 0x"
             << func.end_address << ", " << func_name << "},\n";
@@ -441,15 +451,21 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
     out << "    while (ctx.pc != 0) {\n";
+    out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
-    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; ctx.ps1 = ctx.backup_ps1;\n";
-    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; ctx.ctr = ctx.backup_ctr;\n";
-    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; ctx.in_callback = false;\n";
+    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; "
+           "ctx.ps1 = ctx.backup_ps1;\n";
+    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; "
+           "ctx.ctr = ctx.backup_ctr;\n";
+    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; "
+           "ctx.in_callback = false;\n";
     out << "            continue;\n";
     out << "        }\n";
-    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x80000000;\n";
-    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = (ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
+    out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc "
+           "& 0x0FFFFFFF) | 0x80000000;\n";
+    out << "        else if ((ctx.pc & 0xF0000000) == 0xD0000000) ctx.pc = "
+           "(ctx.pc & 0x0FFFFFFF) | 0x90000000;\n";
     out << "        else if (ctx.pc < 0x80000000) ctx.pc |= 0x80000000;\n";
     out << "        uint32_t target = ctx.pc;\n        if ((++ctx.inst_count % "
            "100000) == 0) std::cout << \"Dispatcher PC: 0x\" << std::hex << "
@@ -461,13 +477,12 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = (symbols_ && symbols_->has_symbol(start_addr) &&
-                     is_hle_function(symbols_->get_symbol(start_addr)));
+      bool is_hle = !func.hle_hook_name.empty();
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
           out << "            case 0x" << std::hex << std::uppercase
-              << start_addr << std::dec << ": " << func_name
+              << start_addr << std::dec << ": " << func.hle_hook_name
               << "(ctx); ctx.pc = ctx.lr; break;\n";
         } else {
           out << "            case 0x" << std::hex << std::uppercase
@@ -748,11 +763,13 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID " << spr << "\n";
     } else if (spr == 1008) {
       out << "    ctx.gpr[" << rD << "] = 0; // mfspr HID0 (stub)\n";
-    } else if (spr == 1017) {
+    } else if (spr == 287) {
       out << "    ctx.gpr[" << rD
           << "] = (nwii::runtime::Config::get().platform == "
-             "nwii::runtime::Platform::GameCube) ? 0x00083214 : 0x00087010; // "
+             "nwii::runtime::Platform::GameCube) ? 0x00083214 : 0x00087102; // "
              "mfspr PVR\n";
+    } else if (spr == 1017) {
+      out << "    ctx.gpr[" << rD << "] = 0; // mfspr L2CR\n";
     } else {
       out << "    std::cerr << \"[WARN] mfspr r\" << " << rD
           << " << \" spr=\" << " << spr << " << \" (stub=0)\\n\";\n";
@@ -920,7 +937,8 @@ void Recompiler::emit_instruction(std::ostream &out,
 
     if (target <= inst.address && is_local) {
       out << "    ++ctx.inst_count;\n";
-      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address << std::dec << ";\n";
+      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
+          << std::dec << ";\n";
       out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
@@ -1028,7 +1046,8 @@ void Recompiler::emit_instruction(std::ostream &out,
 
     if (target <= inst.address && is_local) {
       out << "    ++ctx.inst_count;\n";
-      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address << std::dec << ";\n";
+      out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
+          << std::dec << ";\n";
       out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
@@ -1164,7 +1183,8 @@ void Recompiler::emit_instruction(std::ostream &out,
         if (cond_expr == "true") {
           out << "        ctx.pc = temp_lr; return;\n";
         } else {
-          out << "        if (" << cond_expr << ") { ctx.pc = temp_lr; return; }\n";
+          out << "        if (" << cond_expr
+              << ") { ctx.pc = temp_lr; return; }\n";
         }
         out << "    }\n";
       } else {
@@ -1303,13 +1323,16 @@ void Recompiler::emit_instruction(std::ostream &out,
           << "]; // frsp\n";
     } else if (xo == 15) { // fctiwz
       out << "    {\n";
-      out << "        uint32_t i_val = (uint32_t)(int32_t)ctx.fpr[" << fB << "];\n";
+      out << "        uint32_t i_val = (uint32_t)(int32_t)ctx.fpr[" << fB
+          << "];\n";
       out << "        uint64_t val = i_val;\n";
       out << "        std::memcpy(&ctx.fpr[" << fD << "], &val, 8);\n";
       out << "    } // fctiwz\n";
     } else if (xo == 14) { // fctiw
       out << "    {\n";
-      out << "        uint32_t i_val = (uint32_t)(int32_t)std::nearbyint(ctx.fpr[" << fB << "]);\n";
+      out << "        uint32_t i_val = "
+             "(uint32_t)(int32_t)std::nearbyint(ctx.fpr["
+          << fB << "]);\n";
       out << "        uint64_t val = i_val;\n";
       out << "        std::memcpy(&ctx.fpr[" << fD << "], &val, 8);\n";
       out << "    } // fctiw\n";
@@ -1600,24 +1623,28 @@ void Recompiler::emit_instruction(std::ostream &out,
             << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 24) {
-      out << "    ctx.gpr[" << rA << "] = (ctx.gpr[" << rB << "] & 0x20) ? 0 : (ctx.gpr[" << rS << "] << (ctx.gpr["
-          << rB << "] & 0x1F)); // slw\n";
+      out << "    ctx.gpr[" << rA << "] = (ctx.gpr[" << rB
+          << "] & 0x20) ? 0 : (ctx.gpr[" << rS << "] << (ctx.gpr[" << rB
+          << "] & 0x1F)); // slw\n";
       if (ppc_inst.value() & 1) {
         out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
             << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
             << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 536) {
-      out << "    ctx.gpr[" << rA << "] = (ctx.gpr[" << rB << "] & 0x20) ? 0 : (ctx.gpr[" << rS << "] >> (ctx.gpr["
-          << rB << "] & 0x1F)); // srw\n";
+      out << "    ctx.gpr[" << rA << "] = (ctx.gpr[" << rB
+          << "] & 0x20) ? 0 : (ctx.gpr[" << rS << "] >> (ctx.gpr[" << rB
+          << "] & 0x1F)); // srw\n";
       if (ppc_inst.value() & 1) {
         out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
             << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
             << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 792) {
-      out << "    ctx.gpr[" << rA << "] = (uint32_t)((ctx.gpr[" << rB << "] & 0x20) ? ((int32_t)ctx.gpr[" << rS << "] >> 31) : ((int32_t)ctx.gpr[" << rS
-          << "] >> (ctx.gpr[" << rB << "] & 0x1F))); // sraw\n";
+      out << "    ctx.gpr[" << rA << "] = (uint32_t)((ctx.gpr[" << rB
+          << "] & 0x20) ? ((int32_t)ctx.gpr[" << rS
+          << "] >> 31) : ((int32_t)ctx.gpr[" << rS << "] >> (ctx.gpr[" << rB
+          << "] & 0x1F))); // sraw\n";
       if (ppc_inst.value() & 1) {
         out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
             << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA

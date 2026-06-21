@@ -37,3 +37,4 @@ log.txt
 
 # Configuration files
 *.toml
+*.csv

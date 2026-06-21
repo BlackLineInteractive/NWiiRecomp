@@ -43,14 +43,19 @@ struct CallbackInfo {
     uint32_t arg2;
 };
 
+// Exception thrown to instantly unwind the C++ stack back to the dispatcher
+struct CallbackInterrupt : public std::exception {
+    const char* what() const noexcept override { return "HLE Callback Interrupt"; }
+};
+
 // Strict Dolphin-accurate MMU
 struct MMU {
   std::vector<uint8_t> mem1;
   std::vector<uint8_t> mem2;
 
   MMU() {
-    mem1.resize(24 * 1024 * 1024, 0); // 24MB MEM1 (Physical 0x00000000)
-    mem2.resize(64 * 1024 * 1024, 0); // 64MB MEM2 (Physical 0x10000000)
+    mem1.resize(24 * 1024 * 1024 + 8, 0); // 24MB MEM1 + 8 bytes padding for unaligned access
+    mem2.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM2 + 8 bytes padding for unaligned access
   }
 
   // Translates Virtual (EA) to Physical (PA) pointer based on RVL standard BAT mappings
@@ -71,6 +76,8 @@ struct MMU {
 
   uint8_t read8(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x00000024) std::cout << "[MEM] read8(0x80000024)" << std::endl;
+    if (paddr == 0x00000028) std::cout << "[MEM] read8(0x80000028)" << std::endl;
     if (is_hw_reg(paddr)) {
         // HW registers are typically 32-bit/16-bit, 8-bit reads are rare but happen
         uint32_t val = HW_Reg_Read32(paddr & ~3);
@@ -92,6 +99,8 @@ struct MMU {
 
   uint16_t read16(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x00000024) std::cout << "[MEM] read16(0x80000024)" << std::endl;
+    if (paddr == 0x00000028) std::cout << "[MEM] read16(0x80000028)" << std::endl;
     if (is_hw_reg(paddr)) return HW_Reg_Read16(paddr);
     
     uint8_t *ptr = get_ptr(addr);
@@ -109,15 +118,10 @@ struct MMU {
 
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x00000024) std::cout << "[MEM] read32(0x80000024) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
+    if (paddr == 0x0000002C) std::cout << "[MEM] read32(0x8000002C) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
+    if (paddr == 0x00000028) std::cout << "[MEM] read32(0x80000028) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
     
-    // Strict Global OS bounds (Wii)
-    if (paddr == 0x00000024) return 0x00000002u; // Console Type
-    if (paddr == 0x00000028) return 24u * 1024u * 1024u; // MEM1 Size
-    if (paddr == 0x00003118 || paddr == 0x0000311C) return 64u * 1024u * 1024u; // MEM2 Size
-    if (paddr == 0x00003124) return 0x90000000u; // MEM2 Usable Start
-    if (paddr == 0x00003128 || paddr == 0x00003130) return 0x93E00000u; // MEM2 Usable End
-    if (paddr == 0x00003134) return 0x94000000u; // IPC Arena End
-
     if (is_hw_reg(paddr)) return HW_Reg_Read32(paddr);
 
     uint8_t *ptr = get_ptr(addr);
@@ -129,11 +133,8 @@ struct MMU {
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    
-    // Protect OS Globals
-    if (paddr == 0x00000024 || paddr == 0x00000028 || paddr == 0x00003118 ||
-        paddr == 0x0000311C || paddr == 0x00003124 || paddr == 0x00003128 ||
-        paddr == 0x00003130 || paddr == 0x00003134) return;
+    if (paddr == 0x00000024) std::cout << "[MEM] write32(0x80000024, 0x" << std::hex << value << ")" << std::endl;
+    if (paddr == 0x00000028) std::cout << "[MEM] write32(0x80000028, 0x" << std::hex << value << ")" << std::endl;
 
     if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
     if (is_hw_reg(paddr)) { HW_Reg_Write32(paddr, value); return; }

@@ -1321,7 +1321,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Set LR to sentinel
   ctx.lr = 0xFFFFFFFC;
   ctx.pc = cb.cb_addr;
-  return true;
+  throw CallbackInterrupt();
 }
 
 } // namespace nwii::runtime

@@ -21,4 +21,3 @@ add_subdirectory(nWiiRuntime)
 # If nWiiStudio relies on external libs like raylib that aren't set up yet, 
 # it might fail. Let's include it cautiously or just add it.
 add_subdirectory(nWiiStudio)
-add_subdirectory(test_gx/gx_hle)

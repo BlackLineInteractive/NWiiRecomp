@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="nWiiStudio/assets/logo_wide.jpg" alt="NWiiRecomp" width="700"/>
+  <img src="image/logo_wide.jpg" alt="NWiiRecomp" width="700"/>
 </p>
 
 <p align="center">
-  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii Ugames.
+  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii U games.
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@ NWiiRecomp/
 - Automatic discovery of function boundaries via branch analysis
 - Function pointer recovery from data sections (vtables, jump tables)
 - Hardcoded entry point hints for OS dispatch stubs that are computed at runtime via `lis`/`addi` patterns
-- Discovered **~38,400+** functions from a **"Silent Hill SM"** Wii
+- Discovered **~34,800+** functions from a **"Silent Hill SM"** Wii
 
 ### Recompiler (`nWiiRecomp`)
 
@@ -67,7 +67,10 @@ NWiiRecomp/
 ### Runtime (`nWiiRuntime`)
 
 <p align="center">
-  <img src="GUI_image/gx-fifo-test.gif" alt="NWiiRuntime GX FIFO test" width="95%"/>
+  <img src="image/video/gx-fifo-test.gif" alt="NWiiRuntime GX FIFO test" width="105%"/>
+</p>
+<p align="center">
+  <img src="image/video/gx-fifo-test-2.gif" alt="NWiiRuntime GX FIFO test 2" width="105%"/>
 </p>
 
 - **TOML Configuration**: A fully integrated `tomlplusplus` config setup allows dynamic targeting of the host platform (`GameCube` or `Wii`), graphical toggles, and bypassing of OS sub-systems.
@@ -93,11 +96,13 @@ NWiiRecomp/
 - **Premium Themes**: Includes "Nintendo" theme (GameCube Indigo / Wii aesthetic) for a polished user experience.
 
 <p align="center">
-  <img src="GUI_image/1.png" alt="NWiiStudio Disassembly" width="105%"/>
+  <img src="image/1.png" alt="NWiiStudio Disassembly" width="115%"/>
   &nbsp;
-  <img src="GUI_image/2.png" alt="NWiiStudio Settings" width="105%"/>
-  <img src="GUI_image/3.png" alt="NWiiStudio Settings" width="105%"/>
-    <img src="GUI_image/4.png" alt="NWiiStudio Settings" width="105%"/>
+  <img src="image/2.png" alt="NWiiStudio Settings" width="115%"/>
+  &nbsp;
+  <img src="image/3.png" alt="NWiiStudio Settings" width="115%"/>
+  &nbsp;
+  <img src="image/4.png" alt="NWiiStudio Settings" width="115%"/>
 </p>
 
 ---
@@ -148,8 +153,8 @@ The recompiler outputs a self-contained `export/` directory containing `output.c
 - [CafeGLSL](https://github.com/Exzap/CafeGLSL.git) — Open-source shader compiler alternative, crucial for understanding GX2 shaders.
 - [rpl2elf](https://github.com/Relys/rpl2elf.git) — Useful for RPX/RPL to ELF conversion and parsing.
 - [GhidraRPXLoader](https://github.com/decaf-emu/GhidraRPXLoader.git) — RPX loader logic.
-- WiiBrew — Wii hardware and software documentation
-- YAGCD — Yet Another GameCube Documentation — Low-level GC/Wii CPU and hardware reference
+- [WiiBrew](https://wiibrew.org/wiki/Main_Page) — Wii hardware and software documentation
+- [YAGCD](https://hitmen.c02.at/files/yagcd/) — Yet Another GameCube Documentation — Low-level GC/Wii CPU and hardware reference
 - PowerPC 750CL User's Manual — Official ISA reference
 
 ---
@@ -157,6 +162,6 @@ The recompiler outputs a self-contained `export/` directory containing `output.c
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.  
-© 2026 Vova Vovchok.
+© 2026 Volodymyr Vovchok.
 
 > **Disclaimer:** This project contains no copyrighted Nintendo code, SDKs, or game data. You must provide your own legally obtained game executables.
