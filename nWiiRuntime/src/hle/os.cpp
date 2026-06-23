@@ -103,14 +103,7 @@ extern "C" void OSReport(CPUContext &ctx) {
 extern "C" void OSInit(CPUContext &ctx) {
   static bool os_initialized = false;
   if (!os_initialized) {
-    std::cout << "[OSInit] System initialized. Setting up HLE r13-relative structures." << std::endl;
-    // Set r13 - 16792 (0x8052A588) to a valid dummy thread pointer
-    uint32_t dummy_thread = 0x80003000;
-    ctx.mmu.write32(ctx.gpr[13] - 16792, dummy_thread);
-    // Initialize the dummy thread to point to itself or something valid to prevent NULL derefs
-    for (int i = 0; i < 256; i += 4) {
-      ctx.mmu.write32(dummy_thread + i, dummy_thread); // point everything to dummy_thread just in case
-    }
+    std::cout << "[OSInit] System initialized." << std::endl;
     os_initialized = true;
   }
 }
@@ -541,10 +534,15 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
         if (nwii::runtime::g_mmu && count > 0) {
           uint8_t *mem1 = nwii::runtime::g_mmu->mem1.data();
           uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
-          if (!dir)
-            std::memcpy(mem2 + ar_a, mem1 + mm, count); // MRAM->ARAM
-          else
-            std::memcpy(mem1 + mm, mem2 + ar_a, count); // ARAM->MRAM
+          uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
+          uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
+          if (mm < mem1_size && ar_a < mem2_size) {
+            uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
+            if (!dir)
+              std::memcpy(mem2 + ar_a, mem1 + mm, copy_count); // MRAM->ARAM
+            else
+              std::memcpy(mem1 + mm, mem2 + ar_a, copy_count); // ARAM->MRAM
+          }
         }
         ar_cnt = 0;            // DMA complete instantly
         dsp_control |= 0x0020; // Set ARAM interrupt flag (bit 5)
