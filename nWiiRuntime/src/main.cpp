@@ -72,10 +72,17 @@ int main(int argc, char** argv) {
     std::cout << "Console Type at 0x80000024 (read32): 0x" << std::hex << ctx->mmu.read32(0x80000024) << std::endl;
     std::cout << "Console Type at 0x80000024 (mem1): 0x" << std::hex << (int)ctx->mmu.mem1[0x24] << (int)ctx->mmu.mem1[0x25] << (int)ctx->mmu.mem1[0x26] << (int)ctx->mmu.mem1[0x27] << std::endl;
 
+    std::cout << "[DEBUG] Hash Table at 0x8048E088:" << std::endl;
+    for (int i = 0; i < 256; i++) {
+        uint32_t ptr = ctx->mmu.read32(0x8048E088 + i * 4);
+        if (ptr != 0) {
+            std::cout << "  Index " << std::dec << i << " -> 0x" << std::hex << ptr << std::endl;
+        }
+    }
     arena_lo = (arena_lo + 31) & ~31;
     
     uint32_t console_type = 0x21; // Wii Retail
-    uint32_t mem1_size = 24 * 1024 * 1024;
+    uint32_t mem1_size = 64 * 1024 * 1024; // Wii has 64MB MEM1
     uint32_t mem2_size = 64 * 1024 * 1024;
     
     // 0x24: Simulated MEM1 Size
@@ -100,8 +107,7 @@ int main(int argc, char** argv) {
     ctx->mmu.write32(0x80003134, 0x94000000);
 
     ctx->mmu.write32(0x80000030, arena_lo); 
-    ctx->mmu.write32(0x8052A588, 0x80003000); 
-    for (int i=0; i<256; i+=4) ctx->mmu.write32(0x80003000 + i, 0x80003000);
+    ctx->mmu.write32(0x80000034, 0x81700000); // Set OS_MEM1_ARENA_HI
 
     // Initial SP
     ctx->gpr[1] = 0x816FFFF0;

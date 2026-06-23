@@ -534,13 +534,7 @@ static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf,
     }
   }
 
-  // Update DVDFileInfo state if inbuf points to one
-  // DVDFileInfo has DVDCommandBlock at offset 0
-  // state at +0x0C, transferredSize at +0x20
-  if (ipc_ptr >= 0x80000000 && ipc_ptr < 0x94000000) {
-    mmu->write32(ipc_ptr + 0x0C, 0);          // state = ready
-    mmu->write32(ipc_ptr + 0x20, bytes_read); // transferredSize
-  }
+  // di_read_internal no longer incorrectly updates state/transferredSize for DICommand.
 }
 
 extern "C" {
@@ -891,10 +885,9 @@ void IOS_IoctlAsync(CPUContext &ctx) {
   }
 
   // Do not fire callbacks for STM (eventhook/immediate) to prevent fake
-  // shutdown events
-  if (fd != 4 && fd != 5) {
-    if (valid_callback(callback))
-      ctx.queue_callback(callback, result, userdata);
+  // Fire completion callback so game doesn't hang waiting for ioctl to finish
+  if (valid_callback(callback)) {
+    ctx.queue_callback(callback, result, userdata);
   }
 
   ctx.gpr[3] = IPC_OK;
@@ -975,12 +968,9 @@ void IOS_IoctlvAsync(CPUContext &ctx) {
     }
   }
 
-  // Do not fire callbacks for STM (eventhook/immediate) to prevent fake
-  // shutdown events
-  if (fd != 4 && fd != 5) {
-    if (valid_callback(callback)) {
-      ctx.queue_callback(callback, IPC_OK, userdata);
-    }
+  // Fire completion callback so game doesn't hang waiting for ioctl to finish
+  if (valid_callback(callback)) {
+    ctx.queue_callback(callback, IPC_OK, userdata);
   }
   ctx.gpr[3] = IPC_OK;
   ctx.pc = ctx.lr;
@@ -1274,6 +1264,30 @@ bool process_pending_callbacks(CPUContext &ctx) {
   if (ctx.pc == 0x8024DB24) {
     uint32_t flag_addr = ctx.gpr[13] - 23072;
     ctx.mmu.write32(flag_addr, 0);
+  }
+
+  // Hack for HW IPC interrupt spinning
+  if (ctx.pc == 0x8021A8E8) {
+      uint32_t armctrl = ctx.mmu.read32(0xCD00000C);
+      uint32_t ipc_handler = ctx.mmu.read32(0x80003078); // 0x80003040 + 14*4
+      
+      static int print_count = 0;
+      if (print_count < 5) {
+          std::cout << "[HLE Hack] pc=0x8021A8E8 armctrl=0x" << std::hex << armctrl 
+                    << " handler=0x" << ipc_handler << std::dec << "\n";
+          print_count++;
+      }
+
+      if (ipc_handler != 0 && ipc_handler != 0xFFFFFFFF && !ctx.in_callback) {
+          static bool queued_ipc = false;
+          if (!queued_ipc) {
+              std::cout << "[HLE Hack] Waking up IPC by calling handler 0x" << std::hex << ipc_handler << std::dec << "\n";
+              ctx.queue_callback(ipc_handler, 14, 0);
+              queued_ipc = true;
+          } else {
+              queued_ipc = false; // Reset for next time
+          }
+      }
   }
 
   if (ctx.in_callback)

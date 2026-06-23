@@ -54,14 +54,14 @@ struct MMU {
   std::vector<uint8_t> mem2;
 
   MMU() {
-    mem1.resize(24 * 1024 * 1024 + 8, 0); // 24MB MEM1 + 8 bytes padding for unaligned access
+    mem1.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM1 + 8 bytes padding for unaligned access
     mem2.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM2 + 8 bytes padding for unaligned access
   }
 
   // Translates Virtual (EA) to Physical (PA) pointer based on RVL standard BAT mappings
   inline uint8_t *get_ptr(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF; 
-    if (paddr < 0x01800000) {
+    if (paddr < 0x04000000) {
         return &mem1[paddr];
     } else if (paddr >= 0x10000000 && paddr < 0x14000000) {
         return &mem2[paddr - 0x10000000];
@@ -118,6 +118,7 @@ struct MMU {
 
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x0000000C) return 0; // Fix allocator bug by faking 0 here
     if (paddr == 0x00000024) std::cout << "[MEM] read32(0x80000024) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
     if (paddr == 0x0000002C) std::cout << "[MEM] read32(0x8000002C) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
     if (paddr == 0x00000028) std::cout << "[MEM] read32(0x80000028) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
@@ -133,6 +134,7 @@ struct MMU {
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
     if (paddr == 0x00000024) std::cout << "[MEM] write32(0x80000024, 0x" << std::hex << value << ")" << std::endl;
     if (paddr == 0x00000028) std::cout << "[MEM] write32(0x80000028, 0x" << std::hex << value << ")" << std::endl;
 

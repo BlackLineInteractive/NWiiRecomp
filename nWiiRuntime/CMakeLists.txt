@@ -8,7 +8,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 add_library(nwiiruntime STATIC
-    src/main.cpp
     src/loader.cpp
     src/config.cpp
     src/input/input_manager.cpp
@@ -26,3 +25,8 @@ target_link_libraries(nwiiruntime PUBLIC raylib tomlplusplus::tomlplusplus)
 target_include_directories(nwiiruntime PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# add_executable(nwiiruntime_exe src/main.cpp)
+# target_link_libraries(nwiiruntime_exe PRIVATE nwiiruntime)
+
+# target_link_libraries(nwiiruntime_exe PRIVATE nwiirecomp_lib)

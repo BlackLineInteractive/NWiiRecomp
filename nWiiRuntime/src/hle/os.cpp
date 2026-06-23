@@ -208,7 +208,7 @@ uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 uint32_t HW_Reg_Read32(uint32_t addr) {
   std::cout << "[HW_REG] Read32: 0x" << std::hex << addr << std::dec << "\n";
   // --- IOS IPC registers (Wii, 0xCD000000–0xCD00FFFF) ---
-  if ((addr & 0xFF000000) == 0xCD000000) {
+  if ((addr & 0xFF000000) == 0xCD000000 || (addr & 0xFF000000) == 0x0D000000) {
     switch (addr & 0x00FFFFFF) {
     case 0x000000:
       return 0; // HW_IPC_PPCMSG
@@ -376,13 +376,24 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
   // --- IOS IPC registers (Wii, 0xCD000000) ---
   // When the game writes to HW_IPC_PPCMSG, it means it sent an IPC request to
   // IOS. We immediately synthesize an instant reply to release the spin-lock.
-  if ((addr & 0xFF000000) == 0xCD000000) {
+  if ((addr & 0xFF000000) == 0xCD000000 || (addr & 0xFF000000) == 0x0D000000) {
     switch (addr & 0x00FFFFFF) {
     case 0x000000: {
       // HW_IPC_PPCMSG: game sends IPC request
       // val — physical address of IPCRequest buffer (without 0x80 prefix)
       std::cout << "[HW IPC] Game sent IPC request to IOS. Phys addr=0x"
                 << std::hex << val << std::dec << "\n";
+      
+      if (nwii::runtime::g_mmu) {
+          std::cout << "[HW IPC] Interrupt Handler Table at 0x80003040: \n";
+          for (int i=0; i<32; i++) {
+              uint32_t handler = nwii::runtime::g_mmu->read32(0x80003040 + i*4);
+              if (handler != 0) {
+                  std::cout << "  Int " << std::dec << i << ": 0x" << std::hex << handler << "\n";
+              }
+          }
+      }
+
       ipc_fake_ack(val);
       break;
     }

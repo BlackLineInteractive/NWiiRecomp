@@ -277,6 +277,20 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
                   << "(ctx); break;\n";
             }
           }
+          if (ppc_inst.opcode() == 16 || ppc_inst.opcode() == 18) {
+            uint32_t target = ppc_inst.branch_target(inst.address);
+            bool is_local =
+                std::find_if(func.instructions.begin(), func.instructions.end(),
+                             [target](const auto &i) { return i.address == target; }) !=
+                func.instructions.end();
+            if (target <= inst.address && is_local) {
+              if (emitted_cases.insert(inst.address).second) {
+                out << "            case 0x" << std::hex << std::uppercase
+                    << inst.address << std::dec << ": " << func_name
+                    << "(ctx); break;\n";
+              }
+            }
+          }
         }
         for (uint32_t jump_target : func.jump_table_targets) {
           if (emitted_cases.insert(jump_target).second) {
@@ -502,6 +516,20 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
                   << "(ctx); break;\n";
             }
           }
+          if (ppc_inst.opcode() == 16 || ppc_inst.opcode() == 18) {
+            uint32_t target = ppc_inst.branch_target(inst.address);
+            bool is_local =
+                std::find_if(func.instructions.begin(), func.instructions.end(),
+                             [target](const auto &i) { return i.address == target; }) !=
+                func.instructions.end();
+            if (target <= inst.address && is_local) {
+              if (emitted_cases.insert(inst.address).second) {
+                out << "            case 0x" << std::hex << std::uppercase
+                    << inst.address << std::dec << ": " << func_name
+                    << "(ctx); break;\n";
+              }
+            }
+          }
         }
         for (uint32_t jump_target : func.jump_table_targets) {
           if (emitted_cases.insert(jump_target).second) {
@@ -582,7 +610,7 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
 
   out << "add_subdirectory(nWiiRuntime)\n\n";
 
-  out << "add_executable(" << config_.project_name << "";
+  out << "add_executable(" << config_.project_name << " nWiiRuntime/src/main.cpp";
   for (const auto &file : generated_files) {
     out << " " << file;
   }
@@ -872,10 +900,11 @@ void Recompiler::emit_instruction(std::ostream &out,
     uint32_t rS = ppc_inst.rs();
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
-    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm
-        << ";\n";
-    out << "    ctx.mmu.write32(ctx.gpr[" << rA << "], ctx.gpr[" << rS
-        << "]); // stwu r" << rS << ", " << simm << "(r" << rA << ")\n";
+    out << "    {\n";
+    out << "        uint32_t ea = ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "        ctx.mmu.write32(ea, ctx.gpr[" << rS << "]);\n";
+    out << "        ctx.gpr[" << rA << "] = ea;\n";
+    out << "    } // stwu r" << rS << ", " << simm << "(r" << rA << ")\n";
   } else if (ppc_inst.opcode() == 38) {
     // STB: write8(rA|0 + SIMM, rS)
     uint32_t rS = ppc_inst.rs();
@@ -894,10 +923,11 @@ void Recompiler::emit_instruction(std::ostream &out,
     uint32_t rS = ppc_inst.rs();
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
-    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm
-        << ";\n";
-    out << "    ctx.mmu.write8(ctx.gpr[" << rA << "], (uint8_t)ctx.gpr[" << rS
-        << "]); // stbu r" << rS << ", " << simm << "(r" << rA << ")\n";
+    out << "    {\n";
+    out << "        uint32_t ea = ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "        ctx.mmu.write8(ea, (uint8_t)ctx.gpr[" << rS << "]);\n";
+    out << "        ctx.gpr[" << rA << "] = ea;\n";
+    out << "    } // stbu r" << rS << ", " << simm << "(r" << rA << ")\n";
   } else if (ppc_inst.opcode() == 16) {
     // BC (Branch Conditional)
     uint32_t bo = ppc_inst.bo();
@@ -1786,36 +1816,36 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else if (xo == 146) { // mtmsr
       out << "    // mtmsr stub (ignore)\n";
     } else if (xo == 124) { // nor
-      out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] | ctx.gpr["
+      out << "    ctx.gpr[" << rA << "] = ~(ctx.gpr[" << rS << "] | ctx.gpr["
           << rB << "]); // nor\n";
       if (ppc_inst.value() & 1) {
-        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD
-            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD
-            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 476) { // nand
-      out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] & ctx.gpr["
+      out << "    ctx.gpr[" << rA << "] = ~(ctx.gpr[" << rS << "] & ctx.gpr["
           << rB << "]); // nand\n";
       if (ppc_inst.value() & 1) {
-        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD
-            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD
-            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 284) { // eqv
-      out << "    ctx.gpr[" << rD << "] = ~(ctx.gpr[" << rA << "] ^ ctx.gpr["
+      out << "    ctx.gpr[" << rA << "] = ~(ctx.gpr[" << rS << "] ^ ctx.gpr["
           << rB << "]); // eqv\n";
       if (ppc_inst.value() & 1) {
-        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD
-            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD
-            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 412) { // orc
-      out << "    ctx.gpr[" << rD << "] = ctx.gpr[" << rA << "] | ~ctx.gpr["
+      out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] | ~ctx.gpr["
           << rB << "]; // orc\n";
       if (ppc_inst.value() & 1) {
-        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD
-            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD
-            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+        out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
       }
     } else if (xo == 20) { // lwarx
       out << "    ctx.gpr[" << rD << "] = ctx.mmu.read32(ctx.gpr[" << rA
@@ -1846,13 +1876,17 @@ void Recompiler::emit_instruction(std::ostream &out,
           << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ea); ";
       out << "ctx.gpr[" << rA << "] = ea; } // lhaux\n";
     } else if (xo == 247) { // stbux
-      out << "    ctx.mmu.write8(ctx.gpr[" << rA << "] + ctx.gpr[" << rB
-          << "], (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]); // stbux\n";
-      out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+      out << "    {\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
+      out << "        ctx.mmu.write8(ea, (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]);\n";
+      out << "        ctx.gpr[" << rA << "] = ea;\n";
+      out << "    } // stbux\n";
     } else if (xo == 439) { // sthux
-      out << "    ctx.mmu.write16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB
-          << "], (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sthux\n";
-      out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+      out << "    {\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
+      out << "        ctx.mmu.write16(ea, (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]);\n";
+      out << "        ctx.gpr[" << rA << "] = ea;\n";
+      out << "    } // sthux\n";
     } else if (xo == 792) { // sraw
       out << "    ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA
           << "] >> ctx.gpr[" << rB << "]); // sraw\n";
@@ -1951,9 +1985,11 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "ctx.gpr[" << rD << "] = ctx.mmu.read32(ea); ";
       out << "ctx.gpr[" << rA << "] = ea; } // lwzux\n";
     } else if (xo == 183) { // stwux
-      out << "    ctx.mmu.write32(ctx.gpr[" << rA << "] + ctx.gpr[" << rB
-          << "], ctx.gpr[" << ppc_inst.rs() << "]); // stwux\n";
-      out << "    ctx.gpr[" << rA << "] += ctx.gpr[" << rB << "];\n";
+      out << "    {\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
+      out << "        ctx.mmu.write32(ea, ctx.gpr[" << ppc_inst.rs() << "]);\n";
+      out << "        ctx.gpr[" << rA << "] = ea;\n";
+      out << "    } // stwux\n";
     } else if (xo == 918) { // sthbrx
       out << "    ctx.mmu.write16(ctx.gpr[" << rA << "] + ctx.gpr[" << rB
           << "], ((ctx.gpr[" << ppc_inst.rs() << "] & 0xFF) << 8) | ((ctx.gpr["
