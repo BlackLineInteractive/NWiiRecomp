@@ -51,7 +51,7 @@ NWiiRecomp/
 - Automatic discovery of function boundaries via branch analysis
 - Function pointer recovery from data sections (vtables, jump tables)
 - Hardcoded entry point hints for OS dispatch stubs that are computed at runtime via `lis`/`addi` patterns
-- Discovered **~34,800+** functions from a **"Silent Hill SM"** Wii
+- Discovered **~19,000+** functions from a **"Silent Hill SM"** Wii
 
 ### Recompiler (`nWiiRecomp`)
 
