@@ -10,6 +10,14 @@
   Inspired by <a href="https://github.com/Mr-Wiseguy/N64Recomp">N64Recomp</a> and <a href="https://github.com/Ran-J/PS2Recomp">PS2Recomp</a>.
 </p>
 
+
+<p align="center">
+  <a href="https://youtube.com/@blacklineinteractive">
+    <img src="https://img.shields.io/badge/YouTube-Blackline_Interactive-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Blackline Interactive YouTube"/>
+  </a>
+</p>
+
+
 ---
 
 ## What is this?
