@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii U games.
+  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii U games (pre-alpha!)
 </p>
 
 <p align="center">
