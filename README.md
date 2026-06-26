@@ -169,7 +169,7 @@ The recompiler outputs a self-contained `export/` directory containing `output.c
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.  
+License. See [LICENSE](LICENSE) for details.  
 © 2026 Volodymyr Vovchok.
 
 > **Disclaimer:** This project contains no copyrighted Nintendo code, SDKs, or game data. You must provide your own legally obtained game executables.
