@@ -760,7 +760,7 @@ void Recompiler::emit_function(std::ostream &out,
       }
     }
     out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO "
-           "0x\" << std::hex << ctx.pc << \"\\n\"; std::exit(1);\n";
+           "0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x" << std::hex << std::uppercase << func.start_address << std::dec << "\\n\"; std::exit(1);\n";
     out << "        }\n";
     out << "    }\n";
   }
