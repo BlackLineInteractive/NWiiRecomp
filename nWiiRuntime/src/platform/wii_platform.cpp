@@ -2,11 +2,16 @@
 #include "runtime/ios_kernel.h"
 #include <iostream>
 
+namespace nwii::runtime {
+    extern std::string read_guest_string(CPUContext &ctx, uint32_t addr, int max_len = 256);
+    extern bool valid_callback(uint32_t cb);
+}
+
 namespace nwii::runtime::platform {
 
 // Helper functions that might be needed
-extern std::string read_guest_string(CPUContext &ctx, uint32_t addr);
-extern bool valid_callback(uint32_t cb);
+
+
 static const int32_t IPC_OK = 0;
 
 void WiiPlatform::ios_open(CPUContext& ctx) {
@@ -15,7 +20,7 @@ void WiiPlatform::ios_open(CPUContext& ctx) {
             << " r4=0x" << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << " r6=0x"
             << ctx.gpr[6] << " pc=0x" << ctx.pc << " lr=0x" << ctx.lr
             << std::dec << std::endl;
-  std::string path = read_guest_string(ctx, path_ptr);
+  std::string path = nwii::runtime::read_guest_string(ctx, path_ptr);
 
   if (path.empty()) {
     if (path_ptr == 0x41 || path_ptr == 2) {
@@ -50,14 +55,14 @@ void WiiPlatform::ios_open(CPUContext& ctx) {
 }
 
 void WiiPlatform::ios_open_async(CPUContext& ctx) {
-  std::string path = read_guest_string(ctx, ctx.gpr[3]);
+  std::string path = nwii::runtime::read_guest_string(ctx, ctx.gpr[3]);
   uint32_t callback = ctx.gpr[5];
   uint32_t userdata = ctx.gpr[6];
 
   if (path.empty()) {
     std::cout << "[HLE IOS] IOS_OpenAsync: empty path, faking failure"
               << std::endl;
-    if (valid_callback(callback)) {
+    if (nwii::runtime::valid_callback(callback)) {
       ctx.queue_callback(callback, -106, userdata);
     }
     ctx.gpr[3] = -106;
@@ -70,7 +75,7 @@ void WiiPlatform::ios_open_async(CPUContext& ctx) {
   std::cout << "[HLE IOS] IOS_OpenAsync: path='" << path << "' -> fd=" << fd 
             << " cb=0x" << std::hex << callback << std::dec << std::endl;
 
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, fd, userdata);
   }
 
@@ -98,7 +103,7 @@ void WiiPlatform::ios_close_async(CPUContext& ctx) {
   std::cout << "[HLE IOS] IOS_CloseAsync: fd=" << fd << " cb=0x" << std::hex
             << callback << std::dec << std::endl;
 
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
   ctx.gpr[3] = IPC_OK;
@@ -132,7 +137,7 @@ void WiiPlatform::ios_read_async(CPUContext& ctx) {
             << buf << " len=" << std::dec << len << " -> result=" << result
             << std::endl;
 
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
 
@@ -159,7 +164,7 @@ void WiiPlatform::ios_write_async(CPUContext& ctx) {
 
   int32_t result = IOSKernel::get().write(ctx, fd, buf, len);
 
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
 
@@ -212,7 +217,7 @@ void WiiPlatform::ios_ioctl_async(CPUContext& ctx) {
 
   // Do not fire callbacks for STM (eventhook/immediate) to prevent fake
   // Fire completion callback so game doesn't hang waiting for ioctl to finish
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
 
@@ -303,7 +308,7 @@ void WiiPlatform::ios_ioctlv_async(CPUContext& ctx) {
   }
 
   // Fire completion callback so game doesn't hang waiting for ioctl to finish
-  if (valid_callback(callback)) {
+  if (nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, IPC_OK, userdata);
   }
   ctx.gpr[3] = IPC_OK;

@@ -5,14 +5,19 @@
 #include <cstring>
 #include <algorithm>
 
+namespace nwii::runtime {
+    extern CPUContext* g_ctx_ptr;
+    extern MMU* g_mmu;
+}
+
 namespace nwii::runtime::hw {
 
 static uint32_t ipc_arm_msg = 0;
 static uint32_t ipc_arm_ctrl = 0;
 static uint32_t ipc_ppc_ctrl = 0;
 uint32_t ipc_ppc_msg = 0;
-extern CPUContext* g_ctx_ptr;
-extern MMU* g_mmu;
+
+
 extern "C" void handle_ios_ipc(nwii::runtime::CPUContext& ctx, uint32_t request_addr);
 
 void ipc_dispatch_request(CPUContext &ctx, uint32_t req_addr) {
@@ -63,15 +68,15 @@ void register_ipc(MMIODispatcher& dispatcher) {{
                     }
                     if (g_mmu && g_ctx_ptr) {
                         uint32_t req_vaddr = ipc_ppc_msg | 0x80000000;
-                        g_mmu->write32(req_vaddr + 4, 0);
+                        nwii::runtime::g_mmu->write32(req_vaddr + 4, 0);
                         ipc_arm_msg = ipc_ppc_msg;
-                        uint32_t ipc_handler = g_mmu->read32(0x80003040 + 27*4);
+                        uint32_t ipc_handler = nwii::runtime::g_mmu->read32(0x80003040 + 27*4);
                         if (ipc_handler != 0 && ipc_handler != 0xFFFFFFFF) {
                             ipc_ppc_ctrl &= ~0x01;
                             ipc_ppc_ctrl |= 0x06;
                             ipc_arm_ctrl = 0x00000003;
                             trigger_pi_interrupt(0x00000010);
-                            g_ctx_ptr->queue_callback(ipc_handler, 27, 0);
+                            nwii::runtime::g_ctx_ptr->queue_callback(ipc_handler, 27, 0);
                         } else {
                             ipc_arm_ctrl = 0;
                             ipc_ppc_ctrl &= ~0x01;

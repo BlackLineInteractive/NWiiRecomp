@@ -202,6 +202,11 @@ struct CPUContext {
     uint32_t ctr;
     uint32_t xer;
     uint32_t pc;
+    uint32_t srr0;
+    uint32_t srr1;
+    uint32_t msr;
+    uint32_t fpscr;
+    std::array<uint32_t, 8> gqr;
   };
   std::stack<BackupState> backup_stack;
   bool in_callback = false;

@@ -5,6 +5,10 @@
 #include <cstring>
 #include <algorithm>
 
+namespace nwii::runtime {
+    extern uint64_t get_os_time();
+}
+
 namespace nwii::runtime::hw {
 
 static uint32_t ai_cr = 0;

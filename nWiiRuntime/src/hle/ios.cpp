@@ -12,6 +12,13 @@
 #include <vector>
 
 using namespace nwii::runtime;
+
+namespace nwii::runtime {
+    std::string read_guest_string(CPUContext &ctx, uint32_t addr, int max_len = 256);
+    bool valid_callback(uint32_t cb);
+}
+
+
 #include "runtime/ios_device.h"
 #include "runtime/ios_kernel.h"
 #include "runtime/devices.h"
@@ -116,8 +123,8 @@ static uint32_t phys_to_virt(uint32_t addr) {
 }
 
 // Helper to read string from guest memory
-static std::string read_guest_string(CPUContext &ctx, uint32_t addr,
-                                     int max_len = 256) {
+std::string nwii::runtime::read_guest_string(CPUContext &ctx, uint32_t addr,
+                                     int max_len) {
   std::string path;
   if (addr == 0) {
     std::cout << "[HLE IOS] read_guest_string: null address! pc=0x" << std::hex
@@ -207,7 +214,7 @@ static uint32_t ipc_pool_alloc(CPUContext &ctx) {
 
 
 
-static bool valid_callback(uint32_t cb) {
+bool nwii::runtime::valid_callback(uint32_t cb) {
   return cb != 0 && cb != 0xFFFFFFFFu && cb >= 0x80000000u && cb < 0x82000000u;
 }
 

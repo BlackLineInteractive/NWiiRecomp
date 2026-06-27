@@ -5,6 +5,10 @@
 #include <cstring>
 #include <algorithm>
 
+namespace nwii::runtime {
+    extern MMU* g_mmu;
+}
+
 namespace nwii::runtime::hw {
 
 static uint16_t dsp_mbox_cpu_hi = 0;
@@ -15,7 +19,7 @@ static uint32_t ar_mmaddr = 0;
 static uint32_t ar_araddr = 0;
 static uint32_t ar_cnt = 0;
 static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
-extern nwii::runtime::MMU* g_mmu;
+
 
 void register_dsp(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCC005000, 0xCC0050FF,
@@ -75,10 +79,10 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 uint32_t mm = ar_mmaddr & 0x01FFFFFF;
                 uint32_t ar_a = ar_araddr & 0x00FFFFFF;
                 if (g_mmu && count > 0) {
-                    uint8_t *mem1 = g_mmu->mem1.data();
-                    uint8_t *mem2 = g_mmu->mem2.data();
-                    uint32_t mem1_size = g_mmu->mem1.size();
-                    uint32_t mem2_size = g_mmu->mem2.size();
+                    uint8_t *mem1 = nwii::runtime::g_mmu->mem1.data();
+                    uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
+                    uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
+                    uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
                     if (mm < mem1_size && ar_a < mem2_size) {
                         uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
                         if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, copy_count);

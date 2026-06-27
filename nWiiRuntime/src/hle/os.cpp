@@ -9,7 +9,13 @@
 
 using namespace nwii::runtime;
 
-uint64_t get_os_time() {
+namespace nwii::runtime {
+    uint64_t get_os_time();
+}
+
+
+
+uint64_t nwii::runtime::get_os_time() {
   auto now = std::chrono::steady_clock::now();
   return std::chrono::duration_cast<std::chrono::microseconds>(
              now.time_since_epoch())
