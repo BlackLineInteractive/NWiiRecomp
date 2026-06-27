@@ -227,9 +227,14 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.pc != 0) {\n" \
+    out << "    while (ctx.is_running) {\n" \
            "      pc_history[pc_history_idx] = ctx.pc;\n" \
-           "      pc_history_idx = (pc_history_idx + 1) % 10;\n";
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
+           "      if (ctx.pc == 0) {\n" \
+           "          extern void hle_thread_exit(nwii::runtime::CPUContext&);\n" \
+           "          hle_thread_exit(ctx);\n" \
+           "          if (ctx.pc == 0) break;\n" \
+           "      }\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";

@@ -135,7 +135,6 @@ The recompiler outputs a self-contained `export/` directory containing `output.c
 
 ---
 
-- [PS2Recomp](https://github.com/ran-j/PS2Recomp) — Structural reference for the project layout
 - [N64Recomp](https://github.com/N64Recomp/N64Recomp) — Original inspiration for the static recompilation approach
 - [Dolphin Emulator](https://github.com/dolphin-emu/dolphin) — Huge thanks for the endless hardware documentation, GX/DSP accuracy, and HLE inspiration!
 - [Cemu](https://github.com/cemu-project/Cemu.git) — Reference for Cafe OS RPL imports, hardware emulation, and GX2 to Vulkan translation.

@@ -6,6 +6,8 @@
 #include "runtime/config.h"
 #include "loader/loader.h"
 #include "input/input_manager.h"
+#include "input/sources/mouse_keyboard_source.h"
+#include "input/sources/gamepad_source.h"
 
 // Forward declarations of GX FIFO processing
 extern void ProcessGXFifo();
@@ -43,6 +45,14 @@ int main(int argc, char** argv) {
     if (!nwii::runtime::init()) return 1;
     nwii::runtime::Config::get().game_dir = argv[1];
     
+    // Register input sources
+    nwii::runtime::input::InputManager::get().add_source(
+        std::make_unique<nwii::runtime::input::MouseKeyboardSource>()
+    );
+    nwii::runtime::input::InputManager::get().add_source(
+        std::make_unique<nwii::runtime::input::GamepadSource>()
+    );
+
     // Initialize graphics context FIRST in the main thread
     InitWindow(nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height, "NWiiRecomp");
     SetTargetFPS(60);
