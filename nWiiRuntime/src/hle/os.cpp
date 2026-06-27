@@ -180,26 +180,23 @@ void hle_set_ipc_arm_msg(uint32_t req_addr) {
 } // namespace runtime
 } // namespace nwii
 
-extern "C" void handle_ios_ipc(uint32_t request_addr);
-// g_mmu declaration moved outside extern "C"
-static void ipc_fake_ack(uint32_t request_addr) {
-  // Translate physical address to virtual for MMU access:
-  // Physical MEM1: 0x00000000-0x017FFFFF -> Virtual: 0x80000000+
-  // Physical MEM2: 0x10000000-0x13FFFFFF -> Virtual: 0x90000000+
+extern "C" void handle_ios_ipc(nwii::runtime::CPUContext& ctx, uint32_t request_addr);
+
+// IPC request processing runs synchronously (ARM side is HLE'd).
+// Async dispatch with a proper response queue is part of the IOS device
+// interface refactor (Крок 2).
+static void ipc_dispatch_request(nwii::runtime::CPUContext& ctx, uint32_t request_addr) {
   uint32_t virt_addr = request_addr;
-  if (virt_addr < 0x01800000) {
+  if (virt_addr < 0x01800000)
     virt_addr |= 0x80000000;
-  } else if (virt_addr >= 0x10000000 && virt_addr < 0x14000000) {
+  else if (virt_addr >= 0x10000000 && virt_addr < 0x14000000)
     virt_addr = (virt_addr & 0x03FFFFFF) | 0x90000000;
-  }
 
-  // Delegate to the real IPC handler in ios.cpp for full command dispatch
-  handle_ios_ipc(virt_addr);
+  handle_ios_ipc(ctx, virt_addr);
 
-  // Set HW IPC registers to signal reply ready
-  ipc_arm_msg = request_addr & 0x1FFFFFFF;
-  ipc_arm_ctrl = 0x00000003; // bit0 = Y1 (reply ready), bit1 = Y2 (cmd ack)
-  pi_intsr |= 0x00004000;   // INT_CAUSE_WII_IPC
+  ipc_arm_msg  = request_addr & 0x1FFFFFFF;
+  ipc_arm_ctrl = 0x00000003; // Y1 | Y2
+  pi_intsr    |= 0x00004000; // INT_CAUSE_WII_IPC
 }
 
 namespace nwii {
@@ -399,10 +396,13 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
       if (val & 0x01) {
         ipc_ppc_ctrl |= 0x01; // Set X1
         
-        std::cout << "[HW IPC] Processing IPC request because X1 was set.\n";
-        ipc_fake_ack(::ipc_ppc_msg);
-        
         extern nwii::runtime::CPUContext *g_ctx_ptr;
+        if (g_ctx_ptr) {
+            ipc_dispatch_request(*g_ctx_ptr, ::ipc_ppc_msg);
+        } else {
+            std::cout << "[HW IPC] Error: g_ctx_ptr is null!\n";
+        }
+        
         if (nwii::runtime::g_mmu && g_ctx_ptr) {
             uint32_t req_vaddr = ::ipc_ppc_msg | 0x80000000;
             nwii::runtime::g_mmu->write32(req_vaddr + 4, 0); // result = 0

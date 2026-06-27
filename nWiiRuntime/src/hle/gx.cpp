@@ -49,7 +49,21 @@ void ParseBP(uint8_t reg, uint32_t val) {
         g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
         g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
     }
-    // TODO: Add texture register parsing (0x80-0x9F) and Z-Mode (0x40)
+    // Texture map regs: 0x80-0x8F = SETIMAGE0, 0x90-0x9F = SETIMAGE3
+    else if (reg >= 0x80 && reg <= 0x8F) {
+        int idx = reg - 0x80;
+        if (idx < (int)g_state.texStages.size()) {
+            g_state.texStages[idx].width  = ((val >> 10) & 0x3FF) + 1;
+            g_state.texStages[idx].height = ((val >>  0) & 0x3FF) + 1;
+            g_state.texStages[idx].format = (val >> 20) & 0xF;
+        }
+    }
+    // Z-Mode: enable, func, update
+    else if (reg == 0x40) {
+        g_state.zMode.enable  = (val >> 0) & 1;
+        g_state.zMode.func    = (val >> 1) & 7;
+        g_state.zMode.update  = (val >> 4) & 1;
+    }
 }
 
 // Decode CP registers (Array Pointers, VAT)

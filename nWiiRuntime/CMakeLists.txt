@@ -18,6 +18,14 @@ add_library(nwiiruntime STATIC
     src/hle/dvd.cpp
     src/hle/ax.cpp
     src/hle/ios.cpp
+    src/hle/ios_kernel.cpp
+    src/hle/devices/di_device.cpp
+    src/hle/devices/fs_device.cpp
+    src/hle/devices/stm_device.cpp
+    src/hle/devices/usb_device.cpp
+    src/hle/devices/es_device.cpp
+    src/hle/cafe/cafe_os.cpp
+    src/hle/cafe/latte_gpu.cpp
 )
 
 target_link_libraries(nwiiruntime PUBLIC raylib tomlplusplus::tomlplusplus)

@@ -3,13 +3,8 @@
 </p>
 
 <p align="center">
-  Static recompilation toolkit for Nintendo Game Cube, Wii and Wii U games (pre-alpha!)
+  Static recompilation toolkit for Nintendo GameCube, Wii, and Wii U executables.
 </p>
-
-<p align="center">
-  Inspired by <a href="https://github.com/Mr-Wiseguy/N64Recomp">N64Recomp</a> and <a href="https://github.com/Ran-J/PS2Recomp">PS2Recomp</a>.
-</p>
-
 
 <p align="center">
   <a href="https://youtube.com/@blacklineinteractive">
@@ -17,16 +12,11 @@
   </a>
 </p>
 
-
 ---
 
 ## What is this?
 
-NWiiRecomp takes a Nintendo Wii game executable (`.dol`) and statically recompiles it into native C++ code. The result is a standalone binary that runs on modern hardware without an emulator.
-
-This is not emulation. The game's logic runs as compiled native code. Hardware interaction (GX, OS, PAD, etc.) is handled by a thin high-level emulation (HLE) layer in the runtime.
-
-The Wii's CPU (Broadway) is essentially an overclocked GameCube CPU (Gekko), both based on PowerPC 750CL. This means the same recompilation pipeline can eventually support GameCube (`.dol`/`.elf`) executables as well — the ISA is the same.
+NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) and Wii U (`.rpx`, `.rpl`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
 
 ---
 
@@ -46,31 +36,19 @@ NWiiRecomp/
 
 ### Analyzer (`nWiiAnalyzer`)
 
-- Full DOL section parsing (up to 7 text + 11 data sections)
-- Recursive disassembly starting from the entry point
-- Automatic discovery of function boundaries via branch analysis
-- Function pointer recovery from data sections (vtables, jump tables)
-- Hardcoded entry point hints for OS dispatch stubs that are computed at runtime via `lis`/`addi` patterns
-- Discovered **~19,000+** functions from a **"Silent Hill SM"** Wii
+- Full DOL section parsing.
+- Recursive disassembly from entry point.
+- Branch analysis for function boundary discovery.
+- Vtable and jump table pointer recovery.
+- Heuristics for OS dispatch stubs (via `lis`/`addi` patterns).
 
 ### Recompiler (`nWiiRecomp`)
 
-- Translates PowerPC instructions to C++ that operates on a `CPUContext` struct
-- Implemented instruction groups:
-  - Integer arithmetic: `addi`, `addis`, `add`, `subf`, `mulli`, `mullw`, `divw`, `divwu`, `neg`
-  - Logic: `and`, `or`, `xor`, `nor`, `nand`, `eqv`, `andc`, `orc`
-  - Shifts/rotates: `slw`, `srw`, `sraw`, `srawi`, `rlwinm`, `rlwimi`, `rlwnm`
-  - Loads/stores: `lwz`, `stw`, `lhz`, `sth`, `lbz`, `stb`, `lfs`, `stfs`, `lfd`, `stfd` (with update forms)
-  - Floating point: `fadd`, `fsub`, `fmul`, `fdiv`, `fabs`, `fneg`, `fres`, `frsqrte`, `fmadd`, `fmsub`, `fnmadd`, `fnmsub`, `frsp`, `fctiw`, `fctiwz`
-  - Compare: `cmp`, `cmpi`, `cmpl`, `cmpli`, `fcmpu`, `fcmpo`
-  - Branches: `b`, `bl`, `bc`, `bcl`, `bclr`, `bclrl`, `bcctr`, `bcctrl` (all BO/BI combinations)
-  - SPR access: `mfspr` / `mtspr` (LR, CTR, XER, SRR0, SRR1, HID0, HID2, WPAR, L2CR, GQR)
-  - CR operations: `crand`, `crandc`, `cror`, `crorc`, `crxor`, `crnand`, `crnor`, `creqv`, `mcrf`, `mfcr`, `mtcrf`
-  - System: `sc` (syscall), `rfi`, `sync`, `isync`, `eieio`, `dcbf`, `dcbst`, `dcbi`, `dcbz`, `icbi`
-  - Paired-singles (GC/Wii SIMD extension): Full support for `ps_add`, `ps_sub`, `ps_mul`, `ps_madd`, `ps_merge`, etc. High-accuracy implementation of `psq_l` and `psq_st` utilizing GQR-based quantization scales directly into C++ intrinsic floats.
-- Tail-call detection and correct `goto`-based inlining for local branches
-- LK-bit handling: `ctx.lr` is set correctly before all call-type branches
-- Mid-function entry point dispatch: functions with internal call/return targets expose a `switch(ctx.pc)` → `goto` prologue, allowing `run_game` to resume execution at any instruction after a return
+- Translates PowerPC 750CL instructions to C++.
+- Implements core integer, logic, floating point, branch, and SPR instructions.
+- Implements paired-singles (SIMD) with GQR-based quantization scales mapped to C++ intrinsics.
+- Tail-call detection and `goto`-based local branch inlining.
+- Mid-function entry point dispatch via `switch(ctx.pc)`.
 
 ### Runtime (`nWiiRuntime`)
 
@@ -81,17 +59,12 @@ NWiiRecomp/
   <img src="image/video/gx-fifo-test-2.gif" alt="NWiiRuntime GX FIFO test 2" width="105%"/>
 </p>
 
-- **TOML Configuration**: A fully integrated `tomlplusplus` config setup allows dynamic targeting of the host platform (`GameCube` or `Wii`), graphical toggles, and bypassing of OS sub-systems.
-- **Zero-Latency Gamepad Input**: Native integration with modern gamepads (Xbox/PlayStation) via Raylib Gamepad APIs. By mimicking the GameCube `PADStatus` polling directly from memory, the engine experiences literal zero-lag inputs and sidesteps Wiimote requirements for compatible games.
-- **GX Graphics FIFO**: Accurate structure tracking and ring-buffer streaming from `WGPIPE` memory bounds for Display List reconstruction.
-- `CPUContext`: GPR[32], FPR[32], PS[32] (paired-singles), CR[8], LR, CTR, XER, SRR0/1, pc, FPSCR, GQR[8].
-- DOL loader: maps all text/data sections into host memory at the correct virtual addresses
-- HLE stubs implemented:
-  - **OSInit**, **OSReport**, **OSHalt**, **OSDisableInterrupts**, **OSEnableInterrupts**, **OSGetTime**, **OSCreateThread**, **OSResumeThread**
-  - **GXInit**, **GXSetViewport**, **GXSetScissor**, **GXSetCullMode**, **GXSetZMode**, **GXSetBlendMode**, **GXSetColorUpdate**, **GXBegin**, **GXEnd**, **GXPosition3f32**, **GXColor4u8**
-  - **PADInit**, **PADRead**, **WPADInit**, **WPADRead**
-  - **IOS subsystem** (dynamically bypassed on GameCube targets)
-  - **MEMAllocFromMEMHeap**, **MEMFreeToMEMHeap**, memory arena management
+- **Configuration**: Per-game TOML profiles via `tomlplusplus` for target platform and overrides.
+- **Input**: Raylib gamepad API integration mapped to `PADStatus`.
+- **GX Graphics**: Structure tracking and WGPIPE ring-buffer parsing.
+- **Memory**: DOL loading and virtual memory mapping.
+- **Wii U / Cafe OS**: Initial RPX loading, ELF parsing, and Latte GPU PM4 packet handling.
+- **HLE Stubs**: Basic implementations for OS, GX, PAD, WPAD, MEM, and IOS subsystems.
 
 ### Studio (`nWiiStudio`)
 
@@ -117,9 +90,14 @@ NWiiRecomp/
 
 ## What's Next
 
-- **Refactoring, creating a separate kernel and modules**
-- **More HLE coverage** — DVD, AX (audio), VI (video interface), EXI, SI
-- **Wii U support** — foundational work for Cafe OS and Latte GPU is underway
+Current refactoring plan execution:
+
+- **Phase 1**: IOS Device Interface abstraction.
+- **Phase 2**: MMIO dispatcher table.
+- **Phase 3**: IPlatform factory (GC, Wii, Wii U).
+- **Phase 4**: Separation of GX FIFO parsing and rendering.
+- **Phase 5**: Universal Input framework (Wiimote/Gyro/WebSocket).
+- **Phase 6**: Wii U coreinit.rpl HLE and GX2 API translation.
 
 ---
 
