@@ -12,6 +12,7 @@ extern void ProcessGXFifo();
 
 namespace nwii::runtime {
 MMU* g_mmu = nullptr;
+CPUContext* g_ctx_ptr = nullptr;
 bool init() {
     Config::get().load("config.toml");
     return true;
@@ -23,6 +24,7 @@ extern "C" void run_game(nwii::runtime::CPUContext& ctx);
 
 // CPU Execution Thread
 void cpu_thread_func(nwii::runtime::CPUContext* ctx) {
+    nwii::runtime::g_ctx_ptr = ctx;
     std::cout << "[Thread] CPU Core started." << std::endl;
     run_game(*ctx);
     std::cout << "[Thread] CPU Core exited. Final PC: 0x" << std::hex << ctx->pc << ", LR: 0x" << ctx->lr << std::dec << std::endl;
@@ -81,7 +83,7 @@ int main(int argc, char** argv) {
     }
     arena_lo = (arena_lo + 31) & ~31;
     
-    uint32_t console_type = 0x21; // Wii Retail
+    uint32_t console_type = 0x10000010; // Wii Retail 16
     uint32_t mem1_size = 64 * 1024 * 1024; // Wii has 64MB MEM1
     uint32_t mem2_size = 64 * 1024 * 1024;
     
@@ -105,6 +107,9 @@ int main(int argc, char** argv) {
     ctx->mmu.write32(0x80003128, 0x93e00000);
     ctx->mmu.write32(0x80003130, 0x93e00000);
     ctx->mmu.write32(0x80003134, 0x94000000);
+    
+    // 0x3158: Hardware Revision (Wii Hollywood)
+    ctx->mmu.write32(0x80003158, 0x11110000);
 
     ctx->mmu.write32(0x80000030, arena_lo); 
     ctx->mmu.write32(0x80000034, 0x81700000); // Set OS_MEM1_ARENA_HI

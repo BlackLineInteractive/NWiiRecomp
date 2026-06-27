@@ -229,12 +229,18 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
-    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; "
-           "ctx.ps1 = ctx.backup_ps1;\n";
-    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; "
-           "ctx.ctr = ctx.backup_ctr;\n";
-    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; "
-           "ctx.in_callback = false;\n";
+    out << "            if (!ctx.backup_stack.empty()) {\n";
+    out << "                auto& bk = ctx.backup_stack.top();\n";
+    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
+    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n";
+    out << "                ctx.backup_stack.pop();\n";
+    out << "            }\n";
+    out << "            ctx.callback_depth--;\n";
+    out << "            if (ctx.callback_depth <= 0) {\n";
+    out << "                ctx.in_callback = false;\n";
+    out << "                ctx.callback_depth = 0;\n";
+    out << "            }\n";
     out << "            continue;\n";
     out << "        }\n";
     out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc "
@@ -468,12 +474,18 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
-    out << "            ctx.gpr = ctx.backup_gpr; ctx.fpr = ctx.backup_fpr; "
-           "ctx.ps1 = ctx.backup_ps1;\n";
-    out << "            ctx.cr = ctx.backup_cr; ctx.lr = ctx.backup_lr; "
-           "ctx.ctr = ctx.backup_ctr;\n";
-    out << "            ctx.xer = ctx.backup_xer; ctx.pc = ctx.backup_pc; "
-           "ctx.in_callback = false;\n";
+    out << "            if (!ctx.backup_stack.empty()) {\n";
+    out << "                auto& bk = ctx.backup_stack.top();\n";
+    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
+    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n";
+    out << "                ctx.backup_stack.pop();\n";
+    out << "            }\n";
+    out << "            ctx.callback_depth--;\n";
+    out << "            if (ctx.callback_depth <= 0) {\n";
+    out << "                ctx.in_callback = false;\n";
+    out << "                ctx.callback_depth = 0;\n";
+    out << "            }\n";
     out << "            continue;\n";
     out << "        }\n";
     out << "        if ((ctx.pc & 0xF0000000) == 0xC0000000) ctx.pc = (ctx.pc "

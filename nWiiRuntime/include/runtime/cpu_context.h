@@ -9,6 +9,7 @@
 #include <mutex>
 #include <atomic>
 #include <queue>
+#include <stack>
 
 namespace nwii {
 namespace runtime {
@@ -76,8 +77,7 @@ struct MMU {
 
   uint8_t read8(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x00000024) std::cout << "[MEM] read8(0x80000024)" << std::endl;
-    if (paddr == 0x00000028) std::cout << "[MEM] read8(0x80000028)" << std::endl;
+
     if (is_hw_reg(paddr)) {
         // HW registers are typically 32-bit/16-bit, 8-bit reads are rare but happen
         uint32_t val = HW_Reg_Read32(paddr & ~3);
@@ -99,8 +99,7 @@ struct MMU {
 
   uint16_t read16(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x00000024) std::cout << "[MEM] read16(0x80000024)" << std::endl;
-    if (paddr == 0x00000028) std::cout << "[MEM] read16(0x80000028)" << std::endl;
+
     if (is_hw_reg(paddr)) return HW_Reg_Read16(paddr);
     
     uint8_t *ptr = get_ptr(addr);
@@ -119,9 +118,7 @@ struct MMU {
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return 0; // Fix allocator bug by faking 0 here
-    if (paddr == 0x00000024) std::cout << "[MEM] read32(0x80000024) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
-    if (paddr == 0x0000002C) std::cout << "[MEM] read32(0x8000002C) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
-    if (paddr == 0x00000028) std::cout << "[MEM] read32(0x80000028) -> 0x" << std::hex << ((get_ptr(addr)[0]<<24)|(get_ptr(addr)[1]<<16)|(get_ptr(addr)[2]<<8)|get_ptr(addr)[3]) << std::endl;
+
     
     if (is_hw_reg(paddr)) return HW_Reg_Read32(paddr);
 
@@ -133,10 +130,11 @@ struct MMU {
   }
 
   void write32(uint32_t addr, uint32_t value) {
+    if (addr == 0x8052AB08) {
+      std::cout << "[Watchpoint] write32 at 0x8052AB08 with value " << std::hex << value << std::dec << "\n";
+    }
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
-    if (paddr == 0x00000024) std::cout << "[MEM] write32(0x80000024, 0x" << std::hex << value << ")" << std::endl;
-    if (paddr == 0x00000028) std::cout << "[MEM] write32(0x80000028, 0x" << std::hex << value << ")" << std::endl;
 
     if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
     if (is_hw_reg(paddr)) { HW_Reg_Write32(paddr, value); return; }
@@ -194,16 +192,20 @@ struct CPUContext {
   // Graphics Quantization Registers (GQR0-GQR7) for Paired Singles Load/Store
   std::array<uint32_t, 8> gqr;
 
-  // Backup state for HLE callbacks
-  std::array<uint32_t, 32> backup_gpr;
-  std::array<double, 32> backup_fpr;
-  std::array<double, 32> backup_ps1;
-  std::array<ConditionField, 8> backup_cr;
-  uint32_t backup_lr;
-  uint32_t backup_ctr;
-  uint32_t backup_xer;
-  uint32_t backup_pc;
+  // Backup state for HLE callbacks (nested-safe via stack)
+  struct BackupState {
+    std::array<uint32_t, 32> gpr;
+    std::array<double, 32> fpr;
+    std::array<double, 32> ps1;
+    std::array<ConditionField, 8> cr;
+    uint32_t lr;
+    uint32_t ctr;
+    uint32_t xer;
+    uint32_t pc;
+  };
+  std::stack<BackupState> backup_stack;
   bool in_callback = false;
+  int callback_depth = 0;
 
   // Memory Management Unit
   MMU mmu;

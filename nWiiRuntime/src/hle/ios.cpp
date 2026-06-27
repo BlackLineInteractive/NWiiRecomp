@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace nwii::runtime;
@@ -534,7 +535,8 @@ static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf,
     }
   }
 
-  // di_read_internal no longer incorrectly updates state/transferredSize for DICommand.
+  // di_read_internal no longer incorrectly updates state/transferredSize for
+  // DICommand.
 }
 
 extern "C" {
@@ -1252,42 +1254,78 @@ bool handle_syscall(CPUContext &ctx) {
 
 namespace nwii::runtime {
 
+// Set by os.cpp when an HW IPC request is processed.
+// Consumed by process_pending_callbacks after the ISR callback finishes to
+// re-apply the OS wake bit that the scheduler clears in single-threaded mode.
+bool g_ipc_reply_pending = false;
+
 // Callback stack: placed at the end of MEM1, below the OS stack.
-// 4KB stack frame dedicated to HLE-dispatched callbacks so their prologue/epilogue
-// (mflr r0; stw r0, 4(r1) / lwz r0, 4(r1); mtlr r0; blr) does not corrupt LR
-// by reading garbage from the game's own mid-spinlock stack frame.
+// 4KB stack frame dedicated to HLE-dispatched callbacks so their
+// prologue/epilogue (mflr r0; stw r0, 4(r1) / lwz r0, 4(r1); mtlr r0; blr) does
+// not corrupt LR by reading garbage from the game's own mid-spinlock stack
+// frame.
 static constexpr uint32_t CALLBACK_STACK_TOP = 0x816F0000;
 
 // Process the callback queue. This function should be called in the dispatcher
 // (for example, in while (ctx.pc != 0) in the generated recompiler code).
 bool process_pending_callbacks(CPUContext &ctx) {
-  if (ctx.pc == 0x8024DB24) {
-    uint32_t flag_addr = ctx.gpr[13] - 23072;
-    ctx.mmu.write32(flag_addr, 0);
+  static uint32_t last_pc = 0;
+  static int spin_count = 0;
+  if (ctx.pc == last_pc) {
+    spin_count++;
+    if (spin_count > 100) {
+      std::this_thread::yield();
+    }
+  } else {
+    last_pc = ctx.pc;
+    spin_count = 0;
   }
 
-  // Hack for HW IPC interrupt spinning
-  if (ctx.pc == 0x8021A8E8) {
-      uint32_t armctrl = ctx.mmu.read32(0xCD00000C);
-      uint32_t ipc_handler = ctx.mmu.read32(0x80003078); // 0x80003040 + 14*4
-      
-      static int print_count = 0;
-      if (print_count < 5) {
-          std::cout << "[HLE Hack] pc=0x8021A8E8 armctrl=0x" << std::hex << armctrl 
-                    << " handler=0x" << ipc_handler << std::dec << "\n";
-          print_count++;
-      }
+  // ── Post-callback IPC wake-bit fixup ────────────────────────────────────
+  // The Wii OS IPC ISR writes *(r13-15384) = 0x8000 to wake the waiting
+  // thread, but then OSReschedule immediately clears it back to 0 in the
+  // same execution (no real context switch in single-threaded HLE).
+  // We detect when the IPC ISR callback (IRQ 27) has just finished and
+  // re-assert the wake bit so the spin-loop at 0x8021A8E8 exits.
+  static bool was_in_callback = false;
+  static uint32_t dispatched_irq = 0xFFFFFFFF; // IRQ number of the running cb
 
-      if (ipc_handler != 0 && ipc_handler != 0xFFFFFFFF && !ctx.in_callback) {
-          static bool queued_ipc = false;
-          if (!queued_ipc) {
-              std::cout << "[HLE Hack] Waking up IPC by calling handler 0x" << std::hex << ipc_handler << std::dec << "\n";
-              ctx.queue_callback(ipc_handler, 14, 0);
-              queued_ipc = true;
-          } else {
-              queued_ipc = false; // Reset for next time
-          }
+  if (ctx.in_callback && ctx.pc == 0xFFFFFFFC) {
+    // Callback is finishing; run_game will restore CPU state this iteration.
+    // If this was the IPC ISR (IRQ 27), schedule the wake-bit fixup.
+    if (dispatched_irq == 27) {
+      g_ipc_reply_pending = true;
+    }
+    was_in_callback = true;
+    dispatched_irq = 0xFFFFFFFF;
+  }
+
+  if (!ctx.in_callback && was_in_callback) {
+    // State was just restored from the previous callback.
+    was_in_callback = false;
+    // Don't write wake bit here — OSReschedule runs BEFORE the spin loop
+    // and would pick it up, doing a broken context switch (PC=0).
+    // Instead, we defer to the spin-loop detection below.
+  }
+
+  // ── Deferred IPC wake-bit fixup (spin-loop based) ──────────────────────
+  // When g_ipc_reply_pending is true and we detect a spin loop (same PC
+  // seen multiple times), write the wake bit.  This ensures the write
+  // happens AFTER the pre-spin-loop OSReschedule call has returned (it
+  // runs once at a different PC before the spin loop starts).
+  if (g_ipc_reply_pending && spin_count >= 2) {
+    uint32_t r13 = ctx.gpr[13];
+    if (r13 != 0) {
+      uint32_t wake_addr = r13 - 15384;
+      uint32_t wake_val = ctx.mmu.read32(wake_addr);
+      if (wake_val == 0) {
+        ctx.mmu.write32(wake_addr, 0x8000);
+        std::cout << "[HLE IPC] Spin-loop fixup: wrote 0x8000 to 0x"
+                  << std::hex << wake_addr << " at PC=0x" << ctx.pc
+                  << " spin_count=" << std::dec << spin_count << std::endl;
       }
+    }
+    g_ipc_reply_pending = false;
   }
 
   if (ctx.in_callback)
@@ -1303,29 +1341,70 @@ bool process_pending_callbacks(CPUContext &ctx) {
   }
 
   std::cout << "[HLE Callback] Dispatching cb=0x" << std::hex << cb.cb_addr
-            << " arg1=0x" << cb.arg1 << " arg2=0x" << cb.arg2
-            << " from PC=0x" << ctx.pc << std::dec << std::endl;
+            << " arg1=0x" << cb.arg1 << " arg2=0x" << cb.arg2 << " from PC=0x"
+            << ctx.pc << " LR=0x" << ctx.lr << " r1=0x" << ctx.gpr[1]
+            << " depth=" << std::dec << ctx.callback_depth << std::endl;
 
-  // Backup full CPU state
-  ctx.backup_gpr = ctx.gpr;
-  ctx.backup_fpr = ctx.fpr;
-  ctx.backup_ps1 = ctx.ps1;
-  ctx.backup_cr = ctx.cr;
-  ctx.backup_lr = ctx.lr;
-  ctx.backup_ctr = ctx.ctr;
-  ctx.backup_xer = ctx.xer;
-  ctx.backup_pc = ctx.pc;
+  // Push full CPU state onto backup stack (supports nested callbacks)
+  CPUContext::BackupState bk;
+  bk.gpr = ctx.gpr;
+  bk.fpr = ctx.fpr;
+  bk.ps1 = ctx.ps1;
+  bk.cr  = ctx.cr;
+  bk.lr  = ctx.lr;
+  bk.ctr = ctx.ctr;
+  bk.xer = ctx.xer;
+  bk.pc  = ctx.pc;
+  ctx.backup_stack.push(bk);
+
+  // Simulate 0x80000500 saving context to __OSCurrentContext
+  uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
+  std::cout << "[HLE Callback] process_pending_callbacks called, current_ctx=0x"
+            << std::hex << current_ctx << std::dec << std::endl;
+  if (current_ctx != 0) {
+    for (int i = 0; i < 32; i++) {
+      ctx.mmu.write32(current_ctx + i * 4, ctx.gpr[i]);
+    }
+    uint32_t cr_val = 0;
+    for (int i = 0; i < 8; i++) {
+      cr_val |= (ctx.cr[i].lt ? 8 : 0) << (28 - i * 4);
+      cr_val |= (ctx.cr[i].gt ? 4 : 0) << (28 - i * 4);
+      cr_val |= (ctx.cr[i].eq ? 2 : 0) << (28 - i * 4);
+      cr_val |= (ctx.cr[i].so ? 1 : 0) << (28 - i * 4);
+    }
+    ctx.mmu.write32(current_ctx + 128, cr_val);
+    ctx.mmu.write32(current_ctx + 132, ctx.lr);
+    ctx.mmu.write32(current_ctx + 136, ctx.ctr);
+    ctx.mmu.write32(current_ctx + 140, ctx.xer);
+
+    for (int i = 0; i < 32; i++) {
+      uint64_t d;
+      std::memcpy(&d, &ctx.fpr[i], 8);
+      ctx.mmu.write32(current_ctx + 144 + i * 8, (uint32_t)(d >> 32));
+      ctx.mmu.write32(current_ctx + 144 + i * 8 + 4,
+                      (uint32_t)(d & 0xFFFFFFFF));
+    }
+
+    ctx.mmu.write32(current_ctx + 684, ctx.pc); // srr0
+    ctx.mmu.write32(current_ctx + 688, 0);      // srr1
+    std::cout << "[HLE Callback] Saved context to 0x" << std::hex << current_ctx
+              << ", PC=0x" << ctx.pc << std::dec << std::endl;
+  }
+
   ctx.in_callback = true;
+  ctx.callback_depth++;
 
   // Set callback arguments (r3 = arg1, r4 = arg2)
   ctx.gpr[3] = cb.arg1;
   ctx.gpr[4] = cb.arg2;
 
+  // Track the IRQ number so we know which callback is running
+  dispatched_irq = cb.arg1; // arg1 == IRQ number for interrupt callbacks
+
   // Point r1 (stack pointer) to a dedicated safe callback stack.
-  // The stack frame must have room for the standard ABI:
-  //   offset 0: back-chain pointer
-  //   offset 4: LR save slot (where mflr r0; stw r0, 4(r1) stores LR)
-  ctx.gpr[1] = CALLBACK_STACK_TOP - 16;
+  // Each nesting level gets its own 4KB region to prevent stack frame collisions.
+  uint32_t cb_stack_top = CALLBACK_STACK_TOP - (ctx.callback_depth - 1) * 4096;
+  ctx.gpr[1] = cb_stack_top - 16;
   // Write a NULL back-chain
   ctx.mmu.write32(ctx.gpr[1], 0);
   // Pre-fill the LR save slot with our sentinel so even if the callback

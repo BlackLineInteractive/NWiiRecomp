@@ -124,6 +124,7 @@ static uint16_t dsp_mbox_dsp_lo = 0;
 static uint32_t ipc_arm_msg = 0;    // HW_IPC_ARMMSG  (0xCD000008)
 static uint32_t ipc_arm_ctrl = 0;   // HW_IPC_ARMCTRL (0xCD00000C)
 static uint32_t ipc_ppc_ctrl = 0;   // HW_IPC_PPCCTRL (0xCD000004)
+uint32_t ipc_ppc_msg = 0;           // HW_IPC_PPCMSG  (0xCD000000)
 static uint32_t pi_intsr = 0;       // PI_INTSR (0xCC003000)
 static uint32_t di_sr = 0x00000008; // DI_SR (0xCC006000)
 static uint32_t vi_dcr = 0;         // VI_DCR (0xCC002030)
@@ -206,7 +207,6 @@ namespace runtime {
 uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 
 uint32_t HW_Reg_Read32(uint32_t addr) {
-  std::cout << "[HW_REG] Read32: 0x" << std::hex << addr << std::dec << "\n";
   // --- IOS IPC registers (Wii, 0xCD000000–0xCD00FFFF) ---
   if ((addr & 0xFF000000) == 0xCD000000 || (addr & 0xFF000000) == 0x0D000000) {
     switch (addr & 0x00FFFFFF) {
@@ -215,9 +215,11 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
     case 0x000004:
       std::cout << "[HW IPC] Read PPCCTRL: " << ipc_ppc_ctrl << "\n"; return ipc_ppc_ctrl; // HW_IPC_PPCCTRL
     case 0x000008:
+      std::cout << "[HW IPC] Read ARMMSG: 0x" << std::hex << ipc_arm_msg << std::dec << "\n";
       return ipc_arm_msg; // HW_IPC_ARMMSG
     case 0x00000C:
-      std::cout << "[HW IPC] Read ARMCTRL: " << ipc_arm_ctrl << "\n"; return ipc_arm_ctrl; // HW_IPC_ARMCTRL
+      std::cout << "[HW IPC] Read ARMCTRL: " << ipc_arm_ctrl << "\n";
+      return ipc_arm_ctrl; // HW_IPC_ARMCTRL
     default:
       return 0;
     }
@@ -375,38 +377,71 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val) { HW_Reg_Write32(addr, val); }
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
   // --- IOS IPC registers (Wii, 0xCD000000) ---
   // When the game writes to HW_IPC_PPCMSG, it means it sent an IPC request to
-  // IOS. We immediately synthesize an instant reply to release the spin-lock.
+  // IOS. We process it synchronously and directly signal completion.
   if ((addr & 0xFF000000) == 0xCD000000 || (addr & 0xFF000000) == 0x0D000000) {
     switch (addr & 0x00FFFFFF) {
     case 0x000000: {
       // HW_IPC_PPCMSG: game sends IPC request
-      // val — physical address of IPCRequest buffer (without 0x80 prefix)
-      std::cout << "[HW IPC] Game sent IPC request to IOS. Phys addr=0x"
+      // val — physical address of IPCRequest buffer
+      std::cout << "[HW IPC] Game set IPC MSG. Phys addr=0x"
                 << std::hex << val << std::dec << "\n";
-      
-      if (nwii::runtime::g_mmu) {
-          std::cout << "[HW IPC] Interrupt Handler Table at 0x80003040: \n";
-          for (int i=0; i<32; i++) {
-              uint32_t handler = nwii::runtime::g_mmu->read32(0x80003040 + i*4);
-              if (handler != 0) {
-                  std::cout << "  Int " << std::dec << i << ": 0x" << std::hex << handler << "\n";
-              }
-          }
-      }
-
-      ipc_fake_ack(val);
+      // We don't process it yet. We wait for X1 to be set in PPCCTRL.
+      ::ipc_ppc_msg = val;
       break;
     }
-    case 0x000004:
-      // HW_IPC_PPCCTRL: game clears bits or sets them
-      // In a real Wii, writing 1 to X1/Y1 clears them. We'll simplify and just
-      // clear X2 if requested.
-      if (val & 0x00000008)
-        ipc_ppc_ctrl &= ~0x00000004; // Clear X2 on Ack?
+    case 0x000004: {
+      std::cout << "[HW IPC] Write PPCCTRL: 0x" << std::hex << val << " (old: 0x" << ipc_ppc_ctrl << ")\n" << std::dec;
+      
+      // Update interrupt enables
+      ipc_ppc_ctrl = (ipc_ppc_ctrl & ~0x30) | (val & 0x30);
+
+      // Handle X1 (Request from PPC)
+      if (val & 0x01) {
+        ipc_ppc_ctrl |= 0x01; // Set X1
+        
+        std::cout << "[HW IPC] Processing IPC request because X1 was set.\n";
+        ipc_fake_ack(::ipc_ppc_msg);
+        
+        extern nwii::runtime::CPUContext *g_ctx_ptr;
+        if (nwii::runtime::g_mmu && g_ctx_ptr) {
+            uint32_t req_vaddr = ::ipc_ppc_msg | 0x80000000;
+            nwii::runtime::g_mmu->write32(req_vaddr + 4, 0); // result = 0
+            ipc_arm_msg = ::ipc_ppc_msg;
+            
+            uint32_t ipc_handler = nwii::runtime::g_mmu->read32(0x80003040 + 27*4);
+            uint32_t req_fd = nwii::runtime::g_mmu->read32(req_vaddr + 8);
+            uint32_t req_cmd = nwii::runtime::g_mmu->read32(req_vaddr + 0);
+            std::cout << "[HW IPC] Processing request with fd=" << req_fd << " cmd=" << req_cmd << "\n";
+            if (ipc_handler != 0 && ipc_handler != 0xFFFFFFFF) {
+                ipc_ppc_ctrl &= ~0x01; // Clear X1 (ARM processed it)
+                ipc_ppc_ctrl |= 0x06;  // Set Y1 and X2
+                std::cout << "[HW IPC] Set Y1 and X2! new ctrl = " << ipc_ppc_ctrl << "\n";
+                ipc_arm_ctrl = 0x00000003;
+                
+                pi_intsr |= 0x00000010; // Trigger interrupt
+                g_ctx_ptr->queue_callback(ipc_handler, 27, 0);
+                std::cout << "[HW IPC] Queued IRQ 27 callback to 0x" << std::hex << ipc_handler << std::dec << "\n";
+            } else {
+                ipc_arm_ctrl = 0;
+                ipc_ppc_ctrl &= ~0x01;
+                pi_intsr &= ~0x00000010;
+            }
+        }
+      }
+      
+      // Handle Y1 (PPC acknowledges ARM request)
+      if (val & 0x02) {
+        ipc_ppc_ctrl &= ~0x02; // Clear Y1
+      }
+      // Handle Y2 (PPC acknowledges ARM reply)
+      if (val & 0x08) {
+        ipc_ppc_ctrl &= ~0x04; // Clear X2!
+      }
       break;
+    }
     case 0x00000C:
-      // HW_IPC_ARMCTRL: game writes 1 to clear Y1, 2 to clear Y2
-      ipc_arm_ctrl &= ~val;
+      // HW_IPC_ARMCTRL: Write-1-to-clear for Y1/Y2
+      ipc_arm_ctrl &= ~(val & 0x03);
       if (!(ipc_arm_ctrl & 3))
         pi_intsr &= ~0x00004000;
       break;
