@@ -558,9 +558,24 @@ extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
   } else if (cmd == 7) { // IOS_Ioctlv
     uint32_t fd = ctx.mmu.read32(virt_addr + 0x08);
     uint32_t ioctl_cmd = ctx.mmu.read32(virt_addr + 0x0C);
+    uint32_t arg_in = ctx.mmu.read32(virt_addr + 0x10);
+    uint32_t arg_out = ctx.mmu.read32(virt_addr + 0x14);
+    uint32_t arg_array = ctx.mmu.read32(virt_addr + 0x18);
+
     IpcRequest req{};
+    req.cmd = cmd;
     req.fd = fd;
     req.ioctl_cmd = ioctl_cmd;
+    req.arg_cnt_in = arg_in;
+    req.arg_cnt_out = arg_out;
+
+    for (uint32_t i = 0; i < arg_in + arg_out; i++) {
+        IoctlvVector vec;
+        vec.addr = ctx.mmu.read32(arg_array + i * 8);
+        vec.len = ctx.mmu.read32(arg_array + i * 8 + 4);
+        req.ioctlv_vecs.push_back(vec);
+    }
+
     result = IOSKernel::get().ioctlv(ctx, req);
   }
 
