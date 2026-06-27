@@ -19,6 +19,16 @@ add_library(nwiiruntime STATIC
     src/hle/ax.cpp
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp
+    src/hle/mmio_dispatcher.cpp
+    src/hle/hw/hw_pi.cpp
+    src/hle/hw/hw_vi.cpp
+    src/hle/hw/hw_dsp.cpp
+    src/hle/hw/hw_exi.cpp
+    src/hle/hw/hw_si.cpp
+    src/hle/hw/hw_ai.cpp
+    src/hle/hw/hw_di.cpp
+    src/hle/hw/hw_ipc.cpp
+    src/hle/hw/hw_all.cpp
     src/hle/devices/di_device.cpp
     src/hle/devices/fs_device.cpp
     src/hle/devices/stm_device.cpp

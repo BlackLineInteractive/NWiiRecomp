@@ -10,11 +10,15 @@
 // Forward declarations of GX FIFO processing
 extern void ProcessGXFifo();
 
+#include "runtime/hw/hw.h"
+
 namespace nwii::runtime {
 MMU* g_mmu = nullptr;
 CPUContext* g_ctx_ptr = nullptr;
+
 bool init() {
     Config::get().load("config.toml");
+    hw::register_all_hw(MMIODispatcher::get());
     return true;
 }
 void shutdown() {}
