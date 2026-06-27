@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  (The only thing that really works)
+(The first recompiler that really works)
 </p>
 
 <p align="center">
