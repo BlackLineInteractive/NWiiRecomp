@@ -18,8 +18,8 @@ namespace nwii::runtime {
 MMU *g_mmu = nullptr;
 CPUContext *g_ctx_ptr = nullptr;
 
-bool init() {
-  Config::get().load("config.toml");
+bool init(const char* config_path = "config.toml") {
+  Config::get().load(config_path);
   hw::register_all_hw(MMIODispatcher::get());
   return true;
 }
@@ -39,11 +39,12 @@ void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <path_to_unpacked_game_dir>\n";
+    std::cerr << "Usage: " << argv[0] << " <path_to_unpacked_game_dir> [config_path]\n";
     return 1;
   }
 
-  if (!nwii::runtime::init())
+  const char* config_path = (argc >= 3) ? argv[2] : "config.toml";
+  if (!nwii::runtime::init(config_path))
     return 1;
   nwii::runtime::Config::get().game_dir = argv[1];
 

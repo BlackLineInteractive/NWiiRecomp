@@ -2261,6 +2261,11 @@ void Recompiler::emit_instruction(std::ostream &out,
     else
       out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(ctx.gpr["
           << rA << "] + " << ppc_inst.simm() << "); // lhz\n";
+  } else if (ppc_inst.opcode() == 41) { // lhzu
+    uint32_t rA = ppc_inst.ra();
+    int16_t simm = ppc_inst.simm();
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(ctx.gpr[" << rA << "]); // lhzu\n";
   } else if (ppc_inst.opcode() == 42) { // lha
     uint32_t rA = ppc_inst.ra();
     if (rA == 0)
@@ -2271,6 +2276,11 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ctx.gpr[" << ppc_inst.rd()
           << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA
           << "] + " << ppc_inst.simm() << "); // lha\n";
+  } else if (ppc_inst.opcode() == 43) { // lhau
+    uint32_t rA = ppc_inst.ra();
+    int16_t simm = ppc_inst.simm();
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "]); // lhau\n";
   } else if (ppc_inst.opcode() == 44) { // sth
     uint32_t rA = ppc_inst.ra();
     if (rA == 0)
@@ -2279,6 +2289,11 @@ void Recompiler::emit_instruction(std::ostream &out,
     else
       out << "    ctx.mmu.write16(ctx.gpr[" << rA << "] + " << ppc_inst.simm()
           << ", (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sth\n";
+  } else if (ppc_inst.opcode() == 45) { // sthu
+    uint32_t rA = ppc_inst.ra();
+    int16_t simm = ppc_inst.simm();
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
+    out << "    ctx.mmu.write16(ctx.gpr[" << rA << "], (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sthu\n";
   } else if (ppc_inst.opcode() == 46) { // lmw
     uint32_t rD = ppc_inst.rd();
     uint32_t rA = ppc_inst.ra();
