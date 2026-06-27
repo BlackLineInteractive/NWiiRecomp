@@ -16,6 +16,8 @@ add_library(nwiiruntime STATIC
     src/hle/gx.cpp
     src/hle/pad.cpp
     src/hle/dvd.cpp
+    src/hle/gx/fifo_parser.cpp
+    src/hle/gx/renderer.cpp
     src/hle/ax.cpp
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp
