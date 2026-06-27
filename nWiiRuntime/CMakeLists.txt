@@ -20,6 +20,9 @@ add_library(nwiiruntime STATIC
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp
     src/hle/mmio_dispatcher.cpp
+    src/platform/platform.cpp
+    src/platform/wii_platform.cpp
+    src/platform/gc_platform.cpp
     src/hle/hw/hw_pi.cpp
     src/hle/hw/hw_vi.cpp
     src/hle/hw/hw_dsp.cpp
