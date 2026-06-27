@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
     arena_lo = (arena_lo + 31) & ~31;
     
     uint32_t console_type = 0x10000010; // Wii Retail 16
-    uint32_t mem1_size = 64 * 1024 * 1024; // Wii has 64MB MEM1
+    uint32_t mem1_size = 24 * 1024 * 1024; // Wii has 24MB MEM1
     uint32_t mem2_size = 64 * 1024 * 1024;
     
     // 0x24: Simulated MEM1 Size

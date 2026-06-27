@@ -24,87 +24,6 @@ namespace nwii::runtime {
 #include "runtime/devices.h"
 #include <iostream>
 #include <vector>
-struct DIIoctlArgs {
-    uint32_t cmd;
-    uint32_t inbuf;
-    uint32_t outbuf;
-    uint32_t callback;
-    uint32_t userdata;
-    bool     is_async;
-};
-
-static int32_t di_handle_ioctl_shared(nwii::runtime::MMU& mmu, const DIIoctlArgs& a) {
-    const std::string& gid = Config::get().game_id;
-
-    // Normalise commonly-swapped command aliases
-    uint32_t cmd = a.cmd;
-    if (cmd == 0x01) cmd = 0x12; // DVDLowInquiry alias
-
-    if (cmd == 0x12) { // DVDLowInquiry
-        uint32_t outbuf = a.outbuf;
-        // Normalise physical → virtual if needed
-        if (outbuf != 0 && outbuf < 0x80000000) {
-            if (outbuf < 0x01800000 || (outbuf >= 0x10000000 && outbuf < 0x14000000))
-                outbuf |= 0x80000000;
-        }
-        if (outbuf >= 0x80000000 && outbuf < 0x94000000) {
-            for (int i = 0; i < 32; i++) mmu.write8(outbuf + i, 0);
-            mmu.write8(outbuf + 0, 0x01); // Device type: CD/DVD
-            mmu.write8(outbuf + 1, 0x00);
-            // Identification string "RVL-DI"
-            mmu.write8(outbuf + 8,  'R'); mmu.write8(outbuf + 9,  'V');
-            mmu.write8(outbuf + 10, 'L'); mmu.write8(outbuf + 11, '-');
-            mmu.write8(outbuf + 12, 'D'); mmu.write8(outbuf + 13, 'I');
-            std::cout << "[DI] DVDLowInquiry: wrote RVL-DI to 0x"
-                      << std::hex << outbuf << std::dec << std::endl;
-        }
-        return 0; // IPC_OK
-
-    } else if (cmd == 0x8E) { // DI_ReadDiskID
-        uint32_t buf = a.outbuf;
-        if (buf != 0 && buf < 0x80000000) {
-            if (buf < 0x01800000 || (buf >= 0x10000000 && buf < 0x14000000))
-                buf |= 0x80000000;
-        }
-        if (buf >= 0x80000000 && buf < 0x94000000) {
-            for (int i = 0; i < 32; i++) mmu.write8(buf + i, 0);
-            // Write game_id from config (B2 fix: no more hardcoded "RSZK")
-            for (int i = 0; i < (int)gid.size() && i < 4; i++)
-                mmu.write8(buf + i, (uint8_t)gid[i]);
-            mmu.write8(buf + 4, '0'); // disc number
-            mmu.write8(buf + 5, '1'); // version
-            mmu.write8(buf + 6, '0');
-            mmu.write8(buf + 7, '1');
-            mmu.write32(buf + 0x18, 0x5D1C9EA3); // Wii disc magic
-            std::cout << "[DI] ReadDiskID: wrote " << gid << " to 0x"
-                      << std::hex << buf << std::dec << std::endl;
-        }
-        return 1;
-
-    } else if (cmd == 0x80) { // DI_Reset
-        std::cout << "[DI] Reset acknowledged" << std::endl;
-        return 1;
-
-    } else if (cmd == 0x20) { // DI_Read
-        extern void di_read_internal_shared(nwii::runtime::MMU*, uint32_t,
-                                             uint32_t, uint32_t, bool);
-        di_read_internal_shared(&mmu, a.inbuf, a.callback, a.userdata, a.is_async);
-        return 0;
-
-    } else if (cmd == 0x86) { // DI_ClearCoverInterrupt
-        return 0; // IPC_OK
-
-    } else if (cmd == 0xE0) { // DVDGetCoverRegister
-        return 1; // Cover closed, disc present
-
-    } else if (cmd == 0x60) { // DVDGetError / StopMotor
-        return 0; // No error
-
-    } else {
-        std::cout << "[DI] Unhandled ioctl: 0x" << std::hex << cmd << std::dec << std::endl;
-        return 1;
-    }
-}
 
 extern "C" void run_game(nwii::runtime::CPUContext &ctx);
 
@@ -528,6 +447,7 @@ void IOS_IoctlvAsync(CPUContext &ctx) {
 void IOS_Seek(CPUContext &ctx) {
   if (Config::get().platform == Platform::GameCube) {
     ctx.gpr[3] = -1;
+    ctx.pc = ctx.lr;
     return;
   }
   int32_t fd = (int32_t)ctx.gpr[3];
@@ -828,6 +748,12 @@ bool process_pending_callbacks(CPUContext &ctx) {
   bk.ctr = ctx.ctr;
   bk.xer = ctx.xer;
   bk.pc  = ctx.pc;
+  bk.srr0 = ctx.srr0;
+  bk.srr1 = ctx.srr1;
+  bk.msr = ctx.msr;
+  bk.fpscr = ctx.fpscr;
+  bk.gqr = ctx.gqr;
+  bk.sprg = ctx.sprg;
   ctx.backup_stack.push(bk);
 
   // Simulate 0x80000500 saving context to __OSCurrentContext
@@ -872,7 +798,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
   ctx.gpr[4] = cb.arg2;
 
   // Track the IRQ number so we know which callback is running
-  dispatched_irq = cb.arg1; // arg1 == IRQ number for interrupt callbacks
+  if (cb.is_irq) dispatched_irq = cb.arg1;
 
   // Point r1 (stack pointer) to a dedicated safe callback stack.
   // Each nesting level gets its own 4KB region to prevent stack frame collisions.

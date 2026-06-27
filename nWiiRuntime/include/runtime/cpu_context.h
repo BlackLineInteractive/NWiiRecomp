@@ -42,6 +42,7 @@ struct CallbackInfo {
     uint32_t cb_addr;
     uint32_t arg1;
     uint32_t arg2;
+    bool is_irq;
 };
 
 // Exception thrown to instantly unwind the C++ stack back to the dispatcher
@@ -55,7 +56,7 @@ struct MMU {
   std::vector<uint8_t> mem2;
 
   MMU() {
-    mem1.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM1 + 8 bytes padding for unaligned access
+    mem1.resize(24 * 1024 * 1024 + 8, 0); // 24MB MEM1 + 8 bytes padding for unaligned access
     mem2.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM2 + 8 bytes padding for unaligned access
   }
 
@@ -191,6 +192,7 @@ struct CPUContext {
 
   // Graphics Quantization Registers (GQR0-GQR7) for Paired Singles Load/Store
   std::array<uint32_t, 8> gqr;
+  std::array<uint32_t, 4> sprg; // SPRG0-3
 
   // Backup state for HLE callbacks (nested-safe via stack)
   struct BackupState {
@@ -207,6 +209,7 @@ struct CPUContext {
     uint32_t msr;
     uint32_t fpscr;
     std::array<uint32_t, 8> gqr;
+    std::array<uint32_t, 4> sprg;
   };
   std::stack<BackupState> backup_stack;
   bool in_callback = false;
@@ -214,7 +217,7 @@ struct CPUContext {
 
   // Memory Management Unit
   MMU mmu;
-
+  
   // Exception handling for control flow
   uint32_t exception_pc;
   uint64_t inst_count = 0;
@@ -229,10 +232,9 @@ struct CPUContext {
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 
                  msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true) {}
 
-  void queue_callback(uint32_t cb, uint32_t arg1, uint32_t arg2) {
-      if (cb == 0 || cb == 0xFFFFFFFF) return;
-      std::lock_guard<std::mutex> lock(cb_mutex);
-      pending_callbacks.push({cb, arg1, arg2});
+  void queue_callback(uint32_t cb, uint32_t arg1, uint32_t arg2, bool is_irq = false) {
+    std::lock_guard<std::mutex> lock(cb_mutex);
+    pending_callbacks.push({cb, arg1, arg2, is_irq});
   }
 
   // Paired Single Quantized Load

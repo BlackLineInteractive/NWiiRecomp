@@ -215,9 +215,7 @@ void WiiPlatform::ios_ioctl_async(CPUContext& ctx) {
   
   result = IOSKernel::get().ioctl(ctx, req);
 
-  // Do not fire callbacks for STM (eventhook/immediate) to prevent fake
-  // Fire completion callback so game doesn't hang waiting for ioctl to finish
-  if (nwii::runtime::valid_callback(callback)) {
+  if (result != 1 && nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
 

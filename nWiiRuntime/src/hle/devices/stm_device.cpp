@@ -12,6 +12,9 @@ public:
     
     int32_t ioctl(CPUContext& ctx, const IpcRequest& req) override {
         std::cout << "[STM] ioctl cmd=" << req.ioctl_cmd << std::endl;
+        if (req.ioctl_cmd == 0x1000) {
+            return 1; // IPC_PENDING
+        }
         return IPC_OK;
     }
     int32_t ioctlv(CPUContext& ctx, const IpcRequest& req) override {

@@ -38,7 +38,7 @@ void hle_set_ipc_arm_msg(uint32_t req_addr) {
   ipc_arm_msg = req_addr & 0x1FFFFFFF;
   ipc_arm_ctrl = 0x00000002;
   ipc_ppc_ctrl |= 0x00000004;
-  trigger_pi_interrupt(0x00001000);
+  trigger_pi_interrupt(0x00004000);
 }
 
 
@@ -75,8 +75,8 @@ void register_ipc(MMIODispatcher& dispatcher) {{
                             ipc_ppc_ctrl &= ~0x01;
                             ipc_ppc_ctrl |= 0x06;
                             ipc_arm_ctrl = 0x00000003;
-                            trigger_pi_interrupt(0x00000010);
-                            nwii::runtime::g_ctx_ptr->queue_callback(ipc_handler, 27, 0);
+                            trigger_pi_interrupt(0x00004000);
+                            nwii::runtime::g_ctx_ptr->queue_callback(ipc_handler, 27, nwii::runtime::g_mmu->read32(0x800000D4), true);
                         } else {
                             ipc_arm_ctrl = 0;
                             ipc_ppc_ctrl &= ~0x01;
