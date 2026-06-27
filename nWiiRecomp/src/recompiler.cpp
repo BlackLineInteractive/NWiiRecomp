@@ -231,9 +231,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
            "      pc_history[pc_history_idx] = ctx.pc;\n" \
            "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
            "      if (ctx.pc == 0) {\n" \
-           "          extern void hle_thread_exit(nwii::runtime::CPUContext&);\n" \
-           "          hle_thread_exit(ctx);\n" \
-           "          if (ctx.pc == 0) break;\n" \
+           "          std::cerr << \"[FATAL] Branch to 0x0 from:\\n\";\n" \
+           "          for (int i = 0; i < 10; ++i) {\n" \
+           "              std::cerr << \"  0x\" << std::hex << pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n" \
+           "          }\n" \
+           "          std::exit(1);\n" \
            "      }\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
@@ -759,8 +761,7 @@ void Recompiler::emit_function(std::ostream &out,
             << std::dec << ";\n";
       }
     }
-    out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO "
-           "0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x" << std::hex << std::uppercase << func.start_address << std::dec << "\\n\"; std::exit(1);\n";
+    out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO 0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x" << std::hex << std::uppercase << func.start_address << std::dec << " LR: 0x\" << std::hex << ctx.lr << \"\\n\"; std::exit(1);\n";
     out << "        }\n";
     out << "    }\n";
   }
