@@ -18,7 +18,7 @@ void register_pi(MMIODispatcher& dispatcher) {{
                 if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube)
                     return 0x00000001;
                 else
-                    return 0x00000021;
+                    return 0x00000002; // Retail Wii 1
             }
             return 0;
         },

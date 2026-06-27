@@ -1,5 +1,6 @@
 #include "runtime/devices.h"
 #include "runtime/ios_kernel.h"
+#include "runtime/config.h"
 #include <iostream>
 
 namespace nwii::runtime::devices {
@@ -31,7 +32,26 @@ public:
         }
 
         // Handle specific commands
-        if (req.ioctl_cmd == 0x20) { // ES_GetDeviceCert
+        // Handle specific commands
+        if (req.ioctl_cmd == 0x20) { // ES_GetTitleId
+            if (req.arg_cnt_out >= 1) {
+                uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
+                uint32_t view_len = req.ioctlv_vecs[req.arg_cnt_in].len;
+                if (view_addr != 0 && view_len >= 8) {
+                    const std::string& gid = nwii::runtime::Config::get().game_id;
+                    uint32_t title_id_high = 0x00010000;
+                    uint32_t title_id_low = 0;
+                    for (size_t i = 0; i < 4 && i < gid.size(); i++) {
+                        title_id_low |= ((uint32_t)gid[i]) << ((3 - i) * 8);
+                    }
+                    ctx.mmu.write32(view_addr + 0, title_id_high);
+                    ctx.mmu.write32(view_addr + 4, title_id_low); 
+                    std::cout << "[ES] Returned Title ID 00010000-" << std::hex << title_id_low << std::dec << " (" << gid << ")\n";
+                } else {
+                    std::cout << "[ES] Warning: ES_GetTitleId output buffer too small (len=" << view_len << ")\n";
+                }
+            }
+        } else if (req.ioctl_cmd == 0x1E) { // ES_GetDeviceCert
             if (req.arg_cnt_out >= 1) {
                 uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
                 uint32_t view_len = req.ioctlv_vecs[req.arg_cnt_in].len;

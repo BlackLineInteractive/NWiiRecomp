@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include "runtime/config.h"
 
 namespace nwii {
 namespace loader {
@@ -73,11 +74,14 @@ bool Executable::load_dol(const std::string& path) {
 
 bool Executable::load_unpacked_game(const std::string& path) {
     std::string dol_path = path;
+    std::string boot_bin_path = "";
 
     if (std::filesystem::is_directory(path)) {
         dol_path = path + "/sys/main.dol";
+        boot_bin_path = path + "/sys/boot.bin";
         if (!std::filesystem::exists(dol_path)) {
             dol_path = path + "/main.dol";
+            boot_bin_path = path + "/boot.bin";
         }
         if (!std::filesystem::exists(dol_path)) {
             std::cerr << "Could not find main.dol in " << path << " or " << path << "/sys/" << std::endl;
@@ -88,6 +92,17 @@ bool Executable::load_unpacked_game(const std::string& path) {
         if (!std::filesystem::exists(dol_path)) {
             std::cerr << "File does not exist: " << dol_path << std::endl;
             return false;
+        }
+    }
+
+    if (!boot_bin_path.empty() && std::filesystem::exists(boot_bin_path)) {
+        std::ifstream boot(boot_bin_path, std::ios::binary);
+        if (boot.is_open()) {
+            char game_id_buf[7] = {0};
+            if (boot.read(game_id_buf, 6)) {
+                nwii::runtime::Config::get().game_id = std::string(game_id_buf);
+                std::cout << "[Loader] Parsed Game ID from boot.bin: " << nwii::runtime::Config::get().game_id << std::endl;
+            }
         }
     }
 
