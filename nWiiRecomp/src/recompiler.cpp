@@ -233,7 +233,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                auto& bk = ctx.backup_stack.top();\n";
     out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
     out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
-    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n" \
+        "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n" \
+        "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n" \
+        "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
     out << "                ctx.backup_stack.pop();\n";
     out << "            }\n";
     out << "            ctx.callback_depth--;\n";
@@ -478,7 +481,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                auto& bk = ctx.backup_stack.top();\n";
     out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
     out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
-    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n" \
+        "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n" \
+        "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n" \
+        "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
     out << "                ctx.backup_stack.pop();\n";
     out << "            }\n";
     out << "            ctx.callback_depth--;\n";
