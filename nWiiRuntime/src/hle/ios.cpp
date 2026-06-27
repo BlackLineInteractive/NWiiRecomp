@@ -569,6 +569,9 @@ extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
     req.arg_cnt_in = arg_in;
     req.arg_cnt_out = arg_out;
 
+    std::cout << "[HW IPC] Parsed IOCTLV fd=" << fd << " cmd=" << std::hex << ioctl_cmd << std::dec 
+              << " in=" << arg_in << " out=" << arg_out << "\n";
+
     for (uint32_t i = 0; i < arg_in + arg_out; i++) {
         IoctlvVector vec;
         vec.addr = ctx.mmu.read32(arg_array + i * 8);

@@ -62,8 +62,11 @@ class FSDevice : public IDevice {
 public:
     const char* get_name() const override { return "/dev/fs"; }
     bool matches_path(const std::string& path) const override {
-        // Matches /dev/fs AND any absolute path on NAND (like /shared2/...)
-        return path == "/dev/fs" || path.find("/") == 0;
+        // Matches /dev/fs AND any absolute path on NAND (like /shared2/...), 
+        // but exclude other /dev/ devices.
+        if (path == "/dev/fs") return true;
+        if (path.find("/dev/") == 0) return false; // Let other dev nodes handle themselves
+        return path.find("/") == 0;
     }
     
     int32_t open(CPUContext& ctx, const std::string& path, uint32_t mode) override {
