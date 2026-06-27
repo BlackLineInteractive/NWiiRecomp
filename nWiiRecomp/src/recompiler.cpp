@@ -223,9 +223,13 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
     out << "// --- Entry Point Wrapper ---\n";
     out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
+    out << "    static uint32_t pc_history[10] = {0};\n";
+    out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.pc != 0) {\n";
+    out << "    while (ctx.pc != 0) {\n" \
+           "      pc_history[pc_history_idx] = ctx.pc;\n" \
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
@@ -331,6 +335,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "      } catch (const nwii::runtime::CallbackInterrupt&) {\n";
     out << "          continue;\n";
     out << "      }\n";
+    out << "    }\n";
+    out << "    std::cout << \"[DEBUG] PC History before 0x0:\\n\";\n";
+    out << "    for (int i=0; i<10; ++i) {\n";
+    out << "        std::cout << \"  0x\" << std::hex << pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
     out << "    }\n";
     out << "}\n";
     out.close();
@@ -471,9 +479,13 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
     out << "// --- Entry Point Wrapper ---\n";
     out << "extern \"C\" void run_game(nwii::runtime::CPUContext& ctx) {\n";
+    out << "    static uint32_t pc_history[10] = {0};\n";
+    out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.pc != 0) {\n";
+    out << "    while (ctx.pc != 0) {\n" \
+           "      pc_history[pc_history_idx] = ctx.pc;\n" \
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
@@ -576,6 +588,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                if (!found) std::exit(1);\n";
     out << "            }\n";
     out << "        }\n";
+    out << "    }\n";
+    out << "    std::cout << \"[DEBUG] PC History before 0x0:\\n\";\n";
+    out << "    for (int i=0; i<10; ++i) {\n";
+    out << "        std::cout << \"  0x\" << std::hex << pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
     out << "    }\n";
     out << "}\n";
   }
@@ -1830,9 +1846,9 @@ void Recompiler::emit_instruction(std::ostream &out,
       }
       out << "    }\n";
     } else if (xo == 83) { // mfmsr
-      out << "    ctx.gpr[" << ppc_inst.rd() << "] = 0; // mfmsr stub\n";
+      out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.msr;\n";
     } else if (xo == 146) { // mtmsr
-      out << "    // mtmsr stub (ignore)\n";
+      out << "    ctx.msr = ctx.gpr[" << ppc_inst.rs() << "];\n";
     } else if (xo == 124) { // nor
       out << "    ctx.gpr[" << rA << "] = ~(ctx.gpr[" << rS << "] | ctx.gpr["
           << rB << "]); // nor\n";
