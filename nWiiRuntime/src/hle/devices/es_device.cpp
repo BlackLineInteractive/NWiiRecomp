@@ -31,7 +31,11 @@ public:
         }
 
         // Handle specific commands
-        if (req.ioctl_cmd == 0x24) { // ES_GetTicketViews
+        if (req.ioctl_cmd == 0x20) { // ES_GetDeviceCert
+            // Returning success with a zeroed buffer causes games to fail parsing.
+            // Let's return an error so the game might fall back or skip validation.
+            return IPC_EINVAL; 
+        } else if (req.ioctl_cmd == 0x24) { // ES_GetTicketViews
             // Output 0: Array of TicketViews
             // Output 1: viewCount
             if (req.arg_cnt_out >= 2) {
