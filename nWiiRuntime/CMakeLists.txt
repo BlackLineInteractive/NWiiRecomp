@@ -8,12 +8,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 add_library(nwiiruntime STATIC
-    src/loader.cpp
-    src/config.cpp
+    src/core/loader.cpp
+    src/core/config.cpp
     src/input/input_manager.cpp
     src/input/sources/mouse_keyboard_source.cpp
     src/input/sources/gamepad_source.cpp
-    src/hle/os.cpp
     src/hle/memory.cpp
     src/hle/gx.cpp
     src/hle/pad.cpp
@@ -23,19 +22,19 @@ add_library(nwiiruntime STATIC
     src/hle/ax.cpp
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp
-    src/hle/mmio_dispatcher.cpp
+    src/hw/mmio_dispatcher.cpp
     src/platform/platform.cpp
     src/platform/wii_platform.cpp
     src/platform/gc_platform.cpp
-    src/hle/hw/hw_pi.cpp
-    src/hle/hw/hw_vi.cpp
-    src/hle/hw/hw_dsp.cpp
-    src/hle/hw/hw_exi.cpp
-    src/hle/hw/hw_si.cpp
-    src/hle/hw/hw_ai.cpp
-    src/hle/hw/hw_di.cpp
-    src/hle/hw/hw_ipc.cpp
-    src/hle/hw/hw_all.cpp
+    src/hw/hw_pi.cpp
+    src/hw/hw_vi.cpp
+    src/hw/hw_dsp.cpp
+    src/hw/hw_exi.cpp
+    src/hw/hw_si.cpp
+    src/hw/hw_ai.cpp
+    src/hw/hw_di.cpp
+    src/hw/hw_ipc.cpp
+    src/hw/hw_all.cpp
     src/hle/devices/di_device.cpp
     src/hle/devices/fs_device.cpp
     src/hle/devices/stm_device.cpp

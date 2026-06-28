@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "runtime/mmio_dispatcher.h"
+#include "runtime/hw/mmio_dispatcher.h"
 
 namespace nwii::runtime {
     uint64_t get_os_time();
