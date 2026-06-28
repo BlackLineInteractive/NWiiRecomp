@@ -45,10 +45,7 @@ struct CallbackInfo {
     bool is_irq;
 };
 
-// Exception thrown to instantly unwind the C++ stack back to the dispatcher
-struct CallbackInterrupt : public std::exception {
-    const char* what() const noexcept override { return "HLE Callback Interrupt"; }
-};
+// Removed CallbackInterrupt in favor of setjmp/longjmp for exception unwinding
 
 // Strict Dolphin-accurate MMU
 struct MMU {
@@ -131,8 +128,8 @@ struct MMU {
   }
 
   void write32(uint32_t addr, uint32_t value) {
-    if (addr == 0x8052AB08) {
-      std::cout << "[Watchpoint] write32 at 0x8052AB08 with value " << std::hex << value << std::dec << "\n";
+    if (addr == 0x80528A30) {
+      std::cout << "[Watchpoint] write32 at 0x80528A30 with value " << std::hex << value << std::dec << "\n";
     }
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
@@ -223,14 +220,16 @@ struct CPUContext {
   uint64_t inst_count = 0;
   
   std::atomic<bool> is_running;
+  std::atomic<bool> vblank_pending;
   std::mutex cb_mutex;
   std::queue<CallbackInfo> pending_callbacks;
+  jmp_buf exception_jmp_buf;
 
   // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
   uint32_t reservation_addr = 0xFFFFFFFF;
 
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 
-                 msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true) {}
+                 msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true), vblank_pending(false) {}
 
   void queue_callback(uint32_t cb, uint32_t arg1, uint32_t arg2, bool is_irq = false) {
     std::lock_guard<std::mutex> lock(cb_mutex);
@@ -432,6 +431,7 @@ struct CPUContext {
 };
 
 void hle_set_ipc_arm_msg(uint32_t req_addr);
+void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc);
 
 } // namespace runtime
 } // namespace nwii

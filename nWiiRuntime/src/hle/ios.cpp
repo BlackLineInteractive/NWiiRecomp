@@ -597,7 +597,8 @@ void init_ipc_client(CPUContext &ctx) {
   nwii::runtime::devices::register_all();
   
   ipc_init_queue(ctx);
-  ctx.mmu.write32(0x804BA440, 0xFFFFFFFFu); // di fd, unset
+  int32_t di_fd = IOSKernel::get().open(ctx, "/dev/di", 0);
+  ctx.mmu.write32(0x804BA440, (uint32_t)di_fd); // di fd, unset -> set
   ctx.mmu.write32(0x804BA450, 0);           // mailbox ack counter
   ctx.mmu.write32(0x804BA454, 0);           // ios heap id
 }
@@ -679,7 +680,16 @@ static inline uint32_t get_callback_stack_top() {
 
 // Process the callback queue. This function should be called in the dispatcher
 // (for example, in while (ctx.pc != 0) in the generated recompiler code).
+extern "C" void hle_drive_thread_queue(CPUContext& ctx);
+
 bool process_pending_callbacks(CPUContext &ctx) {
+  if (ctx.vblank_pending) {
+      if (!ctx.in_callback && (ctx.msr & 0x8000)) {
+          ctx.vblank_pending = false;
+          hle_drive_thread_queue(ctx);
+      }
+  }
+
   static uint32_t last_pc = 0;
   static int spin_count = 0;
   if (ctx.pc == last_pc) {
@@ -741,6 +751,11 @@ bool process_pending_callbacks(CPUContext &ctx) {
 
   if (ctx.in_callback)
     return false;
+
+  if ((ctx.msr & 0x8000) == 0) {
+    // Hardware interrupts (callbacks) are disabled
+    return false;
+  }
 
   CallbackInfo cb;
   {
@@ -831,7 +846,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Set LR to sentinel
   ctx.lr = 0xFFFFFFFC;
   ctx.pc = cb.cb_addr;
-  throw CallbackInterrupt();
+  longjmp(ctx.exception_jmp_buf, 1);
 }
 
 } // namespace nwii::runtime

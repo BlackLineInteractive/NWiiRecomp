@@ -36,6 +36,9 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "#include \"runtime/config.h\"\n";
     out << "#include <stdint.h>\n";
     out << "#include <bit>\n";
+    out << "#include <thread>\n";
+    out << "#include <chrono>\n";
+
     out << "#include <cmath>\n";
     out << "#include <iostream>\n";
     out << "#include <cstdlib>\n\n";
@@ -168,11 +171,14 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
       std::string func_name = all_func_names[func_idx++];
 
-      if (!func.hle_hook_name.empty()) {
-        out << "void " << func_name << "(nwii::runtime::CPUContext& ctx) {\n";
-        out << "    " << func.hle_hook_name << "(ctx);\n";
-        out << "    ctx.pc = ctx.lr;\n";
-        out << "}\n\n";
+      if (!func.hle_hook_name.empty() || is_hle_function(func_name)) {
+        std::string target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
+        if (target != func_name) {
+          out << "void " << func_name << "(nwii::runtime::CPUContext& ctx) {\n";
+          out << "    " << target << "(ctx);\n";
+          out << "    ctx.pc = ctx.lr;\n";
+          out << "}\n\n";
+        }
       } else {
         emit_function(out, func, func_name);
       }
@@ -212,7 +218,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = !func.hle_hook_name.empty();
+      bool is_hle = !func.hle_hook_name.empty() || is_hle_function(func_name);
       if (!is_hle) {
         out << "    {0x" << std::hex << std::uppercase << start_addr << ", 0x"
             << func.end_address << ", " << func_name << "},\n";
@@ -231,13 +237,14 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
            "      pc_history[pc_history_idx] = ctx.pc;\n" \
            "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
            "      if (ctx.pc == 0) {\n" \
-           "          std::cerr << \"[FATAL] Branch to 0x0 from:\\n\";\n" \
-           "          for (int i = 0; i < 10; ++i) {\n" \
-           "              std::cerr << \"  0x\" << std::hex << pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n" \
+           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force EE=1 in idle\n" \
+           "          process_pending_callbacks(ctx);\n" \
+           "          if (ctx.pc == 0) {\n" \
+           "              std::this_thread::sleep_for(std::chrono::milliseconds(1));\n" \
            "          }\n" \
-           "          std::exit(1);\n" \
+           "          continue;\n" \
            "      }\n";
-    out << "      try {\n";
+    out << "      if (setjmp(ctx.exception_jmp_buf) == 0) {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
     out << "            if (!ctx.backup_stack.empty()) {\n";
@@ -272,12 +279,13 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = !func.hle_hook_name.empty();
+      bool is_hle = !func.hle_hook_name.empty() || is_hle_function(func_name);
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
+          std::string hle_target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
           out << "            case 0x" << std::hex << std::uppercase
-              << start_addr << std::dec << ": " << func.hle_hook_name
+              << start_addr << std::dec << ": " << hle_target
               << "(ctx); ctx.pc = ctx.lr; break;\n";
         } else {
           out << "            case 0x" << std::hex << std::uppercase
@@ -336,10 +344,16 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                        break;\n";
     out << "                    }\n";
     out << "                }\n";
-    out << "                if (!found) std::exit(1);\n";
+    out << "                if (!found) {\n";
+    out << "                    std::cerr << \"[FATAL] Branch to unknown address 0x\" << std::hex << target << \" from:\\n\";\n";
+    out << "                    for (int i = 0; i < 10; ++i) {\n";
+    out << "                        std::cerr << \"  0x\" << std::hex << pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n";
+    out << "                    }\n";
+    out << "                    std::exit(1);\n";
+    out << "                }\n";
     out << "            }\n";
     out << "        }\n";
-    out << "      } catch (const nwii::runtime::CallbackInterrupt&) {\n";
+    out << "      } else {\n";
     out << "          continue;\n";
     out << "      }\n";
     out << "    }\n";
@@ -450,7 +464,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     int func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      if (!func.hle_hook_name.empty()) {
+      if (!func.hle_hook_name.empty() || is_hle_function(func_name)) {
         out << "// [HLE Hook] Skipping generation for " << func_name << "\n\n";
       } else {
         emit_function(out, func, func_name);
@@ -475,7 +489,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = !func.hle_hook_name.empty();
+      bool is_hle = !func.hle_hook_name.empty() || is_hle_function(func_name);
       if (!is_hle) {
         out << "    {0x" << std::hex << std::uppercase << start_addr << ", 0x"
             << func.end_address << ", " << func_name << "},\n";
@@ -490,9 +504,17 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.pc != 0) {\n" \
+    out << "    while (ctx.is_running) {\n" \
            "      pc_history[pc_history_idx] = ctx.pc;\n" \
-           "      pc_history_idx = (pc_history_idx + 1) % 10;\n";
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
+           "      if (ctx.pc == 0) {\n" \
+           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force EE=1 in idle\n" \
+           "          process_pending_callbacks(ctx);\n" \
+           "          if (ctx.pc == 0) {\n" \
+           "              std::this_thread::sleep_for(std::chrono::milliseconds(1));\n" \
+           "          }\n" \
+           "          continue;\n" \
+           "      }\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
@@ -528,12 +550,13 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     func_idx = 0;
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name = all_func_names[func_idx++];
-      bool is_hle = !func.hle_hook_name.empty();
+      bool is_hle = !func.hle_hook_name.empty() || is_hle_function(func_name);
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
+          std::string hle_target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
           out << "            case 0x" << std::hex << std::uppercase
-              << start_addr << std::dec << ": " << func.hle_hook_name
+              << start_addr << std::dec << ": " << hle_target
               << "(ctx); ctx.pc = ctx.lr; break;\n";
         } else {
           out << "            case 0x" << std::hex << std::uppercase
@@ -2400,9 +2423,8 @@ void Recompiler::emit_instruction(std::ostream &out,
         << ", " << W << ", " << I << "); // psq_stu\n";
     out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << d << ";\n";
   } else {
-    out << "    std::cerr << \"UNIMPLEMENTED OPCODE " << ppc_inst.opcode()
-        << " at 0x" << std::hex << inst.address << std::dec
-        << "\\n\"; std::exit(1);\n";
+    out << "    nwii::runtime::micro_interpret(ctx, 0x" << std::hex << inst.opcode << ", 0x" << inst.address << std::dec << ");\n";
+    out << "    if (ctx.pc != 0x" << std::hex << (inst.address + 4) << std::dec << ") return;\n";
   }
 }
 

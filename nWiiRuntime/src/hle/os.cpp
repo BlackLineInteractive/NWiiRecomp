@@ -217,34 +217,29 @@ void DVD_Callback(CPUContext &ctx) {
   // DVD callback stub
 }
 
-extern "C" void hle_thread_exit(CPUContext& ctx) {
-    std::cout << "[HLE OS] Thread exited! Attempting HLE context switch..." << std::endl;
-    
-    // Set current context state to DEAD (8) if possible
-    uint32_t current_thread = ctx.mmu.read32(0x800000D4);
-    if (current_thread != 0) {
-        ctx.mmu.write16(current_thread + 0x2C8, 8); // DEAD
-    }
 
+
+
+}
+
+
+extern "C" void hle_drive_thread_queue(CPUContext& ctx) {
+    uint32_t current_thread = ctx.mmu.read32(0x800000D4);
+    if (current_thread == 0) return; // No active thread, OS not initialized
+    
+    // Check if we need to switch (find highest priority READY thread)
     uint32_t active_queue_head = ctx.mmu.read32(0x800000DC);
     uint32_t next_thread = 0;
     uint32_t thread_ptr = active_queue_head;
     int highest_priority = 999;
     
-    // Iterate active queue to find the highest priority READY thread
-    std::cout << "[HLE OS] Active Queue Head: 0x" << std::hex << active_queue_head << std::dec << std::endl;
     while (thread_ptr != 0) {
         uint16_t state = ctx.mmu.read16(thread_ptr + 0x2C8);
         uint32_t suspend = ctx.mmu.read32(thread_ptr + 0x2CC);
         int32_t priority = ctx.mmu.read32(thread_ptr + 0x2D0);
-        uint32_t pc = ctx.mmu.read32(thread_ptr + 0x198); // srr0
         
-        std::cout << "  Thread 0x" << std::hex << thread_ptr << std::dec 
-                  << " State: " << state << " Suspend: " << suspend 
-                  << " Prio: " << priority << " PC: 0x" << std::hex << pc << std::dec << std::endl;
-        
-        // 1 = Ready
-        if (state == 1 && suspend <= 0) {
+        // 1 = Ready, 2 = Running
+        if ((state == 1 || state == 2) && suspend <= 0) {
             if (priority < highest_priority) {
                 highest_priority = priority;
                 next_thread = thread_ptr;
@@ -253,50 +248,62 @@ extern "C" void hle_thread_exit(CPUContext& ctx) {
         
         uint32_t prev_thread_ptr = thread_ptr;
         thread_ptr = ctx.mmu.read32(thread_ptr + 0x2E8); // next_active
-        if (thread_ptr == active_queue_head || thread_ptr == prev_thread_ptr) break; // cycle safety
+        if (thread_ptr == active_queue_head || thread_ptr == prev_thread_ptr) break;
     }
     
-    if (next_thread != 0) {
-        std::cout << "[HLE OS] Switching to thread 0x" << std::hex << next_thread << std::dec << std::endl;
-        
-        // Set state to RUNNING (2)
-        ctx.mmu.write16(next_thread + 0x2C8, 2);
-        // Set __OSCurrentContext
-        ctx.mmu.write32(0x800000D4, next_thread);
-        
-        // Load context
-        for (int i = 0; i < 32; i++) {
-            ctx.gpr[i] = ctx.mmu.read32(next_thread + i * 4);
-        }
-        uint32_t cr_val = ctx.mmu.read32(next_thread + 0x80);
-        for (int i = 0; i < 8; i++) {
-            uint32_t field_val = (cr_val >> (28 - i * 4)) & 0xF;
-            ctx.cr[i].lt = (field_val & 8) != 0;
-            ctx.cr[i].gt = (field_val & 4) != 0;
-            ctx.cr[i].eq = (field_val & 2) != 0;
-            ctx.cr[i].so = (field_val & 1) != 0;
-        }
-        ctx.lr = ctx.mmu.read32(next_thread + 0x84);
-        ctx.ctr = ctx.mmu.read32(next_thread + 0x88);
-        ctx.xer = ctx.mmu.read32(next_thread + 0x8C);
-        
-        for (int i = 0; i < 32; i++) {
-            uint32_t hi = ctx.mmu.read32(next_thread + 0x90 + i * 8);
-            uint32_t lo = ctx.mmu.read32(next_thread + 0x90 + i * 8 + 4);
-            uint64_t val = ((uint64_t)hi << 32) | lo;
-            std::memcpy(&ctx.fpr[i], &val, sizeof(double));
-        }
-        
-        ctx.srr0 = ctx.mmu.read32(next_thread + 0x198);
-        ctx.srr1 = ctx.mmu.read32(next_thread + 0x19C);
-        
-        // rfi equivalent
-        ctx.pc = ctx.srr0;
-        ctx.msr = ctx.srr1;
-    } else {
-        std::cout << "[HLE OS] No ready threads found! CPU sleeping." << std::endl;
-        ctx.pc = 0; // Will exit emulator
+    // If no better thread, or it's the same thread, do nothing
+    if (next_thread == 0 || next_thread == current_thread) return;
+    
+    // --- Save current thread context ---
+    ctx.mmu.write16(current_thread + 0x2C8, 1); // Set to READY
+    for (int i = 0; i < 32; i++) {
+        ctx.mmu.write32(current_thread + i * 4, ctx.gpr[i]);
     }
-}
-
+    uint32_t cr_val = 0;
+    for (int i = 0; i < 8; i++) {
+        cr_val |= (ctx.cr[i].lt ? 8 : 0) << (28 - i * 4);
+        cr_val |= (ctx.cr[i].gt ? 4 : 0) << (28 - i * 4);
+        cr_val |= (ctx.cr[i].eq ? 2 : 0) << (28 - i * 4);
+        cr_val |= (ctx.cr[i].so ? 1 : 0) << (28 - i * 4);
+    }
+    ctx.mmu.write32(current_thread + 0x80, cr_val);
+    ctx.mmu.write32(current_thread + 0x84, ctx.lr);
+    ctx.mmu.write32(current_thread + 0x88, ctx.ctr);
+    ctx.mmu.write32(current_thread + 0x8C, ctx.xer);
+    for (int i = 0; i < 32; i++) {
+        uint64_t d;
+        std::memcpy(&d, &ctx.fpr[i], 8);
+        ctx.mmu.write32(current_thread + 0x90 + i * 8, (uint32_t)(d >> 32));
+        ctx.mmu.write32(current_thread + 0x90 + i * 8 + 4, (uint32_t)(d & 0xFFFFFFFF));
+    }
+    ctx.mmu.write32(current_thread + 0x198, ctx.pc); // srr0
+    ctx.mmu.write32(current_thread + 0x19C, ctx.msr); // srr1
+    
+    // --- Load new thread context ---
+    ctx.mmu.write16(next_thread + 0x2C8, 2); // Set to RUNNING
+    ctx.mmu.write32(0x800000D4, next_thread); // Set __OSCurrentContext
+    for (int i = 0; i < 32; i++) {
+        ctx.gpr[i] = ctx.mmu.read32(next_thread + i * 4);
+    }
+    cr_val = ctx.mmu.read32(next_thread + 0x80);
+    for (int i = 0; i < 8; i++) {
+        uint32_t field_val = (cr_val >> (28 - i * 4)) & 0xF;
+        ctx.cr[i].lt = (field_val & 8) != 0;
+        ctx.cr[i].gt = (field_val & 4) != 0;
+        ctx.cr[i].eq = (field_val & 2) != 0;
+        ctx.cr[i].so = (field_val & 1) != 0;
+    }
+    ctx.lr = ctx.mmu.read32(next_thread + 0x84);
+    ctx.ctr = ctx.mmu.read32(next_thread + 0x88);
+    ctx.xer = ctx.mmu.read32(next_thread + 0x8C);
+    for (int i = 0; i < 32; i++) {
+        uint32_t hi = ctx.mmu.read32(next_thread + 0x90 + i * 8);
+        uint32_t lo = ctx.mmu.read32(next_thread + 0x90 + i * 8 + 4);
+        uint64_t val = ((uint64_t)hi << 32) | lo;
+        std::memcpy(&ctx.fpr[i], &val, sizeof(double));
+    }
+    ctx.srr0 = ctx.mmu.read32(next_thread + 0x198);
+    ctx.srr1 = ctx.mmu.read32(next_thread + 0x19C);
+    ctx.pc = ctx.srr0;
+    ctx.msr = ctx.srr1;
 }

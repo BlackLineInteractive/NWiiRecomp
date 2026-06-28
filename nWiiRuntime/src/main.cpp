@@ -170,6 +170,9 @@ int main(int argc, char **argv) {
     ProcessGXFifo();
 
     EndDrawing();
+    
+    // Trigger VBlank interrupt to drive the OS thread queue
+    ctx->vblank_pending = true;
   }
 
   // Teardown

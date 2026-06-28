@@ -9,7 +9,8 @@ namespace nwii::runtime {
 namespace nwii::runtime::hw {
 
 extern uint32_t pi_intsr;
-inline void trigger_pi_interrupt(uint32_t mask) { pi_intsr |= mask; }
+extern uint32_t pi_intmr;
+inline void trigger_pi_interrupt(uint32_t mask) { pi_intsr |= mask; /* TODO: trigger CPU interrupt if (pi_intsr & pi_intmr) != 0 */ }
 inline void clear_pi_interrupt(uint32_t mask) { pi_intsr &= ~mask; }
 
 void register_pi(MMIODispatcher& dispatcher);

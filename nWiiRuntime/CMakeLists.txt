@@ -43,6 +43,7 @@ add_library(nwiiruntime STATIC
     src/hle/devices/es_device.cpp
     src/hle/cafe/cafe_os.cpp
     src/hle/cafe/latte_gpu.cpp
+    src/hle/interpreter.cpp
 )
 
 target_link_libraries(nwiiruntime PUBLIC raylib tomlplusplus::tomlplusplus)
