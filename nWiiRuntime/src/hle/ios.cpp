@@ -680,13 +680,13 @@ static inline uint32_t get_callback_stack_top() {
 
 // Process the callback queue. This function should be called in the dispatcher
 // (for example, in while (ctx.pc != 0) in the generated recompiler code).
-extern "C" void hle_drive_thread_queue(CPUContext& ctx);
+// extern "C" void hle_drive_thread_queue(CPUContextextern "C" void hle_drive_thread_queue(CPUContext& ctx); ctx);
 
 bool process_pending_callbacks(CPUContext &ctx) {
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {
           ctx.vblank_pending = false;
-          hle_drive_thread_queue(ctx);
+          // hle_drive_thread_queue(ctx);
       }
   }
 

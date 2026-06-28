@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 add_library(nwiiruntime STATIC
     src/core/loader.cpp
     src/core/config.cpp
+    src/core/os_hle_stubs.cpp
     src/input/input_manager.cpp
     src/input/sources/mouse_keyboard_source.cpp
     src/input/sources/gamepad_source.cpp
