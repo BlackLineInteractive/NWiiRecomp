@@ -17,8 +17,17 @@ static uint32_t ipc_arm_ctrl = 0;
 static uint32_t ipc_ppc_ctrl = 0;
 uint32_t ipc_ppc_msg = 0;
 
+extern int g_ipc_interrupt_delay;
 
 extern "C" void handle_ios_ipc(nwii::runtime::CPUContext& ctx, uint32_t request_addr);
+
+void dispatch_ipc(CPUContext& ctx, uint32_t virt_addr) {
+  handle_ios_ipc(ctx, virt_addr);
+
+  ipc_arm_msg  = virt_addr & 0x1FFFFFFF;
+  ipc_arm_ctrl = 0x00000003; // Y1 | Y2
+  g_ipc_interrupt_delay = 500000;
+}
 
 void ipc_dispatch_request(CPUContext &ctx, uint32_t req_addr) {
   uint32_t virt_addr = req_addr;
@@ -27,18 +36,14 @@ void ipc_dispatch_request(CPUContext &ctx, uint32_t req_addr) {
   else if (virt_addr >= 0x10000000 && virt_addr < 0x14000000)
     virt_addr = (virt_addr & 0x03FFFFFF) | 0x90000000;
 
-  handle_ios_ipc(ctx, virt_addr);
-
-  ipc_arm_msg  = req_addr & 0x1FFFFFFF;
-  ipc_arm_ctrl = 0x00000003; // Y1 | Y2
-  trigger_pi_interrupt(0x00004000); // INT_CAUSE_WII_IPC
+  dispatch_ipc(ctx, virt_addr);
 }
 
 void hle_set_ipc_arm_msg(uint32_t req_addr) {
   ipc_arm_msg = req_addr & 0x1FFFFFFF;
   ipc_arm_ctrl = 0x00000002;
   ipc_ppc_ctrl |= 0x00000004;
-  trigger_pi_interrupt(0x00004000);
+  g_ipc_interrupt_delay = 500000;
 }
 
 

@@ -682,6 +682,8 @@ namespace nwii::runtime {
 // re-apply the OS wake bit that the scheduler clears in single-threaded mode.
 bool g_ipc_reply_pending = false;
 
+int g_ipc_interrupt_delay = 0;
+
 // Default at end of MEM1. Override per-game in assets/games/<id>.toml:
 // [quirks] callback_stack_top = 0x...
 static constexpr uint32_t CALLBACK_STACK_TOP_DEFAULT = 0x816F0000;
@@ -696,6 +698,13 @@ static inline uint32_t get_callback_stack_top() {
 // extern "C" void hle_drive_thread_queue(CPUContextextern "C" void hle_drive_thread_queue(CPUContext& ctx); ctx);
 
 bool process_pending_callbacks(CPUContext &ctx) {
+  if (g_ipc_interrupt_delay > 0) {
+      g_ipc_interrupt_delay--;
+      if (g_ipc_interrupt_delay == 0) {
+          trigger_pi_interrupt(0x00004000); std::cout << "[HLE IPC] Triggering PI interrupt at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+      }
+  }
+
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {
           ctx.vblank_pending = false;
