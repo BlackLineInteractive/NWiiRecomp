@@ -66,23 +66,9 @@ void register_ipc(MMIODispatcher& dispatcher) {{
                     if (g_ctx_ptr) {
                         ipc_dispatch_request(*g_ctx_ptr, ipc_ppc_msg);
                     }
-                    if (g_mmu && g_ctx_ptr) {
-                        uint32_t req_vaddr = ipc_ppc_msg | 0x80000000;
-                        nwii::runtime::g_mmu->write32(req_vaddr + 4, 0);
-                        ipc_arm_msg = ipc_ppc_msg;
-                        uint32_t ipc_handler = nwii::runtime::g_mmu->read32(0x80003040 + 27*4);
-                        if (ipc_handler != 0 && ipc_handler != 0xFFFFFFFF) {
-                            ipc_ppc_ctrl &= ~0x01;
-                            ipc_ppc_ctrl |= 0x06;
-                            ipc_arm_ctrl = 0x00000003;
-                            trigger_pi_interrupt(0x00004000);
-                            nwii::runtime::g_ctx_ptr->queue_callback(ipc_handler, 27, nwii::runtime::g_mmu->read32(0x800000D4), true);
-                        } else {
-                            ipc_arm_ctrl = 0;
-                            ipc_ppc_ctrl &= ~0x01;
-                            clear_pi_interrupt(0x00000010);
-                        }
-                    }
+                    // Update state to indicate ARM has processed it
+                    ipc_ppc_ctrl &= ~0x01;
+                    ipc_ppc_ctrl |= 0x06;
                 }
                 if (val & 0x02) ipc_ppc_ctrl &= ~0x02;
                 if (val & 0x08) ipc_ppc_ctrl &= ~0x04;

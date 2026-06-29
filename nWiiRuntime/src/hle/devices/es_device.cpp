@@ -25,11 +25,16 @@ public:
             uint32_t addr = req.ioctlv_vecs[i].addr;
             uint32_t len = req.ioctlv_vecs[i].len;
             if (addr != 0 && len > 0) {
+                if (len > 0x10000) {
+                    std::cout << "[ES] Warning: Huge ioctlv output buffer! len=0x" << std::hex << len << std::dec << "\n";
+                    len = 0x10000; // Cap to prevent hang
+                }
                 for (uint32_t j = 0; j < len; j++) {
                     ctx.mmu.write8(addr + j, 0);
                 }
             }
         }
+        std::cout << "[ES] Output vectors zeroed.\n";
 
         // Handle specific commands
         // Handle specific commands
@@ -89,6 +94,28 @@ public:
                     }
                 }
             }
+        } else if (req.ioctl_cmd == 0x1B) { // ES_DiGetTicketView
+            if (req.arg_cnt_out >= 1) {
+                uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
+                if (view_addr) {
+                    const std::string& gid = nwii::runtime::Config::get().game_id;
+                    uint32_t title_id_high = 0x00010000;
+                    uint32_t title_id_low = 0;
+                    for (size_t i = 0; i < 4 && i < gid.size(); i++) {
+                        title_id_low |= ((uint32_t)gid[i]) << ((3 - i) * 8);
+                    }
+                    ctx.mmu.write32(view_addr + 0x0, 0); // view_version
+                    ctx.mmu.write32(view_addr + 0x4, 0); // ticket_id high
+                    ctx.mmu.write32(view_addr + 0x8, 0); // ticket_id low
+                    ctx.mmu.write32(view_addr + 0xC, 0); // dev_type
+                    ctx.mmu.write32(view_addr + 0x10, title_id_high);
+                    ctx.mmu.write32(view_addr + 0x14, title_id_low);
+                    ctx.mmu.write16(view_addr + 0x18, 0xFFFF); // access_mask
+                    
+                    std::cout << "[ES] Returning TicketView for TitleID " << std::hex << title_id_high << "-" << title_id_low << std::dec << std::endl;
+                }
+            }
+            return IPC_OK;
         } else if (req.ioctl_cmd == 0x24) { // ES_GetTicketViews
             // Output 0: Array of TicketViews
             // Output 1: viewCount

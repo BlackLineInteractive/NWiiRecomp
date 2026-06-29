@@ -48,7 +48,7 @@ void register_di(MMIODispatcher& dispatcher) {{
                     else if (cmd == 0xAB) di_imm = 0;
                     else if (cmd == 0xE0) di_imm = 0;
                     di_sr |= 0x08;
-                    if (di_sr & 0x04) trigger_pi_interrupt(0x01);
+                    if (di_sr & 0x04) trigger_pi_interrupt(0x04);
                 }
             }
         }

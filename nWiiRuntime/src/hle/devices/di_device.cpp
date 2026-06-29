@@ -3,7 +3,7 @@
 #include <iostream>
 
 // Forward declaration of di_read_internal_shared from ios.cpp (temporary until fully extracted)
-extern void di_read_internal_shared(nwii::runtime::MMU* mmu, uint32_t inbuf,
+extern void di_read_internal_shared(nwii::runtime::MMU* mmu, uint32_t inbuf, uint32_t outbuf,
                                      uint32_t callback, uint32_t userdata, bool is_async);
 
 namespace nwii::runtime::devices {
@@ -55,9 +55,9 @@ public:
         } else if (cmd == 0x80) { // DI_Reset
             std::cout << "[DI] Reset acknowledged" << std::endl;
             return 1;
-        } else if (cmd == 0x20) { // DI_Read
-            // Temporary delegation until di_read_internal is moved completely
-            di_read_internal_shared(&ctx.mmu, req.in_buf, 0, 0, false);
+        } else if (cmd == 0x20 || cmd == 0x95 || cmd == 0x96 || cmd == 0xe3) { // DI_Read, UnencryptedRead, Read, BCA
+            // Delegation to di_read_internal
+            di_read_internal_shared(&ctx.mmu, req.in_buf, req.out_buf, 0, 0, false);
             return IPC_OK;
         } else if (cmd == 0x86) { // DI_ClearCoverInterrupt
             return IPC_OK;

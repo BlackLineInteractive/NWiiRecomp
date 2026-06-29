@@ -131,6 +131,9 @@ struct MMU {
     if (addr == 0x80528A30) {
       std::cout << "[Watchpoint] write32 at 0x80528A30 with value " << std::hex << value << std::dec << "\n";
     }
+    if (addr == 0x80524898) {
+      std::cout << "[Watchpoint] write32 at 0x80524898 with value 0x" << std::hex << value << std::dec << "\n";
+    }
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
 

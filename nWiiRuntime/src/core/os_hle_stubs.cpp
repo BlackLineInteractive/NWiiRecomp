@@ -102,3 +102,11 @@ void HW_Reg_Write32(uint32_t addr, uint32_t val) {
 }
 void HW_Reg_Write16(uint32_t addr, uint16_t val) { HW_Reg_Write32(addr, val); }
 }
+
+extern "C" void DVD_Callback(CPUContext& ctx) {
+    std::cout << "[HLE DVD_Callback] Triggered at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+}
+
+extern "C" void VIConfigure(CPUContext& ctx) {
+    std::cout << "[HLE VIConfigure] Triggered at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+}

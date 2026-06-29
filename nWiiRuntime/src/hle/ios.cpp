@@ -8,8 +8,9 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
+#include <thread>
+#include "runtime/hw/hw.h"
 
 using namespace nwii::runtime;
 
@@ -286,7 +287,7 @@ static std::vector<PendingCallback> g_pending_callbacks;
 } // namespace nwii
 
 // NEW: Proper DI_Read that handles both sync and async modes
-static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf,
+static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf, uint32_t outbuf,
                              uint32_t callback, uint32_t userdata,
                              bool is_async) {
   // Read DICommand structure
@@ -322,15 +323,19 @@ static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf,
 
     length = mmu->read32(ipc_ptr + 0x18);
   }
+  
+  if (addr == 0 && outbuf != 0) {
+      addr = outbuf;
+  }
 
   std::cout << "[HLE IOS] DI_Read" << (is_async ? "Async" : "") << ": inbuf=0x"
             << std::hex << inbuf << " cmd=0x" << cmd
             << " transferSize=" << std::dec << transferSize << " addr=0x"
             << std::hex << addr << " cb=0x" << callback << " offset=0x"
-            << offset << " length=" << std::dec << length << std::endl;
+            << offset << " length=" << std::dec << length << " outbuf=0x" << std::hex << outbuf << std::endl;
 
   bool use_defaults =
-      (cmd != 0x20 && cmd != 0x12) || (offset > 0x1FFFFFFFFFFULL);
+      (cmd != 0x20 && cmd != 0x12 && cmd != 0x95 && cmd != 0x71 && cmd != 0x72 && cmd != 0x96 && cmd != 0xe3) || (offset > 0x1FFFFFFFFFFULL);
 
   if (use_defaults) {
     std::cout << "[HLE IOS] DI_Read: Using defaults (invalid structure)"
@@ -366,22 +371,30 @@ static void di_read_internal(nwii::runtime::MMU *mmu, uint32_t inbuf,
       mmu->write8(buf_ptr + i, temp[i]);
     std::cout << "[DI] Read " << bytes_read << " bytes" << std::endl;
     success = true;
-  } else if (buf_ptr != 0 && offset == 0) {
-    const std::string& gid = Config::get().game_id;
-    for (uint32_t i = 0; i < total_length; i++) mmu->write8(buf_ptr + i, 0);
-    for (int i = 0; i < (int)gid.size() && i < 4; i++)
-      mmu->write8(buf_ptr + i, (uint8_t)gid[i]);
-    mmu->write32(buf_ptr + 0x18, 0x5D1C9EA3);
-    std::cout << "[DI] Faked disc header (" << gid << ")" << std::endl;
-    success = true;
-    bytes_read = total_length;
+  } else if (buf_ptr != 0) {
+    if (offset == 0) {
+      const std::string& gid = Config::get().game_id;
+      for (uint32_t i = 0; i < total_length; i++) mmu->write8(buf_ptr + i, 0);
+      for (int i = 0; i < (int)gid.size() && i < 4; i++)
+        mmu->write8(buf_ptr + i, (uint8_t)gid[i]);
+      mmu->write32(buf_ptr + 0x18, 0x5D1C9EA3);
+      std::cout << "[DI] Faked disc header (" << gid << ")" << std::endl;
+      success = true;
+      bytes_read = total_length;
+    } else {
+      // No disc file, but reading non-zero offset (e.g. 0x95 reading TMD/Ticket)
+      std::cout << "[DI] No disc file, zeroing out read buffer of size " << total_length << std::endl;
+      for (uint32_t i = 0; i < total_length; i++) mmu->write8(buf_ptr + i, 0);
+      success = true;
+      bytes_read = total_length;
+    }
   }
 }
 
 // Public alias used by di_handle_ioctl_shared (declared above)
-void di_read_internal_shared(nwii::runtime::MMU* mmu, uint32_t inbuf,
+void di_read_internal_shared(nwii::runtime::MMU* mmu, uint32_t inbuf, uint32_t outbuf,
                               uint32_t callback, uint32_t userdata, bool is_async) {
-    di_read_internal(mmu, inbuf, callback, userdata, is_async);
+    di_read_internal(mmu, inbuf, outbuf, callback, userdata, is_async);
 }
 
 extern "C" {
@@ -520,8 +533,8 @@ extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
   int32_t result = IPC_OK;
 
   if (cmd == 1) { // IOS_Open via HW IPC
-    // Path is at virt_addr+8, flags at virt_addr+12
-    uint32_t path_addr = nwii::runtime::g_mmu->read32(virt_addr + 8);
+    // Path is at virt_addr+12 (args[0]), mode at virt_addr+16 (args[1])
+    uint32_t path_addr = nwii::runtime::g_mmu->read32(virt_addr + 12);
     // path_addr may be virtual or physical; normalise
     if (path_addr < 0x01800000)
       path_addr |= 0x80000000;
@@ -583,7 +596,7 @@ extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
   }
 
   std::cout << "[HW IPC] cmd=" << cmd << " virt=0x" << std::hex << virt_addr
-            << " -> result=" << (int32_t)result << std::dec << "\n";
+            << " -> result=" << (int32_t)result << std::dec << std::endl;
 
   // Write result back into the IPC request buffer
   nwii::runtime::g_mmu->write32(virt_addr + 4, (uint32_t)(int32_t)result);
@@ -755,6 +768,91 @@ bool process_pending_callbacks(CPUContext &ctx) {
   if ((ctx.msr & 0x8000) == 0) {
     // Hardware interrupts (callbacks) are disabled
     return false;
+  }
+
+  // Check hardware PI interrupts FIRST
+  uint32_t active_ints = nwii::runtime::hw::pi_intsr & nwii::runtime::hw::pi_intmr;
+  
+  if (nwii::runtime::hw::pi_intsr != 0 && (ctx.inst_count % 100000) == 0) {
+      std::cout << "[HLE PI] active_ints=" << std::hex << active_ints << " intsr=" << nwii::runtime::hw::pi_intsr << " intmr=" << nwii::runtime::hw::pi_intmr << " msr=" << ctx.msr << std::dec << "\n";
+  }
+
+  if (active_ints != 0) {
+      int os_intr = -1;
+      uint32_t bit_to_clear = 0;
+      if (active_ints & 0x00004000) { os_intr = 27; bit_to_clear = 0x00004000; } // IPC
+      else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI
+      else if (active_ints & 0x00000100) { os_intr = 19; bit_to_clear = 0x00000100; } // VI
+      else if (active_ints & 0x00000008) { os_intr = 22; bit_to_clear = 0x00000008; } // SI
+      else if (active_ints & 0x00000010) { os_intr = 23; bit_to_clear = 0x00000010; } // EXI
+      else if (active_ints & 0x00000040) { os_intr = 7;  bit_to_clear = 0x00000040; } // DSP
+      
+      if (os_intr != -1) {
+          uint32_t handler = ctx.mmu.read32(0x80003040 + os_intr * 4);
+          
+          if (handler != 0 && handler != 0xFFFFFFFF) {
+              std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler << std::dec << std::endl;
+              // The real 0x500 exception handler clears the PI interrupt cause BEFORE dispatching
+              nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
+              
+              // We must disable MSR EE so the handler runs uninterrupted,
+              // just like a real 0x500 exception would!
+              ctx.msr &= ~0x8000;
+              
+              // Emulate the hardware exception context save manually
+              CPUContext::BackupState bk;
+              bk.gpr = ctx.gpr;
+              bk.fpr = ctx.fpr;
+              bk.ps1 = ctx.ps1;
+              bk.cr  = ctx.cr;
+              bk.lr  = ctx.lr;
+              bk.ctr = ctx.ctr;
+              bk.xer = ctx.xer;
+              bk.pc  = ctx.pc;
+              bk.srr0 = ctx.srr0;
+              bk.srr1 = ctx.srr1;
+              bk.msr = ctx.msr | 0x8000; // Restore with EE enabled
+              bk.fpscr = ctx.fpscr;
+              bk.gqr = ctx.gqr;
+              bk.sprg = ctx.sprg;
+              ctx.backup_stack.push(bk);
+
+              // Update the OS Current Context if it exists
+              uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
+              if (current_ctx != 0) {
+                  for (int i = 0; i < 32; i++) ctx.mmu.write32(current_ctx + i * 4, ctx.gpr[i]);
+                  ctx.mmu.write32(current_ctx + 684, ctx.pc);
+              }
+
+              ctx.in_callback = true;
+              ctx.callback_depth++;
+              
+              // Exception registers
+              ctx.srr0 = ctx.pc;
+              ctx.srr1 = ctx.msr | 0x8000;
+
+              // Arguments for the handler (usually none, but we pass os_intr for debugging)
+              ctx.gpr[3] = os_intr;
+              ctx.gpr[4] = current_ctx;
+
+              dispatched_irq = os_intr;
+
+              // C-function interrupt handlers just use the current stack, minus standard stack frame (16 bytes).
+              ctx.gpr[1] -= 16;
+              ctx.mmu.write32(ctx.gpr[1], 0);
+              ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
+
+              ctx.lr = 0xFFFFFFFC;
+              ctx.pc = handler;
+              longjmp(ctx.exception_jmp_buf, 1);
+          } else {
+              std::cout << "[HLE PI] Error: Handler for interrupt " << std::dec << os_intr << " is NULL!" << std::endl;
+          }
+      }
+  } else if (nwii::runtime::hw::pi_intsr != 0) {
+      if ((ctx.inst_count % 100000) == 0) {
+          std::cout << "[HLE PI] Spinning with pending intsr=" << std::hex << nwii::runtime::hw::pi_intsr << " but intmr=" << nwii::runtime::hw::pi_intmr << " active_ints=0" << std::dec << std::endl;
+      }
   }
 
   CallbackInfo cb;
