@@ -110,3 +110,22 @@ extern "C" void DVD_Callback(CPUContext& ctx) {
 extern "C" void VIConfigure(CPUContext& ctx) {
     std::cout << "[HLE VIConfigure] Triggered at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
 }
+
+#include "runtime/os_thread.h"
+
+extern "C" void OSGetCurrentThread(CPUContext& ctx) {
+    // Most OS functions expect the thread pointer in r3 as the return value.
+    // We'll use a dummy ID of 1 for the main thread for now.
+    ctx.gpr[3] = 1; 
+    ctx.pc = ctx.lr;
+}
+
+extern "C" void OSSleepThread(CPUContext& ctx) {
+    // In a real OS, this would involve a thread queue pointer passed in r3.
+    // For this simple implementation, we'll assume we're always sleeping the main thread (ID 1).
+    ThreadManager::get().sleep_thread(1);
+
+    // Return to the main dispatcher idle loop.
+    // The thread will be resumed by hle_drive_thread_queue, which will restore the PC.
+    ctx.pc = 0;
+}

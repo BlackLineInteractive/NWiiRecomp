@@ -118,6 +118,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void OSCreateHeap(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSAllocFromHeap(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSFreeToHeap(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSGetCurrentThread(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void OSSleepThread(nwii::runtime::CPUContext& ctx);\n";
     hout << "}\n";
 
     std::set<std::string> emitted_names;
@@ -439,6 +441,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "void OSCreateHeap(nwii::runtime::CPUContext& ctx);\n";
     out << "void OSAllocFromHeap(nwii::runtime::CPUContext& ctx);\n";
     out << "void OSFreeToHeap(nwii::runtime::CPUContext& ctx);\n";
+    out << "void OSGetCurrentThread(CPUContext& ctx);\n";
+    out << "void OSSleepThread(CPUContext& ctx);\n";
     out << "}\n";
     for (const auto &[start_addr, func] : analyzer_.get_functions()) {
       std::string func_name;
