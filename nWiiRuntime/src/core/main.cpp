@@ -110,18 +110,30 @@ int main(int argc, char **argv) {
   }
   arena_lo = (arena_lo + 31) & ~31;
 
-  uint32_t console_type = 0x10000010;    // Wii Retail 16
-  uint32_t mem1_size = 24 * 1024 * 1024; // Wii has 24MB MEM1
-  uint32_t mem2_size = 64 * 1024 * 1024;
+  uint32_t console_type = 0x10000010;    // Wii Retail (prod hardware, version 16)
+  uint32_t mem1_size = 24 * 1024 * 1024; // 24MB MEM1
+  uint32_t mem2_size = 64 * 1024 * 1024; // 64MB MEM2
 
-  // 0x24: Simulated MEM1 Size
+  // 0x20: __OSConsoleType — Wii retail (0x10000010), NOT MEM1 size!
+  ctx->mmu.write32(0x80000020, console_type);
+
+  // 0x24: __OSSimulatedMemSize (MEM1)
   ctx->mmu.write32(0x80000024, mem1_size);
 
-  // 0x28: Physical MEM1 Size
+  // 0x28: __OSPhysMemSize (MEM1)
   ctx->mmu.write32(0x80000028, mem1_size);
 
-  // 0x2C: Console Type
-  ctx->mmu.write32(0x8000002C, console_type);
+  // 0x2C: __OSBusClock (243 MHz on Wii)
+  ctx->mmu.write32(0x8000002C, 0x0E7BE2C0);
+
+  // 0x30: __OSCPUClock (729 MHz on Wii)
+  ctx->mmu.write32(0x80000030, 0x2B73A840);
+
+  // 0x34: MEM1_ARENA_LO (set after DOL is loaded)
+  ctx->mmu.write32(0x80000034, arena_lo);
+
+  // 0x38: MEM1_ARENA_HI
+  ctx->mmu.write32(0x80000038, 0x81700000);
 
   // 0x3118: Simulated MEM1 Size
   ctx->mmu.write32(0x80003118, mem1_size);
@@ -138,8 +150,6 @@ int main(int argc, char **argv) {
   // 0x3158: Hardware Revision (Wii Hollywood)
   ctx->mmu.write32(0x80003158, 0x11110000);
 
-  ctx->mmu.write32(0x80000030, arena_lo);
-  ctx->mmu.write32(0x80000034, 0x81700000); // Set OS_MEM1_ARENA_HI
 
   // Initial SP
   ctx->gpr[1] = 0x816FFFF0;
