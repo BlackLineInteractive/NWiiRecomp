@@ -200,7 +200,7 @@ void WiiPlatform::ios_ioctl_async(CPUContext& ctx) {
   uint32_t callback = ctx.gpr[9];
   uint32_t userdata = ctx.gpr[10];
 
-  std::cout << "[HLE IOS] IOS_IoctlAsync: fd=" << fd << " cmd=0x" << std::hex
+  std::cout << "[HLE IOS] IOS_IoctlAsync: PC=0x" << std::hex << ctx.pc << " LR=0x" << ctx.lr << " fd=" << std::dec << fd << " cmd=0x" << std::hex
             << cmd << " inbuf=0x" << inbuf << " inlen=0x" << ctx.gpr[6]
             << " outbuf=0x" << ctx.gpr[7] << " outlen=0x" << ctx.gpr[8]
             << " cb=0x" << callback << " ud=0x" << userdata << std::dec

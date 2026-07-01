@@ -15,6 +15,7 @@ inline void clear_pi_interrupt(uint32_t mask) { pi_intsr &= ~mask; }
 
 void register_pi(MMIODispatcher& dispatcher);
 void register_vi(MMIODispatcher& dispatcher);
+void vi_trigger_interrupt();
 void register_dsp(MMIODispatcher& dispatcher);
 void register_exi(MMIODispatcher& dispatcher);
 void register_si(MMIODispatcher& dispatcher);

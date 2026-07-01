@@ -10,6 +10,11 @@ namespace nwii::runtime::hw {
 static uint32_t vi_vblank_counter = 0;
 static uint32_t vi_dcr = 0;
 
+void vi_trigger_interrupt() {
+    vi_dcr |= 0x80000000;
+    trigger_pi_interrupt(0x00000100);
+}
+
 void register_vi(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCC002000, 0xCC0020FF,
         [](uint32_t addr) -> uint32_t {

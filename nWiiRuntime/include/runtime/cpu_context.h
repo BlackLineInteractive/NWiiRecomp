@@ -60,9 +60,9 @@ struct MMU {
   // Translates Virtual (EA) to Physical (PA) pointer based on RVL standard BAT mappings
   inline uint8_t *get_ptr(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF; 
-    if (paddr < 0x04000000) {
+    if (paddr < mem1.size() - 8) {
         return &mem1[paddr];
-    } else if (paddr >= 0x10000000 && paddr < 0x14000000) {
+    } else if (paddr >= 0x10000000 && paddr < 0x10000000 + mem2.size() - 8) {
         return &mem2[paddr - 0x10000000];
     }
     return nullptr;
@@ -88,6 +88,9 @@ struct MMU {
 
   void write8(uint32_t addr, uint8_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
+      std::cout << "[Watchpoint] write8 at 0x" << std::hex << addr << " with value 0x" << (int)value << std::dec << "\n";
+    }
     if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
 
@@ -101,12 +104,16 @@ struct MMU {
     if (is_hw_reg(paddr)) return HW_Reg_Read16(paddr);
     
     uint8_t *ptr = get_ptr(addr);
-    return ptr ? (uint16_t)(ptr[0] << 8 | ptr[1]) : 0;
+    if (ptr) return (ptr[0] << 8) | ptr[1];
+    return 0;
   }
 
   void write16(uint32_t addr, uint16_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; }
+    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
+      std::cout << "[Watchpoint] write16 at 0x" << std::hex << addr << " with value 0x" << (int)value << std::dec << "\n";
+    }
+    if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
 
     uint8_t *ptr = get_ptr(addr);
@@ -128,13 +135,16 @@ struct MMU {
   }
 
   void write32(uint32_t addr, uint32_t value) {
-    if (addr == 0x80528A30) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == (0x80528A30 & 0x3FFFFFFF)) {
       std::cout << "[Watchpoint] write32 at 0x80528A30 with value " << std::hex << value << std::dec << "\n";
     }
-    if (addr == 0x80524898) {
+    if (paddr == (0x80524898 & 0x3FFFFFFF)) {
       std::cout << "[Watchpoint] write32 at 0x80524898 with value 0x" << std::hex << value << std::dec << "\n";
     }
-    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (paddr == (0x800030AC & 0x3FFFFFFF)) {
+      std::cout << "[Watchpoint] write32 at 0x800030AC (IPC Handler) with value 0x" << std::hex << value << std::dec << "\n";
+    }
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
 
     if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
@@ -145,12 +155,37 @@ struct MMU {
   }
 
   float read_f32(uint32_t addr) { uint32_t val = read32(addr); float f; std::memcpy(&f, &val, 4); return f; }
-  void write_f32(uint32_t addr, float value) { 
-      uint32_t paddr = addr & 0x3FFFFFFF;
-      if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; }
-      uint32_t val; std::memcpy(&val, &value, 4); write32(addr, val); 
+  void write_f32(uint32_t addr, float value) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
+      std::cout << "[Watchpoint] write_f32 at 0x" << std::hex << addr << " with value " << value << std::dec << "\n";
+    }
+    if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
+
+    uint8_t *ptr = get_ptr(addr);
+    if (ptr) {
+      uint32_t v;
+      std::memcpy(&v, &value, sizeof(float));
+      ptr[0] = v >> 24; ptr[1] = (v >> 16) & 0xFF; ptr[2] = (v >> 8) & 0xFF; ptr[3] = v & 0xFF;
+    }
   }
-  
+
+  void write_f64(uint32_t addr, double value) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if ((paddr & ~7) == (0x800030AC & 0x3FFFFFFF) || (paddr & ~7) == (0x800030A8 & 0x3FFFFFFF)) {
+      std::cout << "[Watchpoint] write_f64 at 0x" << std::hex << addr << " with value " << value << std::dec << "\n";
+    }
+    if (paddr == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
+
+    uint8_t *ptr = get_ptr(addr);
+    if (ptr) {
+      uint64_t v;
+      std::memcpy(&v, &value, sizeof(double));
+      ptr[0] = v >> 56; ptr[1] = (v >> 48) & 0xFF; ptr[2] = (v >> 40) & 0xFF; ptr[3] = (v >> 32) & 0xFF;
+      ptr[4] = (v >> 24) & 0xFF; ptr[5] = (v >> 16) & 0xFF; ptr[6] = (v >> 8) & 0xFF; ptr[7] = v & 0xFF;
+    }
+  }
+
   uint64_t read64(uint32_t addr) {
     uint8_t *ptr = get_ptr(addr);
     if (!ptr) return 0;
@@ -163,8 +198,16 @@ struct MMU {
     ptr[0] = value >> 56; ptr[1] = (value >> 48) & 0xFF; ptr[2] = (value >> 40) & 0xFF; ptr[3] = (value >> 32) & 0xFF;
     ptr[4] = (value >> 24) & 0xFF; ptr[5] = (value >> 16) & 0xFF; ptr[6] = (value >> 8) & 0xFF; ptr[7] = value & 0xFF;
   }
-  double read_f64(uint32_t addr) { uint64_t val = read64(addr); double d; std::memcpy(&d, &val, 8); return d; }
-  void write_f64(uint32_t addr, double value) { uint64_t val; std::memcpy(&val, &value, 8); write64(addr, val); }
+  double read_f64(uint32_t addr) { 
+      uint8_t *ptr = get_ptr(addr);
+      if (ptr) {
+          uint64_t val = ((uint64_t)ptr[0] << 56) | ((uint64_t)ptr[1] << 48) | ((uint64_t)ptr[2] << 40) | ((uint64_t)ptr[3] << 32) |
+                         ((uint64_t)ptr[4] << 24) | ((uint64_t)ptr[5] << 16) | ((uint64_t)ptr[6] << 8) | ptr[7];
+          double f; std::memcpy(&f, &val, 8); return f;
+      }
+      return 0.0;
+  }
+
 };
 
 struct CPUContext {

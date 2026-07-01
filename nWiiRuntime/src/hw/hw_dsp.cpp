@@ -83,6 +83,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
                     uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
                     uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
+                    
+                    if (mm <= 0x30AC && mm + count > 0x30AC) {
+                        std::cout << "[DSP DMA] Corrupting IPC Handler! dir=" << dir << " mm=0x" << std::hex << mm << " ar_a=0x" << ar_a << " count=0x" << count << std::dec << "\n";
+                    }
+
                     if (mm < mem1_size && ar_a < mem2_size) {
                         uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
                         if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, copy_count);

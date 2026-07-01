@@ -432,7 +432,7 @@ void iosAlloc(CPUContext &ctx) {
   uint32_t align = ctx.gpr[5];
   uint32_t ptr = ios_guest_alloc(ctx, size, align, heap_id);
   std::cout << "[HLE IOS] iosAlloc: heap=" << heap_id << " size=" << size
-            << " align=" << align << " -> ptr=0x" << std::hex << ptr << std::dec
+            << " align=" << align << " -> ptr=0x" << std::hex << ptr << " LR=0x" << ctx.lr << std::dec
             << std::endl;
   ctx.gpr[3] = ptr;
   ctx.pc = ctx.lr;
@@ -444,7 +444,7 @@ void iosFree(CPUContext &ctx) {
   uint32_t heap_id = ctx.gpr[3];
   uint32_t ptr = ctx.gpr[4];
   std::cout << "[HLE IOS] iosFree: heap=" << heap_id << " ptr=0x" << std::hex
-            << ptr << std::dec << std::endl;
+            << ptr << " LR=0x" << ctx.lr << std::dec << std::endl;
   ctx.gpr[3] = 0; // IPC_OK
   ctx.pc = ctx.lr;
 }
@@ -698,10 +698,36 @@ static inline uint32_t get_callback_stack_top() {
 // extern "C" void hle_drive_thread_queue(CPUContextextern "C" void hle_drive_thread_queue(CPUContext& ctx); ctx);
 
 bool process_pending_callbacks(CPUContext &ctx) {
+  if (ctx.pc == 0x8021C8A0) {
+      uint32_t file_ptr = ctx.gpr[3];
+      uint32_t line = ctx.gpr[4];
+      uint32_t fmt_ptr = ctx.gpr[5];
+      std::string file_str;
+      std::string fmt_str;
+      if (file_ptr) {
+          while (char c = ctx.mmu.read8(file_ptr++)) file_str += c;
+      }
+      if (fmt_ptr) {
+          while (char c = ctx.mmu.read8(fmt_ptr++)) fmt_str += c;
+      }
+      std::cout << "[OSPanic] File: " << file_str << " Line: " << line << " Fmt: " << fmt_str << "\n";
+      // Print args
+      std::cout << "          Args: 0x" << std::hex << ctx.gpr[6] << " 0x" << ctx.gpr[7] << " 0x" << ctx.gpr[8] << std::dec << "\n";
+  }
+
+  if ((ctx.inst_count % 5000000) == 0) {
+      std::cout << "[Heartbeat] PC: 0x" << std::hex << ctx.pc << " LR: 0x" << ctx.lr << std::dec << "\n";
+  }
+
   if (g_ipc_interrupt_delay > 0) {
       g_ipc_interrupt_delay--;
       if (g_ipc_interrupt_delay == 0) {
-          trigger_pi_interrupt(0x00004000); std::cout << "[HLE IPC] Triggering PI interrupt at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+          nwii::runtime::hw::trigger_pi_interrupt(0x00004000); std::cout << "[HLE IPC] Triggering PI interrupt at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+std::cout << "[HLE IPC] OSInterrupt Table:\n";
+for (int i=0; i<32; i++) {
+  uint32_t ptr = ctx.mmu.read32(0x80003040 + i*4);
+  if (ptr != 0) std::cout << "  Intr " << i << " -> 0x" << std::hex << ptr << "\n";
+}
       }
   }
 
@@ -712,63 +738,10 @@ bool process_pending_callbacks(CPUContext &ctx) {
       }
   }
 
-  static uint32_t last_pc = 0;
-  static int spin_count = 0;
-  if (ctx.pc == last_pc) {
-    spin_count++;
-    if (spin_count > 100) {
-      std::this_thread::yield();
-    }
-  } else {
-    last_pc = ctx.pc;
-    spin_count = 0;
-  }
-
-  // ── Post-callback IPC wake-bit fixup ────────────────────────────────────
-  // The Wii OS IPC ISR writes *(r13-15384) = 0x8000 to wake the waiting
-  // thread, but then OSReschedule immediately clears it back to 0 in the
-  // same execution (no real context switch in single-threaded HLE).
-  // We detect when the IPC ISR callback (IRQ 27) has just finished and
-  // re-assert the wake bit so the spin-loop at 0x8021A8E8 exits.
-  static bool was_in_callback = false;
-  static uint32_t dispatched_irq = 0xFFFFFFFF; // IRQ number of the running cb
 
   if (ctx.in_callback && ctx.pc == 0xFFFFFFFC) {
-    // Callback is finishing; run_game will restore CPU state this iteration.
-    // If this was the IPC ISR (IRQ 27), schedule the wake-bit fixup.
-    if (dispatched_irq == 27) {
-      g_ipc_reply_pending = true;
-    }
-    was_in_callback = true;
-    dispatched_irq = 0xFFFFFFFF;
-  }
-
-  if (!ctx.in_callback && was_in_callback) {
-    // State was just restored from the previous callback.
-    was_in_callback = false;
-    // Don't write wake bit here — OSReschedule runs BEFORE the spin loop
-    // and would pick it up, doing a broken context switch (PC=0).
-    // Instead, we defer to the spin-loop detection below.
-  }
-
-  // ── Deferred IPC wake-bit fixup (spin-loop based) ──────────────────────
-  // When g_ipc_reply_pending is true and we detect a spin loop (same PC
-  // seen multiple times), write the wake bit.  This ensures the write
-  // happens AFTER the pre-spin-loop OSReschedule call has returned (it
-  // runs once at a different PC before the spin loop starts).
-  if (g_ipc_reply_pending && spin_count >= 2) {
-    uint32_t r13 = ctx.gpr[13];
-    if (r13 != 0) {
-      uint32_t wake_addr = r13 - 15384;
-      uint32_t wake_val = ctx.mmu.read32(wake_addr);
-      if (wake_val == 0) {
-        ctx.mmu.write32(wake_addr, 0x8000);
-        std::cout << "[HLE IPC] Spin-loop fixup: wrote 0x8000 to 0x"
-                  << std::hex << wake_addr << " at PC=0x" << ctx.pc
-                  << " spin_count=" << std::dec << spin_count << std::endl;
-      }
-    }
-    g_ipc_reply_pending = false;
+    // Callback is finishing
+    ctx.in_callback = false;
   }
 
   if (ctx.in_callback)
@@ -779,7 +752,17 @@ bool process_pending_callbacks(CPUContext &ctx) {
     return false;
   }
 
+
+  if ((ctx.msr & 0x8000) == 0) {
+    // Hardware interrupts (callbacks) are disabled
+    return false;
+  }
+
   // Check hardware PI interrupts FIRST
+  if (ctx.inst_count % 500000 == 0) {
+      nwii::runtime::hw::vi_trigger_interrupt();
+  }
+  
   uint32_t active_ints = nwii::runtime::hw::pi_intsr & nwii::runtime::hw::pi_intmr;
   
   if (nwii::runtime::hw::pi_intsr != 0 && (ctx.inst_count % 100000) == 0) {
@@ -791,8 +774,8 @@ bool process_pending_callbacks(CPUContext &ctx) {
       uint32_t bit_to_clear = 0;
       if (active_ints & 0x00004000) { os_intr = 27; bit_to_clear = 0x00004000; } // IPC
       else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI
-      else if (active_ints & 0x00000100) { os_intr = 19; bit_to_clear = 0x00000100; } // VI
-      else if (active_ints & 0x00000008) { os_intr = 22; bit_to_clear = 0x00000008; } // SI
+      else if (active_ints & 0x00000100) { os_intr = 24; bit_to_clear = 0x00000100; } // VI
+      else if (active_ints & 0x00000008) { os_intr = 20; bit_to_clear = 0x00000008; } // SI
       else if (active_ints & 0x00000010) { os_intr = 23; bit_to_clear = 0x00000010; } // EXI
       else if (active_ints & 0x00000040) { os_intr = 7;  bit_to_clear = 0x00000040; } // DSP
       
@@ -844,8 +827,6 @@ bool process_pending_callbacks(CPUContext &ctx) {
               ctx.gpr[3] = os_intr;
               ctx.gpr[4] = current_ctx;
 
-              dispatched_irq = os_intr;
-
               // C-function interrupt handlers just use the current stack, minus standard stack frame (16 bytes).
               ctx.gpr[1] -= 16;
               ctx.mmu.write32(ctx.gpr[1], 0);
@@ -855,7 +836,15 @@ bool process_pending_callbacks(CPUContext &ctx) {
               ctx.pc = handler;
               longjmp(ctx.exception_jmp_buf, 1);
           } else {
-              std::cout << "[HLE PI] Error: Handler for interrupt " << std::dec << os_intr << " is NULL!" << std::endl;
+              // Handler is NULL — the OS is mid-reinit (it cleared the table before
+              // re-registering handlers). Leave pi_intsr set so the interrupt stays
+              // pending and will be dispatched once the OS calls OSSetInterruptHandler.
+              // Only log once per "NULL window" to avoid spam.
+              static int null_warn_count = 0;
+              if (null_warn_count++ < 3) {
+                  std::cout << "[HLE PI] Handler for interrupt " << std::dec << os_intr
+                            << " is NULL (OS reinit in progress, deferring)." << std::endl;
+              }
           }
       }
   } else if (nwii::runtime::hw::pi_intsr != 0) {
@@ -936,9 +925,6 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Set callback arguments (r3 = arg1, r4 = arg2)
   ctx.gpr[3] = cb.arg1;
   ctx.gpr[4] = cb.arg2;
-
-  // Track the IRQ number so we know which callback is running
-  if (cb.is_irq) dispatched_irq = cb.arg1;
 
   // Point r1 (stack pointer) to a dedicated safe callback stack.
   // Each nesting level gets its own 4KB region to prevent stack frame collisions.
