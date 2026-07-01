@@ -674,11 +674,14 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
 
   out << "add_subdirectory(nWiiRuntime)\n\n";
 
-  out << "add_executable(" << config_.project_name << " nWiiRuntime/src/main.cpp";
+  out << "add_executable(" << config_.project_name << " nWiiRuntime/src/core/main.cpp";
   for (const auto &file : generated_files) {
     out << " " << file;
   }
   out << ")\n";
+
+  out << "target_include_directories(" << config_.project_name
+      << " PRIVATE nWiiRuntime/src nWiiRuntime/include)\n";
 
   out << "target_link_libraries(" << config_.project_name
       << " PRIVATE nwiiruntime raylib)\n";

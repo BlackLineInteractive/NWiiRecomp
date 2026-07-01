@@ -27,6 +27,7 @@ void GX_WGPIPE_Write8(uint8_t val);
 void GX_WGPIPE_Write16(uint16_t val);
 void GX_WGPIPE_Write32(uint32_t val);
 void GX_WGPIPE_WriteF32(float val);
+void GX_WGPIPE_WriteF64(double val);
 
 uint16_t HW_Reg_Read16(uint32_t addr);
 uint32_t HW_Reg_Read32(uint32_t addr);

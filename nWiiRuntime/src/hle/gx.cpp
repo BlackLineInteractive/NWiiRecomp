@@ -56,6 +56,19 @@ void GX_WGPIPE_WriteF32(float val) {
     GX_WGPIPE_Write32(u.i);
 }
 
+void GX_WGPIPE_WriteF64(double val) {
+    union { double d; uint64_t i; } u; u.d = val;
+    std::lock_guard<std::mutex> lock(g_fifo_mutex);
+    g_hw_fifo.push_back(u.i >> 56);
+    g_hw_fifo.push_back((u.i >> 48) & 0xFF);
+    g_hw_fifo.push_back((u.i >> 40) & 0xFF);
+    g_hw_fifo.push_back((u.i >> 32) & 0xFF);
+    g_hw_fifo.push_back((u.i >> 24) & 0xFF);
+    g_hw_fifo.push_back((u.i >> 16) & 0xFF);
+    g_hw_fifo.push_back((u.i >> 8) & 0xFF);
+    g_hw_fifo.push_back(u.i & 0xFF);
+}
+
 } // namespace
 
 // Dolphin-accurate CP FIFO Drainer

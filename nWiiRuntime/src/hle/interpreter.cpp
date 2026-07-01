@@ -83,10 +83,10 @@ void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc) {
         }
     }
 
-    std::cerr << "[MICRO-INTERPRETER] FATAL! Unknown instruction 0x" 
+    std::cerr << "[MICRO-INTERPRETER] WARN! Unknown instruction 0x" 
               << std::hex << std::setfill('0') << std::setw(8) << opcode 
-              << " at PC: 0x" << pc << std::dec << std::endl;
-    std::exit(1);
+              << " at PC: 0x" << pc << ". Treating as NOP." << std::dec << std::endl;
+    ctx.pc = pc + 4;
 }
 
 }
