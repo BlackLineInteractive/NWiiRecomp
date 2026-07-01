@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Static recompilation toolkit for Nintendo GameCube, Wii, and Wii U executables.
+  Static recompilation and runtime toolkit for Nintendo GameCube, Wii, and Wii U executables.
 </p>
 
 <p align="center">
