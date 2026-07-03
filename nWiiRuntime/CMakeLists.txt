@@ -23,6 +23,7 @@ add_library(nwiiruntime STATIC
     src/hle/ax.cpp
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp
+    src/hle/virtual_disc.cpp
     src/hw/mmio_dispatcher.cpp
     src/platform/platform.cpp
     src/platform/wii_platform.cpp
@@ -36,6 +37,7 @@ add_library(nwiiruntime STATIC
     src/hw/hw_di.cpp
     src/hw/hw_ipc.cpp
     src/hw/hw_all.cpp
+    src/hw/hw_mi.cpp
     src/hle/devices/di_device.cpp
     src/hle/devices/fs_device.cpp
     src/hle/devices/stm_device.cpp

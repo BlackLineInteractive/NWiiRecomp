@@ -185,8 +185,10 @@ void WiiPlatform::ios_ioctl(CPUContext& ctx) {
   req.fd = fd;
   req.ioctl_cmd = arg1;
   req.in_buf = arg2;
+  req.in_size = ctx.gpr[6];
   req.out_buf = ctx.gpr[7];
-  
+  req.out_size = ctx.gpr[8];
+
   ctx.gpr[3] = IOSKernel::get().ioctl(ctx, req);
   ctx.pc = ctx.lr;
 }
@@ -211,11 +213,13 @@ void WiiPlatform::ios_ioctl_async(CPUContext& ctx) {
   req.fd = fd;
   req.ioctl_cmd = cmd;
   req.in_buf = inbuf;
+  req.in_size = ctx.gpr[6];
   req.out_buf = ctx.gpr[7];
-  
+  req.out_size = ctx.gpr[8];
+
   result = IOSKernel::get().ioctl(ctx, req);
 
-  if (result != 1 && nwii::runtime::valid_callback(callback)) {
+  if (result != IPC_NO_REPLY && nwii::runtime::valid_callback(callback)) {
     ctx.queue_callback(callback, result, userdata);
   }
 

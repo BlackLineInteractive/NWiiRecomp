@@ -89,9 +89,6 @@ struct MMU {
 
   void write8(uint32_t addr, uint8_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write8 at 0x" << std::hex << addr << " with value 0x" << (int)value << std::dec << "\n";
-    }
     if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
 
@@ -111,9 +108,6 @@ struct MMU {
 
   void write16(uint32_t addr, uint16_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write16 at 0x" << std::hex << addr << " with value 0x" << (int)value << std::dec << "\n";
-    }
     if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
 
@@ -137,15 +131,6 @@ struct MMU {
 
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == (0x80528A30 & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write32 at 0x80528A30 with value " << std::hex << value << std::dec << "\n";
-    }
-    if (paddr == (0x80524898 & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write32 at 0x80524898 with value 0x" << std::hex << value << std::dec << "\n";
-    }
-    if (paddr == (0x800030AC & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write32 at 0x800030AC (IPC Handler) with value 0x" << std::hex << value << std::dec << "\n";
-    }
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
 
     if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
@@ -158,9 +143,6 @@ struct MMU {
   float read_f32(uint32_t addr) { uint32_t val = read32(addr); float f; std::memcpy(&f, &val, 4); return f; }
   void write_f32(uint32_t addr, float value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if ((paddr & ~3) == (0x800030AC & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write_f32 at 0x" << std::hex << addr << " with value " << value << std::dec << "\n";
-    }
     if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
@@ -173,9 +155,6 @@ struct MMU {
 
   void write_f64(uint32_t addr, double value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if ((paddr & ~7) == (0x800030AC & 0x3FFFFFFF) || (paddr & ~7) == (0x800030A8 & 0x3FFFFFFF)) {
-      std::cout << "[Watchpoint] write_f64 at 0x" << std::hex << addr << " with value " << value << std::dec << "\n";
-    }
     if (paddr == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
@@ -270,6 +249,8 @@ struct CPUContext {
   std::atomic<bool> vblank_pending;
   std::mutex cb_mutex;
   std::queue<CallbackInfo> pending_callbacks;
+  // Mirrors pending_callbacks.size() for a lock-free emptiness check
+  std::atomic<int> pending_cb_count{0};
   jmp_buf exception_jmp_buf;
 
   // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
@@ -281,6 +262,7 @@ struct CPUContext {
   void queue_callback(uint32_t cb, uint32_t arg1, uint32_t arg2, bool is_irq = false) {
     std::lock_guard<std::mutex> lock(cb_mutex);
     pending_callbacks.push({cb, arg1, arg2, is_irq});
+    pending_cb_count.fetch_add(1, std::memory_order_relaxed);
   }
 
   // Paired Single Quantized Load
@@ -479,6 +461,10 @@ struct CPUContext {
 
 void hle_set_ipc_arm_msg(uint32_t req_addr);
 void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc);
+
+// Call tracing for recompiled functions, enabled with NWII_TRACE_CALLS=1
+extern bool g_trace_calls;
+void trace_call(uint32_t func_addr, CPUContext& ctx);
 
 } // namespace runtime
 } // namespace nwii

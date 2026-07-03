@@ -1,6 +1,7 @@
 #pragma once
 #include "analyzer/analyzer.h"
 #include "recompiler/symbols.h"
+#include <map>
 #include <string>
 #include <vector>
 
@@ -13,9 +14,15 @@ struct RecompilerConfig {
     std::string output_dir = "export";
     std::string runtime_source_dir = "../nWiiRuntime";
     std::string symbols_csv = "";
-    
+
     bool split_output = false;
     int instructions_per_file = 20000;
+
+    // Per-game HLE hook overrides from [hle_hooks] in the config TOML:
+    // guest function address -> runtime HLE function name. Replaces the
+    // recompiled body with a call into the runtime. No game addresses
+    // are built into the recompiler itself.
+    std::map<uint32_t, std::string> hle_hooks;
 };
 
 class Recompiler {

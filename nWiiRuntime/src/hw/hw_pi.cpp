@@ -17,15 +17,20 @@ void register_pi(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC003004) return pi_intmr;
             if (addr == 0xCC00302C) {
                 if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube)
-                    return 0x00000001;
+                    return 0x00000001; // GC chip
                 else
-                    return 0x00000002; // Retail Wii 1
+                    return 0x00000023; // Hollywood retail chip revision
             }
             return 0;
         },
         [](uint32_t addr, uint32_t val) {
             if (addr == 0xCC003000) clear_pi_interrupt(val);
-            if (addr == 0xCC003004) pi_intmr = val;
+            if (addr == 0xCC003004) {
+                if (pi_intmr != val)
+                    std::cout << "[HW PI] INTMR change: 0x" << std::hex << pi_intmr
+                              << " -> 0x" << val << std::dec << std::endl;
+                pi_intmr = val;
+            }
         }
     );
 }}

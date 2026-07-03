@@ -4,10 +4,16 @@
 #include "loader/loader.h"
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
+#include "runtime/virtual_disc.h"
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <raylib.h>
 #include <thread>
+#include <vector>
 
 // Forward declarations of GX FIFO processing
 extern void ProcessGXFifo();
@@ -18,7 +24,7 @@ namespace nwii::runtime {
 MMU *g_mmu = nullptr;
 CPUContext *g_ctx_ptr = nullptr;
 
-bool init(const char* config_path = "config.toml") {
+bool init(const char *config_path = "config.toml") {
   Config::get().load(config_path);
   hw::register_all_hw(MMIODispatcher::get());
   return true;
@@ -39,11 +45,12 @@ void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <path_to_unpacked_game_dir> [config_path]\n";
+    std::cerr << "Usage: " << argv[0]
+              << " <path_to_unpacked_game_dir> [config_path]\n";
     return 1;
   }
 
-  const char* config_path = (argc >= 3) ? argv[2] : "config.toml";
+  const char *config_path = (argc >= 3) ? argv[2] : "config.toml";
   if (!nwii::runtime::init(config_path))
     return 1;
   nwii::runtime::Config::get().game_dir = argv[1];
@@ -54,10 +61,16 @@ int main(int argc, char **argv) {
   nwii::runtime::input::InputManager::get().add_source(
       std::make_unique<nwii::runtime::input::GamepadSource>());
 
+  // NWII_HEADLESS=1 runs without a window (log-driven testing, CI)
+  const char *headless_env = std::getenv("NWII_HEADLESS");
+  bool headless = headless_env && headless_env[0] == '1';
+
   // Initialize graphics context FIRST in the main thread
-  InitWindow(nwii::runtime::Config::get().window_width,
-             nwii::runtime::Config::get().window_height, "NWiiRecomp");
-  SetTargetFPS(60);
+  if (!headless) {
+    InitWindow(nwii::runtime::Config::get().window_width,
+               nwii::runtime::Config::get().window_height, "NWiiRecomp");
+    SetTargetFPS(60);
+  }
 
   // Context allocation
   auto ctx = std::make_unique<nwii::runtime::CPUContext>();
@@ -89,73 +102,94 @@ int main(int argc, char **argv) {
     }
   }
 
-  std::cout << "DOL LOADED! Value at 0x80528A30: 0x" << std::hex
-            << ctx->mmu.read32(0x80528A30) << std::endl;
-  std::cout << "Value at 0x8052A588 (r13 - 16792): 0x" << std::hex
-            << ctx->mmu.read32(0x8052A588) << std::endl;
-  std::cout << "Console Type at 0x80000024 (read32): 0x" << std::hex
-            << ctx->mmu.read32(0x80000024) << std::endl;
-  std::cout << "Console Type at 0x80000024 (mem1): 0x" << std::hex
-            << (int)ctx->mmu.mem1[0x24] << (int)ctx->mmu.mem1[0x25]
-            << (int)ctx->mmu.mem1[0x26] << (int)ctx->mmu.mem1[0x27]
-            << std::endl;
-
-  std::cout << "[DEBUG] Hash Table at 0x8048E088:" << std::endl;
-  for (int i = 0; i < 256; i++) {
-    uint32_t ptr = ctx->mmu.read32(0x8048E088 + i * 4);
-    if (ptr != 0) {
-      std::cout << "  Index " << std::dec << i << " -> 0x" << std::hex << ptr
-                << std::endl;
-    }
-  }
   arena_lo = (arena_lo + 31) & ~31;
 
-  uint32_t console_type = 0x10000010;    // Wii Retail (prod hardware, version 16)
+  bool is_gc = nwii::runtime::Config::get().platform ==
+               nwii::runtime::Platform::GameCube;
+
+  // Extracted-disc support: place the FST at the top of MEM1 and publish
+  // disc header + FST location in low memory, like the apploader does.
+  uint32_t arena_hi = 0x81700000;
+  auto &vdisc = nwii::runtime::VirtualDisc::get();
+  if (vdisc.init(argv[1])) {
+    const auto &boot = vdisc.boot_data();
+    // Disc header (game ID, magics) at 0x80000000
+    for (size_t i = 0; i < 0x20 && i < boot.size(); ++i)
+      ctx->mmu.write8(0x80000000 + (uint32_t)i, boot[i]);
+
+    const auto &fst = vdisc.fst_data();
+    uint32_t fst_size = (uint32_t)fst.size();
+    uint32_t fst_addr = (0x81800000 - fst_size) & ~63u;
+    for (uint32_t i = 0; i < fst_size; ++i)
+      ctx->mmu.write8(fst_addr + i, fst[i]);
+
+    ctx->mmu.write32(0x80000038, fst_addr); // FST base
+    ctx->mmu.write32(0x8000003C, fst_size); // FST max size
+    if (fst_addr < 0x81700000)
+      arena_hi = fst_addr & ~31u;
+    std::cout << "[Loader] FST loaded at 0x" << std::hex << fst_addr
+              << " size 0x" << fst_size << std::dec << std::endl;
+  }
+
+  // Console type (Dolphin BootManager): Wii retail Hollywood = 0x10000006,
+  // GameCube retail (latest production board) = 0x00000003.
+  uint32_t console_type = is_gc ? 0x00000003 : 0x10000006;
   uint32_t mem1_size = 24 * 1024 * 1024; // 24MB MEM1
   uint32_t mem2_size = 64 * 1024 * 1024; // 64MB MEM2
 
-  // 0x20: __OSConsoleType — Wii retail (0x10000010), NOT MEM1 size!
-  ctx->mmu.write32(0x80000020, console_type);
-
+  ctx->mmu.write32(0x80000020, is_gc ? 0x0D15EA5E : console_type); // GC boot magic
   // 0x24: __OSSimulatedMemSize (MEM1)
   ctx->mmu.write32(0x80000024, mem1_size);
-
   // 0x28: __OSPhysMemSize (MEM1)
   ctx->mmu.write32(0x80000028, mem1_size);
+  ctx->mmu.write32(0x8000002C, console_type);
+  // Arena bounds. GC (YAGCD): 0x30 = ArenaLo, 0x34 = ArenaHi.
+  // The RVL SDK build of SHSM reads its MEM1 arena lo from 0x34 instead.
+  ctx->mmu.write32(0x80000030, arena_lo);
+  ctx->mmu.write32(0x80000034, is_gc ? arena_hi : arena_lo);
+  if (!vdisc.valid()) {
+    // No extracted disc: keep legacy behaviour of 0x38 = top of usable MEM1
+    ctx->mmu.write32(0x80000038, arena_hi);
+  }
+  if (is_gc) {
+    // BI2 pointer (0x800000F4): copy bi2.bin below the FST if present
+    std::filesystem::path bi2_path =
+        std::filesystem::path(argv[1]) / "sys" / "bi2.bin";
+    if (std::filesystem::exists(bi2_path)) {
+      std::ifstream bi2(bi2_path, std::ios::binary);
+      std::vector<char> bi2_data((std::istreambuf_iterator<char>(bi2)),
+                                 std::istreambuf_iterator<char>());
+      uint32_t bi2_addr = (arena_hi - (uint32_t)bi2_data.size()) & ~31u;
+      for (size_t i = 0; i < bi2_data.size(); ++i)
+        ctx->mmu.write8(bi2_addr + (uint32_t)i, (uint8_t)bi2_data[i]);
+      ctx->mmu.write32(0x800000F4, bi2_addr);
+      arena_hi = bi2_addr;
+      ctx->mmu.write32(0x80000034, arena_hi);
+      std::cout << "[Loader] BI2 loaded at 0x" << std::hex << bi2_addr
+                << std::dec << std::endl;
+    }
+  }
+  // 0xF0: simulated memory size (read by OSGetConsoleSimulatedMemSize)
+  ctx->mmu.write32(0x800000F0, mem1_size);
 
-  // 0x2C: __OSBusClock (243 MHz on Wii)
-  ctx->mmu.write32(0x8000002C, 0x0E7BE2C0);
-
-  // 0x30: __OSCPUClock (729 MHz on Wii)
-  ctx->mmu.write32(0x80000030, 0x2B73A840);
-
-  // 0x34: MEM1_ARENA_LO (set after DOL is loaded)
-  ctx->mmu.write32(0x80000034, arena_lo);
-
-  // 0x38: MEM1_ARENA_HI
-  ctx->mmu.write32(0x80000038, 0x81700000);
-
-  // 0x3118: Simulated MEM1 Size
-  ctx->mmu.write32(0x80003118, mem1_size);
-
-  // 0x311C: Physical MEM2 Size
-  ctx->mmu.write32(0x8000311C, mem2_size);
-
-  // 0x3124 - 0x3134: MEM2 bounds
-  ctx->mmu.write32(0x80003124, 0x90000000);
-  ctx->mmu.write32(0x80003128, 0x93e00000);
-  ctx->mmu.write32(0x80003130, 0x93e00000);
-  ctx->mmu.write32(0x80003134, 0x94000000);
-
-  // 0x3158: Hardware Revision (Wii Hollywood)
-  ctx->mmu.write32(0x80003158, 0x11110000);
-
+  if (!is_gc) {
+    // Wii-only low-mem fields
+    // 0x3118: Simulated MEM2 Size, 0x311C: Physical MEM2 Size
+    ctx->mmu.write32(0x80003118, mem2_size);
+    ctx->mmu.write32(0x8000311C, mem2_size);
+    // 0x3124 - 0x3134: usable MEM2 bounds + IOS-reserved region
+    ctx->mmu.write32(0x80003124, 0x90000800);
+    ctx->mmu.write32(0x80003128, 0x93e00000);
+    ctx->mmu.write32(0x80003130, 0x93e00000);
+    ctx->mmu.write32(0x80003134, 0x94000000);
+    // 0x3158: Hollywood hardware revision (retail = 0x00000023)
+    ctx->mmu.write32(0x80003158, 0x00000023);
+  }
 
   // Initial SP
   ctx->gpr[1] = 0x816FFFF0;
 
-  if (nwii::runtime::Config::get().platform ==
-      nwii::runtime::Platform::GameCube) {
+  if (is_gc) {
     ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK
     ctx->mmu.write32(0x800000FC, 162000000); // OS_BUS_CLOCK
   } else {
@@ -168,21 +202,29 @@ int main(int argc, char **argv) {
   // Launch CPU emulation in a background thread
   std::thread cpu_thread(cpu_thread_func, ctx.get());
 
-  // Main Raylib/GPU Thread Loop
-  while (!WindowShouldClose() && ctx->is_running) {
-    // Poll Inputs exactly once per frame
-    nwii::runtime::input::InputManager::get().update();
+  if (headless) {
+    // No window: only pace VBlank so the OS thread queue keeps moving
+    while (ctx->is_running) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+      ctx->vblank_pending = true;
+    }
+  } else {
+    // Main Raylib/GPU Thread Loop
+    while (!WindowShouldClose() && ctx->is_running) {
+      // Poll Inputs exactly once per frame
+      nwii::runtime::input::InputManager::get().update();
 
-    BeginDrawing();
-    ClearBackground(BLACK);
+      BeginDrawing();
+      ClearBackground(BLACK);
 
-    // Drain GX FIFO and issue OpenGL/rlgl calls safely in the main thread
-    ProcessGXFifo();
+      // Drain GX FIFO and issue OpenGL/rlgl calls safely in the main thread
+      ProcessGXFifo();
 
-    EndDrawing();
-    
-    // Trigger VBlank interrupt to drive the OS thread queue
-    ctx->vblank_pending = true;
+      EndDrawing();
+
+      // Trigger VBlank interrupt to drive the OS thread queue
+      ctx->vblank_pending = true;
+    }
   }
 
   // Teardown
@@ -191,7 +233,8 @@ int main(int argc, char **argv) {
   if (cpu_thread.joinable())
     cpu_thread.join();
 
-  CloseWindow();
+  if (!headless)
+    CloseWindow();
   nwii::runtime::shutdown();
   return 0;
 }

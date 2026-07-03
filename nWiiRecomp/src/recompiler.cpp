@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 namespace nwii {
 namespace recomp {
@@ -15,14 +16,85 @@ Recompiler::Recompiler(const analyzer::Analyzer &analyzer,
     : analyzer_(analyzer), symbols_(symbols), config_(config) {}
 
 static bool is_hle_function(const std::string &name) {
-  const char *prefixes[] = {"OS",  "GX",  "DVD", "VI",   "WPAD", "AX",
-                            "EXI", "PAD", "IOS", "mtx_", "vec_"};
-  for (const char *prefix : prefixes) {
-    if (name.starts_with(prefix)) {
-      return true;
-    }
-  }
-  return false;
+  // Exact-match whitelist of Nintendo SDK entry points that have a real
+  // implementation in nWiiRuntime. Prefix matching ("OS", "VI", "GX", ...)
+  // is unsafe: it silently replaces ANY game-specific function that happens
+  // to start with those letters (for example a game function named
+  // "VIProcessCutscene" or "OSMyHelper") with an empty stub, deleting real
+  // game logic instead of executing it. A symbol not in this list is
+  // recompiled and runs normally, exactly like any other game function.
+  static const std::unordered_set<std::string> known_hle_functions = {
+      "AXAcquireVoice",
+      "AXFreeVoice",
+      "AXInit",
+      "AXSetVoiceAdpcm",
+      "AXSetVoiceMix",
+      "AXSetVoiceOffsets",
+      "AXSetVoiceSrc",
+      "AXSetVoiceState",
+      "DVDClose",
+      "DVDGetDriveStatus",
+      "DVDInit",
+      "DVDOpen",
+      "DVDReadAsyncPrio",
+      "DVDReadPrio",
+      "DVD_Callback",
+      "GXBegin",
+      "GXEnd",
+      "GXGetCPUFifo",
+      "GXInit",
+      "GXInitFifoBase",
+      "GXInitFifoPtrs",
+      "GXSetCPUFifo",
+      "GXSetCopyClear",
+      "GXSetVtxAttrFmt",
+      "GXSetVtxDesc",
+      "IOS_Close",
+      "IOS_CloseAsync",
+      "IOS_Ioctl",
+      "IOS_IoctlAsync",
+      "IOS_Ioctlv",
+      "IOS_IoctlvAsync",
+      "IOS_Open",
+      "IOS_OpenAsync",
+      "IOS_Read",
+      "IOS_ReadAsync",
+      "IOS_Seek",
+      "IOS_SeekAsync",
+      "IOS_Write",
+      "IOS_WriteAsync",
+      "KPADInit",
+      "OSAllocFromHeap",
+      "OSCreateHeap",
+      "OSDisableInterrupts",
+      "OSEnableInterrupts",
+      "OSFreeToHeap",
+      "OSGetArenaHi",
+      "OSGetArenaLo",
+      "OSGetCurrentThread",
+      "OSGetTime",
+      "OSInit",
+      "OSInitAlloc",
+      "OSReport",
+      "OSRestoreInterrupts",
+      "OSSetArenaHi",
+      "OSSetArenaLo",
+      "OSSleepThread",
+      "OSTicksToMilliseconds",
+      "PADInit",
+      "PADRead",
+      "VIConfigure",
+      "VIConfigurePan",
+      "VIGetNextField",
+      "VIInit",
+      "VISetBlack",
+      "VIWaitForRetrace",
+      "WPADInit",
+      "WPADRead",
+      "iosAlloc",
+      "iosFree",
+  };
+  return known_hle_functions.count(name) != 0;
 }
 
 std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
@@ -71,6 +143,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     hout << "void OSInit(nwii::runtime::CPUContext& ctx);\n";
     hout << "void VISetBlack(nwii::runtime::CPUContext& ctx);\n";
     hout << "void VIGetNextField(nwii::runtime::CPUContext& ctx);\n";
+    hout << "void VIWaitForRetrace(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSDisableInterrupts(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSEnableInterrupts(nwii::runtime::CPUContext& ctx);\n";
     hout << "void OSRestoreInterrupts(nwii::runtime::CPUContext& ctx);\n";
@@ -174,7 +247,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
       std::string func_name = all_func_names[func_idx++];
 
       if (!func.hle_hook_name.empty() || is_hle_function(func_name)) {
-        std::string target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
+        std::string target =
+            !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
         if (target != func_name) {
           out << "void " << func_name << "(nwii::runtime::CPUContext& ctx) {\n";
           out << "    " << target << "(ctx);\n";
@@ -235,28 +309,32 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.is_running) {\n" \
-           "      pc_history[pc_history_idx] = ctx.pc;\n" \
-           "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
-           "      if (ctx.pc == 0) {\n" \
-           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force EE=1 in idle\n" \
-           "          process_pending_callbacks(ctx);\n" \
-           "          if (ctx.pc == 0) {\n" \
-           "              std::this_thread::sleep_for(std::chrono::milliseconds(1));\n" \
-           "          }\n" \
-           "          continue;\n" \
+    out << "    while (ctx.is_running) {\n"
+           "      pc_history[pc_history_idx] = ctx.pc;\n"
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n"
+           "      if (ctx.pc == 0) {\n"
+           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force "
+           "EE=1 in idle\n"
+           "          process_pending_callbacks(ctx);\n"
+           "          if (ctx.pc == 0) {\n"
+           "              "
+           "std::this_thread::sleep_for(std::chrono::milliseconds(1));\n"
+           "          }\n"
+           "          continue;\n"
            "      }\n";
     out << "      if (setjmp(ctx.exception_jmp_buf) == 0) {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
     out << "            if (!ctx.backup_stack.empty()) {\n";
     out << "                auto& bk = ctx.backup_stack.top();\n";
-    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
-    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
-    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n" \
-        "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n" \
-        "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n" \
-        "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
+    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = "
+           "bk.ps1;\n";
+    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = "
+           "bk.ctr;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n"
+           "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n"
+           "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n"
+           "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
     out << "                ctx.backup_stack.pop();\n";
     out << "            }\n";
     out << "            ctx.callback_depth--;\n";
@@ -285,7 +363,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
-          std::string hle_target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
+          std::string hle_target =
+              !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
           out << "            case 0x" << std::hex << std::uppercase
               << start_addr << std::dec << ": " << hle_target
               << "(ctx); ctx.pc = ctx.lr; break;\n";
@@ -311,8 +390,9 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             uint32_t target = ppc_inst.branch_target(inst.address);
             bool is_local =
                 std::find_if(func.instructions.begin(), func.instructions.end(),
-                             [target](const auto &i) { return i.address == target; }) !=
-                func.instructions.end();
+                             [target](const auto &i) {
+                               return i.address == target;
+                             }) != func.instructions.end();
             if (target <= inst.address && is_local) {
               if (emitted_cases.insert(inst.address).second) {
                 out << "            case 0x" << std::hex << std::uppercase
@@ -347,9 +427,11 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                    }\n";
     out << "                }\n";
     out << "                if (!found) {\n";
-    out << "                    std::cerr << \"[FATAL] Branch to unknown address 0x\" << std::hex << target << \" from:\\n\";\n";
+    out << "                    std::cerr << \"[FATAL] Branch to unknown "
+           "address 0x\" << std::hex << target << \" from:\\n\";\n";
     out << "                    for (int i = 0; i < 10; ++i) {\n";
-    out << "                        std::cerr << \"  0x\" << std::hex << pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n";
+    out << "                        std::cerr << \"  0x\" << std::hex << "
+           "pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n";
     out << "                    }\n";
     out << "                    std::exit(1);\n";
     out << "                }\n";
@@ -361,7 +443,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    }\n";
     out << "    std::cout << \"[DEBUG] PC History before 0x0:\\n\";\n";
     out << "    for (int i=0; i<10; ++i) {\n";
-    out << "        std::cout << \"  0x\" << std::hex << pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
+    out << "        std::cout << \"  0x\" << std::hex << "
+           "pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
     out << "    }\n";
     out << "}\n";
     out.close();
@@ -508,28 +591,32 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    static int pc_history_idx = 0;\n";
     out << "    if (ctx.pc == 0) ctx.pc = 0x" << std::hex << std::uppercase
         << entry_point << std::dec << ";\n";
-    out << "    while (ctx.is_running) {\n" \
-           "      pc_history[pc_history_idx] = ctx.pc;\n" \
-           "      pc_history_idx = (pc_history_idx + 1) % 10;\n" \
-           "      if (ctx.pc == 0) {\n" \
-           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force EE=1 in idle\n" \
-           "          process_pending_callbacks(ctx);\n" \
-           "          if (ctx.pc == 0) {\n" \
-           "              std::this_thread::sleep_for(std::chrono::milliseconds(1));\n" \
-           "          }\n" \
-           "          continue;\n" \
+    out << "    while (ctx.is_running) {\n"
+           "      pc_history[pc_history_idx] = ctx.pc;\n"
+           "      pc_history_idx = (pc_history_idx + 1) % 10;\n"
+           "      if (ctx.pc == 0) {\n"
+           "          if ((ctx.msr & 0x8000) == 0) ctx.msr |= 0x8000; // Force "
+           "EE=1 in idle\n"
+           "          process_pending_callbacks(ctx);\n"
+           "          if (ctx.pc == 0) {\n"
+           "              "
+           "std::this_thread::sleep_for(std::chrono::milliseconds(1));\n"
+           "          }\n"
+           "          continue;\n"
            "      }\n";
     out << "      try {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
     out << "            if (!ctx.backup_stack.empty()) {\n";
     out << "                auto& bk = ctx.backup_stack.top();\n";
-    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = bk.ps1;\n";
-    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = bk.ctr;\n";
-    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n" \
-        "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n" \
-        "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n" \
-        "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
+    out << "                ctx.gpr = bk.gpr; ctx.fpr = bk.fpr; ctx.ps1 = "
+           "bk.ps1;\n";
+    out << "                ctx.cr = bk.cr; ctx.lr = bk.lr; ctx.ctr = "
+           "bk.ctr;\n";
+    out << "                ctx.xer = bk.xer; ctx.pc = bk.pc;\n"
+           "                ctx.srr0 = bk.srr0; ctx.srr1 = bk.srr1;\n"
+           "                ctx.msr = bk.msr; ctx.fpscr = bk.fpscr;\n"
+           "                ctx.gqr = bk.gqr; ctx.sprg = bk.sprg;\n";
     out << "                ctx.backup_stack.pop();\n";
     out << "            }\n";
     out << "            ctx.callback_depth--;\n";
@@ -558,7 +645,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
 
       if (emitted_cases.insert(start_addr).second) {
         if (is_hle) {
-          std::string hle_target = !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
+          std::string hle_target =
+              !func.hle_hook_name.empty() ? func.hle_hook_name : func_name;
           out << "            case 0x" << std::hex << std::uppercase
               << start_addr << std::dec << ": " << hle_target
               << "(ctx); ctx.pc = ctx.lr; break;\n";
@@ -584,8 +672,9 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
             uint32_t target = ppc_inst.branch_target(inst.address);
             bool is_local =
                 std::find_if(func.instructions.begin(), func.instructions.end(),
-                             [target](const auto &i) { return i.address == target; }) !=
-                func.instructions.end();
+                             [target](const auto &i) {
+                               return i.address == target;
+                             }) != func.instructions.end();
             if (target <= inst.address && is_local) {
               if (emitted_cases.insert(inst.address).second) {
                 out << "            case 0x" << std::hex << std::uppercase
@@ -625,7 +714,8 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "    }\n";
     out << "    std::cout << \"[DEBUG] PC History before 0x0:\\n\";\n";
     out << "    for (int i=0; i<10; ++i) {\n";
-    out << "        std::cout << \"  0x\" << std::hex << pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
+    out << "        std::cout << \"  0x\" << std::hex << "
+           "pc_history[(pc_history_idx + i) % 10] << \"\\n\";\n";
     out << "    }\n";
     out << "}\n";
   }
@@ -678,7 +768,8 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
 
   out << "add_subdirectory(nWiiRuntime)\n\n";
 
-  out << "add_executable(" << config_.project_name << " nWiiRuntime/src/core/main.cpp";
+  out << "add_executable(" << config_.project_name
+      << " nWiiRuntime/src/core/main.cpp";
   for (const auto &file : generated_files) {
     out << " " << file;
   }
@@ -715,63 +806,23 @@ void Recompiler::emit_function(std::ostream &out,
                                const std::string &func_name) {
   out << "void " << func_name << "(CPUContext& ctx) {\n";
 
-  if (func.start_address == 0x80213ea0) {
-    out << "    OSReport(ctx);\n";
+  // Config-driven per-game HLE hooks ([hle_hooks] in the TOML config).
+  // The runtime HLE function is responsible for setting ctx.pc; the extra
+  // ctx.pc = ctx.lr is a no-op for stubs that already did it.
+  auto hook = config_.hle_hooks.find(func.start_address);
+  if (hook != config_.hle_hooks.end()) {
+    out << "    " << hook->second << "(ctx);\n";
     out << "    ctx.pc = ctx.lr; return;\n";
     out << "}\n\n";
     return;
-  } else if (func.start_address == 0x80242550) {
-    out << "    IOS_Open(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x802424a0) {
-    out << "    IOS_OpenAsync(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x802438a0 ||
-             func.start_address == 0x802436a0) {
-    out << "    iosAlloc(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x802438b0) {
-    out << "    iosFree(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x80243400) {
-    out << "    IOS_Close(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x802435e0) {
-    out << "    IOS_Read(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x80242cf0) {
-    out << "    IOS_IoctlAsync(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x80242e30) {
-    out << "    IOS_Ioctl(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x80243c80) {
-    out << "    IOS_IoctlvAsync(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
-  } else if (func.start_address == 0x80243d70) {
-    out << "    IOS_Ioctlv(ctx);\n";
-    out << "    return;\n";
-    out << "}\n\n";
-    return;
   }
+
+  // Optional call tracing: only fires on a true function entry
+  // (ctx.pc == start) and only when NWII_TRACE_CALLS=1 at runtime.
+  out << "    if (nwii::runtime::g_trace_calls && ctx.pc == 0x" << std::hex
+      << std::uppercase << func.start_address << std::dec
+      << ") nwii::runtime::trace_call(0x" << std::hex << std::uppercase
+      << func.start_address << std::dec << ", ctx);\n";
 
   // Map all instruction addresses in this function
   std::set<uint32_t> valid_addrs;
@@ -791,7 +842,10 @@ void Recompiler::emit_function(std::ostream &out,
             << std::dec << ";\n";
       }
     }
-    out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO 0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x" << std::hex << std::uppercase << func.start_address << std::dec << " LR: 0x\" << std::hex << ctx.lr << \"\\n\"; std::exit(1);\n";
+    out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO "
+           "0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x"
+        << std::hex << std::uppercase << func.start_address << std::dec
+        << " LR: 0x\" << std::hex << ctx.lr << \"\\n\"; std::exit(1);\n";
     out << "        }\n";
     out << "    }\n";
   }
@@ -1220,7 +1274,8 @@ void Recompiler::emit_instruction(std::ostream &out,
     if (xo == 150) { // isync
       out << "    // isync\n";
     } else if (xo == 50) { // rfi
-      out << "    ctx.pc = ctx.srr0; return; // rfi\n";
+      out << "    ctx.msr = ctx.srr1; // rfi: restore MSR from SRR1\n";
+      out << "    ctx.pc = ctx.srr0; return; // rfi: jump to SRR0\n";
     } else if (xo == 16 || xo == 528) { // BCLR (16) and BCCTR (528)
       uint32_t bo = ppc_inst.bo();
       uint32_t bi = ppc_inst.bi();
@@ -1625,9 +1680,15 @@ void Recompiler::emit_instruction(std::ostream &out,
       else
         out << "    ctx.gpr[" << rD << "] = ctx.mmu.read16(ctx.gpr[" << rA
             << "] + ctx.gpr[" << rB << "]); // lhzx\n";
-    } else if (xo == 371) { // mftb
-      out << "    ctx.gpr[" << rD
-          << "] = (uint32_t)(ctx.inst_count & 0xFFFFFFFF); // mftb\n";
+    } else if (xo == 371) { // mftb / mftbu
+      uint32_t spr_bottom = (ppc_inst.value() >> 16) & 0x1F;
+      uint32_t spr_top    = (ppc_inst.value() >> 11) & 0x1F;
+      uint32_t spr = (spr_top << 5) | spr_bottom;
+      if (spr == 269) { // TBU — upper 32 bits of 64-bit timebase
+        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.inst_count >> 32); // mftbu\n";
+      } else { // TBL (spr==268) — lower 32 bits
+        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.inst_count & 0xFFFFFFFF); // mftb\n";
+      }
     } else if (xo == 407) {
       if (rA == 0)
         out << "    ctx.mmu.write16(ctx.gpr[" << rB << "], (uint16_t)ctx.gpr["
@@ -1947,14 +2008,18 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "ctx.gpr[" << rA << "] = ea; } // lhaux\n";
     } else if (xo == 247) { // stbux
       out << "    {\n";
-      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
-      out << "        ctx.mmu.write8(ea, (uint8_t)ctx.gpr[" << ppc_inst.rs() << "]);\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB
+          << "];\n";
+      out << "        ctx.mmu.write8(ea, (uint8_t)ctx.gpr[" << ppc_inst.rs()
+          << "]);\n";
       out << "        ctx.gpr[" << rA << "] = ea;\n";
       out << "    } // stbux\n";
     } else if (xo == 439) { // sthux
       out << "    {\n";
-      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
-      out << "        ctx.mmu.write16(ea, (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]);\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB
+          << "];\n";
+      out << "        ctx.mmu.write16(ea, (uint16_t)ctx.gpr[" << ppc_inst.rs()
+          << "]);\n";
       out << "        ctx.gpr[" << rA << "] = ea;\n";
       out << "    } // sthux\n";
     } else if (xo == 792) { // sraw
@@ -2056,7 +2121,8 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "ctx.gpr[" << rA << "] = ea; } // lwzux\n";
     } else if (xo == 183) { // stwux
       out << "    {\n";
-      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB << "];\n";
+      out << "        uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB
+          << "];\n";
       out << "        ctx.mmu.write32(ea, ctx.gpr[" << ppc_inst.rs() << "]);\n";
       out << "        ctx.gpr[" << rA << "] = ea;\n";
       out << "    } // stwux\n";
@@ -2295,8 +2361,10 @@ void Recompiler::emit_instruction(std::ostream &out,
   } else if (ppc_inst.opcode() == 41) { // lhzu
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
-    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
-    out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(ctx.gpr[" << rA << "]); // lhzu\n";
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm
+        << ";\n";
+    out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.mmu.read16(ctx.gpr["
+        << rA << "]); // lhzu\n";
   } else if (ppc_inst.opcode() == 42) { // lha
     uint32_t rA = ppc_inst.ra();
     if (rA == 0)
@@ -2310,8 +2378,11 @@ void Recompiler::emit_instruction(std::ostream &out,
   } else if (ppc_inst.opcode() == 43) { // lhau
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
-    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
-    out << "    ctx.gpr[" << ppc_inst.rd() << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA << "]); // lhau\n";
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm
+        << ";\n";
+    out << "    ctx.gpr[" << ppc_inst.rd()
+        << "] = (uint32_t)(int32_t)(int16_t)ctx.mmu.read16(ctx.gpr[" << rA
+        << "]); // lhau\n";
   } else if (ppc_inst.opcode() == 44) { // sth
     uint32_t rA = ppc_inst.ra();
     if (rA == 0)
@@ -2323,8 +2394,10 @@ void Recompiler::emit_instruction(std::ostream &out,
   } else if (ppc_inst.opcode() == 45) { // sthu
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
-    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm << ";\n";
-    out << "    ctx.mmu.write16(ctx.gpr[" << rA << "], (uint16_t)ctx.gpr[" << ppc_inst.rs() << "]); // sthu\n";
+    out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << simm
+        << ";\n";
+    out << "    ctx.mmu.write16(ctx.gpr[" << rA << "], (uint16_t)ctx.gpr["
+        << ppc_inst.rs() << "]); // sthu\n";
   } else if (ppc_inst.opcode() == 46) { // lmw
     uint32_t rD = ppc_inst.rd();
     uint32_t rA = ppc_inst.ra();
@@ -2430,8 +2503,10 @@ void Recompiler::emit_instruction(std::ostream &out,
         << ", " << W << ", " << I << "); // psq_stu\n";
     out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rA << "] + " << d << ";\n";
   } else {
-    out << "    nwii::runtime::micro_interpret(ctx, 0x" << std::hex << inst.opcode << ", 0x" << inst.address << std::dec << ");\n";
-    out << "    if (ctx.pc != 0x" << std::hex << (inst.address + 4) << std::dec << ") return;\n";
+    out << "    nwii::runtime::micro_interpret(ctx, 0x" << std::hex
+        << inst.opcode << ", 0x" << inst.address << std::dec << ");\n";
+    out << "    if (ctx.pc != 0x" << std::hex << (inst.address + 4) << std::dec
+        << ") return;\n";
   }
 }
 

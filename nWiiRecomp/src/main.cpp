@@ -20,6 +20,18 @@ int main(int argc, char** argv) {
         
         config.split_output = tbl["split_output"].value_or(false);
         config.instructions_per_file = tbl["instructions_per_file"].value_or(20000);
+
+        // [hle_hooks]: "80242550" = "IOS_Open" (per-game, optional)
+        if (auto hooks = tbl["hle_hooks"].as_table()) {
+            for (const auto& [key, val] : *hooks) {
+                uint32_t addr = (uint32_t)std::stoul(std::string(key.str()), nullptr, 16);
+                std::string name = val.value_or(std::string());
+                if (addr != 0 && !name.empty()) {
+                    config.hle_hooks[addr] = name;
+                }
+            }
+            std::cout << "Loaded " << config.hle_hooks.size() << " HLE hooks from config.\n";
+        }
         std::cout << "Loaded config from " << config_path << "\n";
     } catch (const toml::parse_error& err) {
         std::cerr << "Config file " << config_path << " not found or invalid.\n";

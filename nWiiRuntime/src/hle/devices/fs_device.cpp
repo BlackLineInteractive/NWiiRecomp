@@ -79,10 +79,13 @@ public:
                         return VNAND_FD_BASE + s;
                     }
                 }
-                return -106; // ISFS_ERROR_ENOENT equivalent
+                return -106; // out of handles
             }
         }
-        return IPC_OK; // default success for /dev/fs main node
+        if (path == "/dev/fs")
+            return IPC_OK; // /dev/fs itself, no per-handle state
+        std::cout << "[FS] open: no such file " << path << std::endl;
+        return IPC_ENOENT; // unknown NAND file: let the game create/skip it
     }
     
     int32_t close(CPUContext& ctx, uint32_t fd) override {
@@ -115,9 +118,32 @@ public:
             h.pos += to_read;
             return to_read;
         }
-        return len; // stub return length
+        return 0; // no vnand handle: nothing read
     }
     
+    int32_t write(CPUContext& ctx, uint32_t fd, uint32_t buf, uint32_t len) override {
+        int slot = fd - VNAND_FD_BASE;
+        if (slot >= 0 && slot < VNAND_FD_MAX && g_vnand_handles[slot].open) {
+            auto& h = g_vnand_handles[slot];
+            auto& f = g_vnand_files[h.file_idx];
+            if (h.pos + len > f.data.size())
+                f.data.resize(h.pos + len, 0);
+
+            uint32_t virt_ptr = buf;
+            if (virt_ptr < 0x01800000 || (virt_ptr >= 0x10000000 && virt_ptr < 0x14000000))
+                virt_ptr |= 0x80000000;
+
+            if (virt_ptr >= 0x80000000 && virt_ptr < 0x94000000 && len > 0) {
+                for (uint32_t i = 0; i < len; ++i) {
+                    f.data[h.pos + i] = ctx.mmu.read8(virt_ptr + i);
+                }
+            }
+            h.pos += len;
+            return len;
+        }
+        return 0;
+    }
+
     int32_t seek(CPUContext& ctx, uint32_t fd, int32_t offset, int32_t whence) override {
         int slot = fd - VNAND_FD_BASE;
         if (slot >= 0 && slot < VNAND_FD_MAX && g_vnand_handles[slot].open) {

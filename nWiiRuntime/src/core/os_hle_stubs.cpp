@@ -1,7 +1,9 @@
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
+#include "runtime/hw/hw.h"
 #include "runtime/hw/mmio_dispatcher.h"
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -9,7 +11,7 @@
 using namespace nwii::runtime;
 
 namespace nwii::runtime {
-    uint64_t get_os_time();
+uint64_t get_os_time();
 }
 
 uint64_t nwii::runtime::get_os_time() {
@@ -18,6 +20,19 @@ uint64_t nwii::runtime::get_os_time() {
              now.time_since_epoch())
       .count();
 }
+
+namespace nwii::runtime {
+bool g_trace_calls = []() {
+  const char *env = std::getenv("NWII_TRACE_CALLS");
+  return env && env[0] == '1';
+}();
+
+void trace_call(uint32_t func_addr, CPUContext &ctx) {
+  std::cout << "[CALL] 0x" << std::hex << func_addr << " lr=0x" << ctx.lr
+            << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4] << " r5=0x"
+            << ctx.gpr[5] << std::dec << "\n";
+}
+} // namespace nwii::runtime
 
 static std::string read_guest_string(CPUContext &ctx, uint32_t addr) {
   std::string str;
@@ -49,7 +64,8 @@ extern "C" void OSReport(CPUContext &ctx) {
       std::string specifier = "%";
       i++;
       while (i < format_str.length() &&
-             std::string("0123456789.-+ #hlz").find(format_str[i]) != std::string::npos) {
+             std::string("0123456789.-+ #hlz").find(format_str[i]) !=
+                 std::string::npos) {
         specifier += format_str[i];
         i++;
       }
@@ -60,20 +76,27 @@ extern "C" void OSReport(CPUContext &ctx) {
 
         if (type == 'd' || type == 'i' || type == 'c') {
           char buf[64];
-          std::snprintf(buf, sizeof(buf), specifier.c_str(), (int32_t)ctx.gpr[arg_idx++]);
+          std::snprintf(buf, sizeof(buf), specifier.c_str(),
+                        (int32_t)ctx.gpr[arg_idx++]);
           result += buf;
         } else if (type == 'u' || type == 'x' || type == 'X' || type == 'p') {
           char buf[64];
-          std::snprintf(buf, sizeof(buf), specifier.c_str(), (uint32_t)ctx.gpr[arg_idx++]);
+          std::snprintf(buf, sizeof(buf), specifier.c_str(),
+                        (uint32_t)ctx.gpr[arg_idx++]);
           result += buf;
         } else if (type == 's') {
           uint32_t str_ptr = ctx.gpr[arg_idx++];
-          if (str_ptr != 0) result += read_guest_string(ctx, str_ptr);
-          else result += "(null)";
+          if (str_ptr != 0)
+            result += read_guest_string(ctx, str_ptr);
+          else
+            result += "(null)";
         } else if (type == 'f') {
           char buf[64];
-          if (fpr_idx <= 8) std::snprintf(buf, sizeof(buf), specifier.c_str(), ctx.fpr[fpr_idx++]);
-          else std::snprintf(buf, sizeof(buf), "[float_spilled]");
+          if (fpr_idx <= 8)
+            std::snprintf(buf, sizeof(buf), specifier.c_str(),
+                          ctx.fpr[fpr_idx++]);
+          else
+            std::snprintf(buf, sizeof(buf), "[float_spilled]");
           result += buf;
         } else {
           result += specifier;
@@ -88,44 +111,55 @@ extern "C" void OSReport(CPUContext &ctx) {
 
 namespace nwii::runtime {
 uint32_t HW_Reg_Read32(uint32_t addr) {
-    if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
-        addr = (addr & 0x00FFFFFF) | 0xCC000000;
-    }
-    return MMIODispatcher::get().read32(addr);
+  if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
+  }
+  return MMIODispatcher::get().read32(addr);
 }
 uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
-    if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
-        addr = (addr & 0x00FFFFFF) | 0xCC000000;
-    }
-    MMIODispatcher::get().write32(addr, val);
+  if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
+  }
+  MMIODispatcher::get().write32(addr, val);
 }
 void HW_Reg_Write16(uint32_t addr, uint16_t val) { HW_Reg_Write32(addr, val); }
+} // namespace nwii::runtime
+
+extern "C" void DVD_Callback(CPUContext &ctx) {
+  std::cout << "[HLE DVD_Callback] Triggered at PC=0x" << std::hex << ctx.pc
+            << std::dec << "\n";
 }
 
-extern "C" void DVD_Callback(CPUContext& ctx) {
-    std::cout << "[HLE DVD_Callback] Triggered at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+extern "C" void VIInit(CPUContext &ctx) {
+  std::cout << "[HLE VIInit] Triggered at PC=0x" << std::hex << ctx.pc
+            << std::dec << "\n";
+  // The game unmasks VI (PI_INTMR bit 8 = 0x100) itself via MMIO writes.
 }
 
-extern "C" void VIConfigure(CPUContext& ctx) {
-    std::cout << "[HLE VIConfigure] Triggered at PC=0x" << std::hex << ctx.pc << std::dec << "\n";
+extern "C" void VIConfigure(CPUContext &ctx) {
+  std::cout << "[HLE VIConfigure] Triggered at PC=0x" << std::hex << ctx.pc
+            << std::dec << "\n";
 }
 
-#include "runtime/os_thread.h"
-
-extern "C" void OSGetCurrentThread(CPUContext& ctx) {
-    // Most OS functions expect the thread pointer in r3 as the return value.
-    // We'll use a dummy ID of 1 for the main thread for now.
-    ctx.gpr[3] = 1; 
-    ctx.pc = ctx.lr;
+extern "C" void VIConfigurePan(CPUContext &ctx) {
+  std::cout << "[HLE VIConfigurePan] Triggered at PC=0x" << std::hex << ctx.pc
+            << std::dec << "\n";
 }
 
-extern "C" void OSSleepThread(CPUContext& ctx) {
-    // In a real OS, this would involve a thread queue pointer passed in r3.
-    // For this simple implementation, we'll assume we're always sleeping the main thread (ID 1).
-    ThreadManager::get().sleep_thread(1);
+extern "C" void VISetBlack(CPUContext &ctx) {
+  std::cout << "[HLE VISetBlack] Triggered at PC=0x" << std::hex << ctx.pc
+            << std::dec << "\n";
+}
 
-    // Return to the main dispatcher idle loop.
-    // The thread will be resumed by hle_drive_thread_queue, which will restore the PC.
-    ctx.pc = 0;
+extern "C" void VIGetNextField(CPUContext &ctx) {
+  static uint32_t field = 0;
+  field ^= 1;
+  ctx.gpr[3] = field;
+}
+
+extern "C" void VIWaitForRetrace(CPUContext &ctx) {
+  // Advance the global retrace counter so the caller exits immediately.
+  // Without a real VI ISR updating __VIRetraceCount, the game loops forever.
+  nwii::runtime::hw::vi_trigger_interrupt();
 }

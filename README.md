@@ -96,8 +96,8 @@ NWiiRecomp/
 
 Current refactoring plan execution:
 
-- **Phase 1**: IOS Device Interface abstraction.
-- **Phase 2**: MMIO dispatcher table.
+- **Phase 1**: IOS Device Interface abstraction - done!
+- **Phase 2**: MMIO dispatcher table - done!
 - **Phase 3**: IPlatform factory (GC, Wii, Wii U).
 - **Phase 4**: Separation of GX FIFO parsing and rendering.
 - **Phase 5**: Universal Input framework (Wiimote/Gyro/WebSocket).

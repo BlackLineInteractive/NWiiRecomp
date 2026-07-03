@@ -9,6 +9,9 @@ namespace nwii::runtime {
 constexpr int32_t IPC_OK = 0;
 constexpr int32_t IPC_EINVAL = -4;
 constexpr int32_t IPC_ENOENT = -106;
+// Device keeps the request pending: no completion callback is delivered
+// (e.g. /dev/stm eventhook). Never a real IOS result value.
+constexpr int32_t IPC_NO_REPLY = -0x70000001;
 
 struct IoctlvVector {
     uint32_t addr;

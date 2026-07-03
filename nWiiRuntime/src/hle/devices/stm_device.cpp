@@ -13,7 +13,8 @@ public:
     int32_t ioctl(CPUContext& ctx, const IpcRequest& req) override {
         std::cout << "[STM] ioctl cmd=" << req.ioctl_cmd << std::endl;
         if (req.ioctl_cmd == 0x1000 || req.ioctl_cmd == 0x2001) {
-            return 1; // IPC_PENDING
+            // Eventhook: reply only arrives on a real STM event
+            return IPC_NO_REPLY;
         }
         return IPC_OK;
     }

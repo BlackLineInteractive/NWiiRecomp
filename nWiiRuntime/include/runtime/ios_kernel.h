@@ -30,13 +30,16 @@ private:
 
     struct FdEntry {
         IDevice* device = nullptr;
+        // Device-internal handle returned by IDevice::open; passed back to
+        // the device on read/write/seek/close instead of the kernel fd.
+        int32_t internal_fd = 0;
         bool in_use = false;
     };
     std::vector<FdEntry> m_fds;
 
-    int32_t allocate_fd(IDevice* device);
+    int32_t allocate_fd(IDevice* device, int32_t internal_fd);
     void free_fd(uint32_t fd);
-    IDevice* get_device_by_fd(uint32_t fd);
+    FdEntry* get_entry(uint32_t fd);
 };
 
 } // namespace nwii::runtime
