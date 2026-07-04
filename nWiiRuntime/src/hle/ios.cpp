@@ -862,8 +862,9 @@ bool process_pending_callbacks(CPUContext &ctx) {
   if (ctx.in_callback)
     return false;
 
-  // Periodically raise VI (PI_INTSR bit 8 = 0x100) once the OS unmasked it.
-  // This substitutes for real video timing and drives retrace callbacks.
+  // Periodically raise VI (PI_INTSR bit 8 = 0x100, Dolphin INT_CAUSE_VI)
+  // once the game unmasked it. Substitutes for real video timing.
+  // Pre-VIInit wakeups are the decrementer's job, not VI's.
   if (ctx.inst_count % 500000 == 0 && (nwii::runtime::hw::pi_intmr & 0x100)) {
       nwii::runtime::hw::vi_trigger_interrupt();
   }
@@ -897,9 +898,13 @@ bool process_pending_callbacks(CPUContext &ctx) {
   if (active_ints != 0 && (ctx.msr & 0x8000)) {
       int os_intr = -1;
       uint32_t bit_to_clear = 0;
-      // PI_INTSR bit -> __OSInterruptTable index (OSInterrupt.h):
-      // ERROR=23 RSW=22 DI=21 SI=20 EXI0=9 AI=8 DSP=7 MEM=0 VI=24
-      // PE_TOKEN=18 PE_FINISH=19 CP=17 DEBUG=25 HSP=26 ACR/IPC=27
+      // PI_INTSR bits are Dolphin ProcessorInterface.h INT_CAUSE_*:
+      //   0x04 DI, 0x08 SI, 0x10 EXI, 0x20 AI(stream), 0x40 DSP, 0x80 MEM,
+      //   0x100 VI, 0x200 PE_TOKEN, 0x400 PE_FINISH, 0x800 CP, 0x4000 IPC.
+      // __OSInterruptTable indices confirmed by observed game tables
+      // (SHSM: IPC@27, EXI trio@9-11; NFS: SI@20, VI ISR@24):
+      //   DSP_DSP=7 AI=8 EXI_0_EXI=9 CP=17 PE_TOKEN=18 PE_FINISH=19
+      //   SI=20 DI=21 VI=24 ACR/IPC=27
       if      (active_ints & 0x00004000) { os_intr = 27; bit_to_clear = 0x00004000; } // IPC (Wii ACR)
       else if (active_ints & 0x00000100) { os_intr = 24; bit_to_clear = 0x00000100; } // VI
       else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI

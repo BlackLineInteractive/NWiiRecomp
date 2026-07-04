@@ -389,9 +389,33 @@ bool interpret_one(CPUContext& ctx) {
         break;
     }
     case 48: ctx.fpr[rD] = ctx.mmu.read_f32(ea_ra0(simm)); break;         // lfs
+    case 49: { // lfsu: load float single with update
+        uint32_t ea = ctx.gpr[rA] + simm;
+        ctx.fpr[rD] = ctx.mmu.read_f32(ea);
+        ctx.gpr[rA] = ea;
+        break;
+    }
     case 50: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(simm)); break;         // lfd
+    case 51: { // lfdu: load float double with update
+        uint32_t ea = ctx.gpr[rA] + simm;
+        ctx.fpr[rD] = ctx.mmu.read_f64(ea);
+        ctx.gpr[rA] = ea;
+        break;
+    }
     case 52: ctx.mmu.write_f32(ea_ra0(simm), (float)ctx.fpr[rD]); break;  // stfs
+    case 53: { // stfsu: store float single with update
+        uint32_t ea = ctx.gpr[rA] + simm;
+        ctx.mmu.write_f32(ea, (float)ctx.fpr[rD]);
+        ctx.gpr[rA] = ea;
+        break;
+    }
     case 54: ctx.mmu.write_f64(ea_ra0(simm), ctx.fpr[rD]); break;         // stfd
+    case 55: { // stfdu: store float double with update
+        uint32_t ea = ctx.gpr[rA] + simm;
+        ctx.mmu.write_f64(ea, ctx.fpr[rD]);
+        ctx.gpr[rA] = ea;
+        break;
+    }
     default:
         std::cerr << "[Interp] Unhandled opcode " << op << " at 0x"
                   << std::hex << pc << " insn=0x" << insn << std::dec

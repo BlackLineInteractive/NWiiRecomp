@@ -44,8 +44,30 @@ void Config::load(const std::string& filepath) {
             std::cout << "[Config] Game ID override: " << game_id << std::endl;
         }
 
+        auto mode = tbl["input"]["mode"].value<int>();
+        if (mode) {
+            input_mode = *mode;
+            static const char* mode_names[] = {
+                "", "wiimote-bluetooth", "gamepad-classic",
+                "gamepad-pointer-assist", "gamepad-full-tilt",
+                "smartphone", "keyboard-mouse", "touch"
+            };
+            if (input_mode >= 1 && input_mode <= 7)
+                std::cout << "[Config] Input mode " << input_mode << " ("
+                          << mode_names[input_mode] << ")" << std::endl;
+            else
+                std::cout << "[Config] Unknown input mode " << input_mode
+                          << ", falling back to 6 (keyboard-mouse)" << std::endl;
+        }
+
         auto gyro = tbl["input"]["gyro_sensitivity"].value<double>();
         if (gyro) gyro_sensitivity = (float)*gyro;
+
+        auto pspeed = tbl["input"]["pointer_speed"].value<double>();
+        if (pspeed) pointer_speed = (float)*pspeed;
+
+        auto pport = tbl["input"]["phone_port"].value<int>();
+        if (pport) phone_port = *pport;
 
     } catch (const toml::parse_error& err) {
         std::cerr << "[Config] Failed to parse config.toml:\n" << err << std::endl;

@@ -14,6 +14,7 @@ add_library(nwiiruntime STATIC
     src/input/input_manager.cpp
     src/input/sources/mouse_keyboard_source.cpp
     src/input/sources/gamepad_source.cpp
+    src/input/sources/phone_source.cpp
     src/hle/memory.cpp
     src/hle/gx.cpp
     src/hle/pad.cpp

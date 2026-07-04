@@ -50,8 +50,24 @@ public:
     // Can be overridden via config.toml: game_id = "RSZK"
     std::string game_id = "RSZK";
 
-    // Gyro input sensitivity (0.1 = very subtle, 2.0 = very responsive)
+    // Input mode, selectable in config.toml [input] mode = N:
+    //   1 real Wiimote over Bluetooth        (planned)
+    //   2 gamepad as Classic Controller / GC pad
+    //   3 gamepad + motion-assisted pointer (right stick or pad gyro)
+    //   4 gamepad with full tilt control and sensitivity setting
+    //   5 smartphone as Wiimote/pointer over UDP
+    //   6 keyboard + mouse (mouse = IR pointer)
+    //   7 touch screen                        (planned)
+    int input_mode = 6;
+
+    // Gyro/tilt input sensitivity (0.1 = very subtle, 2.0 = very responsive)
     float gyro_sensitivity = 1.0f;
+
+    // Pointer speed for stick-driven IR movement (mode 3)
+    float pointer_speed = 1.0f;
+
+    // UDP port for the smartphone input server (mode 5)
+    int phone_port = 4313;
 
     // Per-game quirks (loaded from assets/games/<game_id>.toml after DOL/RPX parse)
     GameProfile game_profile;

@@ -1,6 +1,7 @@
 #include "input/input_manager.h"
 #include "input/sources/gamepad_source.h"
 #include "input/sources/mouse_keyboard_source.h"
+#include "input/sources/phone_source.h"
 #include "loader/loader.h"
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
@@ -55,11 +56,40 @@ int main(int argc, char **argv) {
     return 1;
   nwii::runtime::Config::get().game_dir = argv[1];
 
-  // Register input sources
-  nwii::runtime::input::InputManager::get().add_source(
-      std::make_unique<nwii::runtime::input::MouseKeyboardSource>());
-  nwii::runtime::input::InputManager::get().add_source(
-      std::make_unique<nwii::runtime::input::GamepadSource>());
+  // Register input sources per configured mode ([input] mode in TOML)
+  {
+    using namespace nwii::runtime::input;
+    auto& im = InputManager::get();
+    int mode = nwii::runtime::Config::get().input_mode;
+    switch (mode) {
+    case 1: // real Wiimote over Bluetooth: not implemented yet
+      std::cout << "[Input] Mode 1 (Bluetooth Wiimote) not implemented, "
+                   "falling back to keyboard+mouse" << std::endl;
+      im.add_source(std::make_unique<MouseKeyboardSource>());
+      break;
+    case 2: // gamepad as Classic/GC controller
+    case 3: // gamepad + pointer assist
+    case 4: // gamepad full tilt
+      im.add_source(std::make_unique<GamepadSource>());
+      // Keyboard stays available for menus/debugging
+      im.add_source(std::make_unique<MouseKeyboardSource>());
+      break;
+    case 5: // smartphone over UDP
+      im.add_source(std::make_unique<PhoneSource>());
+      im.add_source(std::make_unique<MouseKeyboardSource>());
+      break;
+    case 7: // touch: raylib maps primary touch to mouse on most hosts
+      std::cout << "[Input] Mode 7 (touch): using pointer-as-touch mapping"
+                << std::endl;
+      im.add_source(std::make_unique<MouseKeyboardSource>());
+      break;
+    case 6:
+    default:
+      im.add_source(std::make_unique<MouseKeyboardSource>());
+      im.add_source(std::make_unique<GamepadSource>());
+      break;
+    }
+  }
 
   // NWII_HEADLESS=1 runs without a window (log-driven testing, CI)
   const char *headless_env = std::getenv("NWII_HEADLESS");

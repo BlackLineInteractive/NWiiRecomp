@@ -49,10 +49,17 @@ NWiiRecomp/
 ### Recompiler (`nWiiRecomp`)
 
 - Translates PowerPC 750CL instructions to C++.
-- Implements core integer, logic, floating point, branch, and SPR instructions.
+- Implements core integer, logic, floating point, branch, and SPR instructions,
+  including the time base (`mftb`) and decrementer (`mtdec`/`mfdec`).
 - Implements paired-singles (SIMD) with GQR-based quantization scales mapped to C++ intrinsics.
 - Tail-call detection and `goto`-based local branch inlining.
 - Mid-function entry point dispatch via `switch(ctx.pc)`.
+- Per-game HLE hooks from `[hle_hooks]` in the config TOML; the recompiler
+  itself contains no game-specific addresses.
+- Functions that are all zeroes in the DOL (filled with code at runtime)
+  are routed to the runtime interpreter instead of being recompiled.
+- Optional per-function call tracing, enabled at run time with
+  `NWII_TRACE_CALLS=1`.
 
 ### Runtime (`nWiiRuntime`)
 
@@ -63,12 +70,31 @@ NWiiRecomp/
   <img src="image/video/gx-fifo-test-2.gif" alt="NWiiRuntime GX FIFO test 2" width="105%"/>
 </p>
 
-- **Configuration**: Per-game TOML profiles via `tomlplusplus` for target platform and overrides.
-- **Input**: Raylib gamepad API integration mapped to `PADStatus`.
+- **Configuration**: Per-game TOML profiles via `tomlplusplus` for target platform, HLE hooks, and input.
+- **Interpreter fallback**: A PPC750 integer interpreter executes code that
+  does not exist in the DOL image (arena-clear helpers copied to low memory,
+  trampolines, streamed overlays), then hands control back to recompiled code.
+- **Interrupts**: PI interrupt controller with the Dolphin `INT_CAUSE_*` bit
+  layout dispatched into the guest `__OSInterruptTable`; decrementer
+  exceptions drive `OSAlarm`.
+- **Hardware MMIO**: Register-level emulation of VI, DI (drive commands with
+  DMA from a virtual disc), SI (joybus protocol with controller ID, origin,
+  and polling), EXI (RTC/SRAM chip with valid checksums), DSP mailboxes,
+  AI, MI, and the Wii IPC (Starlet) interface.
+- **IOS HLE**: /dev/di, /dev/fs (virtual NAND with SYSCONF and settings),
+  /dev/es, /dev/stm, /dev/usb served through a fd-based kernel, reachable
+  both from IOS_* library calls and from the raw HW IPC ring.
+- **Virtual disc**: Direct reads from extracted game dumps (`sys/` +
+  `files/`), WBFS, and ISO images.
+- **Input**: Selectable modes in `[input]`: gamepad as Classic/GC pad,
+  gamepad with stick- or gyro-assisted pointer, full tilt control with
+  sensitivity setting, smartphone as Wiimote over UDP, keyboard and mouse.
 - **GX Graphics**: Structure tracking and WGPIPE ring-buffer parsing.
-- **Memory**: DOL loading and virtual memory mapping.
+- **Memory**: DOL loading and virtual memory mapping; GC and Wii low-memory
+  layouts (arena, FST, BI2, console type) set up per platform.
 - **Wii U / Cafe OS**: Initial RPX loading, ELF parsing, and Latte GPU PM4 packet handling.
-- **HLE Stubs**: Basic implementations for OS, GX, PAD, WPAD, MEM, and IOS subsystems.
+- **Headless mode**: `NWII_HEADLESS=1` runs without a window for automated
+  boot testing and log capture.
 
 ### Studio (`nWiiStudio`)
 
@@ -98,10 +124,15 @@ Current refactoring plan execution:
 
 - **Phase 1**: IOS Device Interface abstraction - done!
 - **Phase 2**: MMIO dispatcher table - done!
-- **Phase 3**: IPlatform factory (GC, Wii, Wii U).
-- **Phase 4**: Separation of GX FIFO parsing and rendering.
-- **Phase 5**: Universal Input framework (Wiimote/Gyro/WebSocket).
-- **Phase 6**: Wii U coreinit.rpl HLE and GX2 API translation.
+- **Phase 3**: IPlatform factory (GC, Wii, Wii U) - done!
+- **Phase 4**: Separation of GX FIFO parsing and rendering - done!
+- **Phase 5**: Universal Input framework - config-driven modes landed
+  (gamepad, pointer assist, tilt, smartphone over UDP, keyboard/mouse);
+  native Bluetooth Wiimote pairing still open.
+- **Phase 6**: Boot both reference titles to their main menus
+  (GameCube boots through OSInit, threads, and interrupts; Wii reaches
+  engine heap initialization).
+- **Phase 7**: Wii U coreinit.rpl HLE and GX2 API translation.
 
 ---
 
@@ -119,19 +150,30 @@ cmake --build build -j$(nproc)
 ## Usage
 
 ```bash
-# 1. Analyze and recompile the game DOL
-./build/nWiiRecomp/nwiirecomp path/to/game.dol path/to/symbols.csv
+# 1. Analyze and recompile the game (paths and options come from the TOML)
+./build/nWiiRecomp/nwiirecomp config.toml
 
 # 2. Build the generated project
 cd export
 cmake -B build
-cmake --build build -j$(nproc)
+cmake --build build -j12
 
-# 3. Run
-./build/RecompiledGame
+# 3. Run with the extracted game directory
+cd ..
+./export/build/<ProjectName> path/to/extracted-game config.toml
 ```
 
-The recompiler outputs a self-contained `export/` directory containing `output.cpp` and a copy of `nWiiRuntime`. It can be built independently without the rest of this repository.
+The recompiler outputs a self-contained `export/` directory containing the
+generated sources and a copy of `nWiiRuntime`. It can be built independently
+without the rest of this repository. Delete `export/` (including its `build/`)
+before regenerating so no stale sources survive.
+
+Useful environment variables:
+
+```bash
+NWII_HEADLESS=1      # run without a window, log-only (boot debugging)
+NWII_TRACE_CALLS=1   # print every recompiled function entry
+```
 
 ---
 
