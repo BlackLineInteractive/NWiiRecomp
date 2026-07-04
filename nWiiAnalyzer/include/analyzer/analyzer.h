@@ -20,6 +20,10 @@ struct Function {
     uint32_t start_address;
     uint32_t end_address; // Address of the return instruction (blr) or similar
     std::string hle_hook_name; // Set if this function matches an HLE signature
+    // SDK name recovered from a Dolphin signature database (totaldb.dsy),
+    // e.g. "OSInit", "DVDReadAsyncPrio". Informational: used for symbol
+    // naming, tracing and hook curation.
+    std::string sdk_name;
     std::vector<Instruction> instructions;
     std::set<uint32_t> jump_table_targets;
 };
@@ -30,6 +34,10 @@ public:
 
     // Run the recursive descent analysis starting from the entry point and optional roots
     void analyze(const std::vector<uint32_t>& additional_roots = {});
+
+    // Match discovered functions against a Dolphin signature database
+    // (.dsy) and fill Function::sdk_name. Returns number of matches.
+    int apply_signature_db(const std::string& dsy_path);
 
     const std::map<uint32_t, Function>& get_functions() const { return functions_; }
 

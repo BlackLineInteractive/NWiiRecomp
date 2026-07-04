@@ -169,7 +169,9 @@ int main(int argc, char **argv) {
       std::cout << "[Loader] crt stack top 0x" << std::hex << stack_top
                 << " above section end 0x" << arena_lo
                 << ", raising ArenaLo" << std::dec << std::endl;
-      arena_lo = (stack_top + 31) & ~31u;
+      // +0x100 guard: __OSInitAudioSystem stashes DSP boot code in the
+      // 128 bytes right below ArenaLo, which must not be live stack
+      arena_lo = (stack_top + 0x100 + 31) & ~31u;
     }
   }
 
@@ -249,12 +251,12 @@ int main(int argc, char **argv) {
       std::cout << "[Loader] BI2 loaded at 0x" << std::hex << bi2_addr
                 << std::dec << std::endl;
     }
-    // Verified against both SDK generations (EA GC 2002 OSInit and the
-    // RVL 2009 SDK in SHSM): OSInit reads ArenaLo from 0x34 and ArenaHi
-    // from 0x30, not the other way around. ArenaLo = end of sections,
-    // raised above the crt stack detected from the entry code.
-    ctx->mmu.write32(0x80000030, gc_arena_hi);
-    ctx->mmu.write32(0x80000034, arena_lo);
+    // Classic YAGCD layout, confirmed by OSClearArena's actual arguments
+    // (start=*(0x30), size=*(0x34)-*(0x30)): ArenaLo at 0x30, ArenaHi at
+    // 0x34. ArenaLo = end of sections raised above the crt stack plus the
+    // DSP-boot scratch guard.
+    ctx->mmu.write32(0x80000030, arena_lo);
+    ctx->mmu.write32(0x80000034, gc_arena_hi);
     std::cout << "[Loader] GC Arena = 0x" << std::hex << arena_lo << " - 0x"
               << gc_arena_hi << " (" << std::dec
               << (gc_arena_hi - arena_lo) / 1024 << " KiB)" << std::endl;

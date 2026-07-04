@@ -843,11 +843,25 @@ bool process_pending_callbacks(CPUContext &ctx) {
           }
           std::cout << std::dec << "\n";
       };
-      // TEMP: NFS heap table forensics
-      std::cout << "  [HeapTbl]";
-      for (int i = 0; i < 8; i++)
-          std::cout << " " << std::hex << ctx.mmu.read32(0x80369B20 + i * 4);
-      std::cout << " defid=" << ctx.mmu.read32(0x803926F8) << std::dec << "\n";
+      // NWII_PEEK=hexaddr[,words]: dump guest memory each heartbeat
+      {
+          static uint32_t peek_addr = 0, peek_words = 8;
+          static bool peek_parsed = false;
+          if (!peek_parsed) {
+              peek_parsed = true;
+              if (const char *env = std::getenv("NWII_PEEK")) {
+                  peek_addr = (uint32_t)std::strtoul(env, nullptr, 16);
+                  if (const char *c = std::strchr(env, ','))
+                      peek_words = (uint32_t)std::strtoul(c + 1, nullptr, 10);
+              }
+          }
+          if (peek_addr) {
+              std::cout << "  [Peek 0x" << std::hex << peek_addr << "]";
+              for (uint32_t i = 0; i < peek_words; i++)
+                  std::cout << " " << ctx.mmu.read32(peek_addr + i * 4);
+              std::cout << std::dec << "\n";
+          }
+      }
       uint32_t cur = ctx.mmu.read32(0x800000E4);
       if (cur) dump_thread(cur, "CurThread");
       uint32_t th = ctx.mmu.read32(0x800000DC);

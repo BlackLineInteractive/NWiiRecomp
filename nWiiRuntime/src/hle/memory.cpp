@@ -14,9 +14,11 @@ void OSInitAlloc(CPUContext& ctx) {
 }
 
 void OSCreateHeap(CPUContext& ctx) {
+    // SDK signature: OSCreateHeap(void* lo, void* hi)
     uint32_t start_addr = ctx.gpr[3];
-    uint32_t size = ctx.gpr[4];
-    
+    uint32_t end_addr = ctx.gpr[4];
+    uint32_t size = end_addr - start_addr;
+
     // We align the start address to 32 bytes
     uint32_t aligned_start = (start_addr + 31) & ~31;
     

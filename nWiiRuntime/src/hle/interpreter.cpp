@@ -437,7 +437,8 @@ void interpret_step(CPUContext& ctx) {
         announce_budget--;
         std::cout << "[Interp] Interpreting at 0x" << std::hex << ctx.pc
                   << " lr=0x" << ctx.lr << " r1=0x" << ctx.gpr[1]
-                  << std::dec << "\n";
+                  << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4]
+                  << " r5=0x" << ctx.gpr[5] << std::dec << "\n";
     }
     for (uint64_t i = 0; i < 100000000ULL; ++i) {
         uint32_t before = ctx.pc;

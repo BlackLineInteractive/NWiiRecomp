@@ -1,4 +1,5 @@
 #include "analyzer/analyzer.h"
+#include "analyzer/dolphin_sigdb.h"
 #include "common/endian.h"
 #include "ppc/instruction.h"
 #include "analyzer/signature_scanner.h"
@@ -349,6 +350,39 @@ void Analyzer::analyze(const std::vector<uint32_t>& additional_roots) {
 
   std::cout << "[Analyzer] Analysis complete. Total functions found: "
             << functions_.size() << "\n";
+}
+
+int Analyzer::apply_signature_db(const std::string& dsy_path) {
+  DolphinSigDB db;
+  if (!db.load_dsy(dsy_path)) {
+    std::cout << "[Analyzer] No signature DB at " << dsy_path << "\n";
+    return 0;
+  }
+
+  int matched = 0;
+  for (auto &pair : functions_) {
+    Function &func = pair.second;
+    if (func.instructions.empty())
+      continue;
+    std::vector<uint32_t> opcodes;
+    opcodes.reserve(func.instructions.size());
+    for (const auto &inst : func.instructions)
+      opcodes.push_back(inst.opcode);
+
+    uint32_t sum = DolphinSigDB::checksum(opcodes);
+    if (const DolphinSigDB::Entry *e = db.match(sum)) {
+      // Guard against hash collisions on tiny functions: require the
+      // database size to agree with what we disassembled.
+      uint32_t our_size = (uint32_t)opcodes.size() * 4;
+      if (e->size == our_size) {
+        func.sdk_name = e->name;
+        matched++;
+      }
+    }
+  }
+  std::cout << "[Analyzer] Signature DB matched " << matched << " of "
+            << functions_.size() << " functions\n";
+  return matched;
 }
 
 } // namespace analyzer
