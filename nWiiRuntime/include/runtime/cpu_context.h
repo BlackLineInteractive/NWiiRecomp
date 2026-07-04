@@ -488,6 +488,8 @@ void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc);
 // Dispatcher fallback for runtime-generated code (not present in the DOL)
 bool interpret_one(CPUContext& ctx);
 void interpret_step(CPUContext& ctx);
+void add_recompiled_range(uint32_t start, uint32_t end);
+bool in_recompiled_code(uint32_t pc);
 
 // Call tracing for recompiled functions, enabled with NWII_TRACE_CALLS=1
 extern bool g_trace_calls;

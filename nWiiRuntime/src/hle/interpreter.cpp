@@ -14,6 +14,25 @@
 namespace nwii {
 namespace runtime {
 
+// Address ranges covered by statically recompiled code (DOL text sections),
+// registered by the loader. Anything outside is interpreter territory:
+// low-memory helpers, overlays the game streams into BSS/heap, and so on.
+struct CodeRange { uint32_t start, end; };
+static CodeRange g_code_ranges[16];
+static int g_code_range_count = 0;
+
+void add_recompiled_range(uint32_t start, uint32_t end) {
+    if (g_code_range_count < 16)
+        g_code_ranges[g_code_range_count++] = {start, end};
+}
+
+bool in_recompiled_code(uint32_t pc) {
+    for (int i = 0; i < g_code_range_count; ++i)
+        if (pc >= g_code_ranges[i].start && pc < g_code_ranges[i].end)
+            return true;
+    return false;
+}
+
 static inline void set_cr0(CPUContext& ctx, int32_t v) {
     ctx.cr[0].lt = v < 0;
     ctx.cr[0].gt = v > 0;
@@ -407,8 +426,13 @@ void interpret_step(CPUContext& ctx) {
                           << ctx.mmu.read32(before) << " lr=0x" << ctx.lr
                           << " ctr=0x" << ctx.ctr << std::dec << "\n";
             }
-            // Control transfer out of low memory: back to recompiled code
-            if ((ctx.pc & 0x3FFFFFFF) >= 0x4000)
+            // Control transfer back into recompiled code: let the
+            // dispatcher take over. Otherwise keep interpreting (helpers,
+            // streamed overlays, generated code).
+            if (in_recompiled_code(ctx.pc))
+                return;
+            // Give interrupts/callbacks a chance during long stretches
+            if ((i & 0xFFF) == 0 && process_pending_callbacks(ctx))
                 return;
         }
     }

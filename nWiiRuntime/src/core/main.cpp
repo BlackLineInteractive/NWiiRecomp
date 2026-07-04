@@ -100,6 +100,16 @@ int main(int argc, char **argv) {
       for (size_t i = 0; i < sec.size; ++i)
         ctx->mmu.write8(sec.address + i, sec.data[i]);
     }
+    // Text sections have statically recompiled bodies; everything outside
+    // them (low-mem helpers, streamed overlays) runs on the interpreter.
+    // The recompiler emits interpreter stubs for code below 0x80004000
+    // (OS low-mem region), so clip the range to match.
+    if (sec.is_text) {
+      uint32_t start = std::max<uint32_t>(sec.address, 0x80004000);
+      uint32_t end = sec.address + sec.size;
+      if (end > start)
+        nwii::runtime::add_recompiled_range(start, end);
+    }
   }
 
   arena_lo = (arena_lo + 31) & ~31;
