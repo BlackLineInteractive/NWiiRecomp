@@ -22,6 +22,7 @@ NO_GitHub/
 NWii-documentation/
 
 test_gx/
+.*/
 
 # CMake
 CMakeCache.txt
