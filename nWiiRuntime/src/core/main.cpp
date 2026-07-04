@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
   // The RVL SDK build of SHSM reads its MEM1 arena lo from 0x34 instead.
   if (!is_gc) {
     ctx->mmu.write32(0x80000030, arena_lo);
-    ctx->mmu.write32(0x80000034, arena_lo);
+    ctx->mmu.write32(0x80000034, arena_hi);
   }
   if (!vdisc.valid()) {
     // No extracted disc: keep legacy behaviour of 0x38 = top of usable MEM1

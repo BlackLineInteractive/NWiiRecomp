@@ -249,70 +249,33 @@ void WiiPlatform::ios_ioctlv_async(CPUContext& ctx) {
   std::cout << "[HLE IOS] IOS_IoctlvAsync: fd=" << fd << " cmd=0x" << std::hex
             << cmd << " cb=0x" << callback << std::dec << std::endl;
 
-  static uint16_t last_hci_opcode = 0;
+  int32_t result = IPC_OK;
+  IpcRequest req{};
+  req.fd = fd;
+  req.ioctl_cmd = cmd;
 
-  if (fd == 15) {
-    uint32_t incnt = ctx.gpr[5];
-    uint32_t outcnt = ctx.gpr[6];
-    uint32_t vecs = ctx.gpr[7];
+  // We need to parse the vectors here, similar to ios_ioctlv, but using the HLE calling convention
+  // Real IOS_IoctlvAsync: fd=r3, cmd=r4, incnt=r5, outcnt=r6, vecs=r7, cb=r8, ud=r9
+  uint32_t arg_in = ctx.gpr[5];
+  uint32_t arg_out = ctx.gpr[6];
+  uint32_t arg_array = ctx.gpr[7];
 
-    if (cmd == 11) { // USB_SUBMIT_CTRL_URB
-      if (incnt >= 2) {
-        uint32_t vec_data_ptr = vecs + 8;
-        uint32_t data_ptr = ctx.mmu.read32(vec_data_ptr);
-        uint32_t data_len = ctx.mmu.read32(vec_data_ptr + 4);
-        if (data_ptr != 0 && data_len >= 3) {
-          uint8_t op_lsb = ctx.mmu.read8(data_ptr);
-          uint8_t op_msb = ctx.mmu.read8(data_ptr + 1);
-          last_hci_opcode = (op_msb << 8) | op_lsb;
-          std::cout << "[HLE IOS] Bluetooth HCI Command received: 0x"
-                    << std::hex << last_hci_opcode << std::dec << std::endl;
-        }
-      }
-    } else if (cmd == 13) { // USB_SUBMIT_INTR_URB
-      if (outcnt >= 1) {
-        uint32_t vec_out_ptr = vecs + (incnt * 8);
-        uint32_t out_ptr = ctx.mmu.read32(vec_out_ptr);
-        uint32_t out_len = ctx.mmu.read32(vec_out_ptr + 4);
-        if (out_ptr != 0 && out_len >= 6) {
-          std::cout << "[HLE IOS] Responding to HCI Interrupt for opcode: 0x"
-                    << std::hex << last_hci_opcode << std::dec << std::endl;
-          ctx.mmu.write8(out_ptr + 0, 0x0E); // Command Complete
-          ctx.mmu.write8(out_ptr + 2, 0x01); // Num HCI Command Packets
-          ctx.mmu.write8(out_ptr + 3, last_hci_opcode & 0xFF);
-          ctx.mmu.write8(out_ptr + 4, last_hci_opcode >> 8);
-          ctx.mmu.write8(out_ptr + 5, 0x00); // Success
+  req.arg_cnt_in = arg_in;
+  req.arg_cnt_out = arg_out;
 
-          if (last_hci_opcode == 0x1001) {        // Read Local Version
-            ctx.mmu.write8(out_ptr + 1, 0x0C);    // Length
-            ctx.mmu.write8(out_ptr + 6, 0x06);    // HCI Version
-            ctx.mmu.write8(out_ptr + 7, 0x00);    // HCI Revision LSB
-            ctx.mmu.write8(out_ptr + 8, 0x00);    // HCI Revision MSB
-            ctx.mmu.write8(out_ptr + 9, 0x00);    // LMP Version
-            ctx.mmu.write8(out_ptr + 10, 0x0F);   // Manufacturer LSB
-            ctx.mmu.write8(out_ptr + 11, 0x00);   // Manufacturer MSB
-            ctx.mmu.write8(out_ptr + 12, 0x00);   // LMP Subversion LSB
-            ctx.mmu.write8(out_ptr + 13, 0x00);   // LMP Subversion MSB
-          } else if (last_hci_opcode == 0x1009) { // Read BD ADDR
-            ctx.mmu.write8(out_ptr + 1, 0x0A);    // Length
-            ctx.mmu.write8(out_ptr + 6, 0x11);    // BD ADDR
-            ctx.mmu.write8(out_ptr + 7, 0x22);
-            ctx.mmu.write8(out_ptr + 8, 0x33);
-            ctx.mmu.write8(out_ptr + 9, 0x44);
-            ctx.mmu.write8(out_ptr + 10, 0x55);
-            ctx.mmu.write8(out_ptr + 11, 0x66);
-          } else {
-            ctx.mmu.write8(out_ptr + 1, 0x04); // Length
-          }
-        }
-      }
-    }
+  for (uint32_t i = 0; i < arg_in + arg_out; i++) {
+      IoctlvVector vec;
+      vec.addr = ctx.mmu.read32(arg_array + i * 8);
+      vec.len = ctx.mmu.read32(arg_array + i * 8 + 4);
+      req.ioctlv_vecs.push_back(vec);
   }
 
-  // Fire completion callback so game doesn't hang waiting for ioctl to finish
-  if (nwii::runtime::valid_callback(callback)) {
-    ctx.queue_callback(callback, IPC_OK, userdata);
+  result = IOSKernel::get().ioctlv(ctx, req);
+
+  if (result != IPC_NO_REPLY && nwii::runtime::valid_callback(callback)) {
+    ctx.queue_callback(callback, result, userdata);
   }
+
   ctx.gpr[3] = IPC_OK;
   ctx.pc = ctx.lr;
 }

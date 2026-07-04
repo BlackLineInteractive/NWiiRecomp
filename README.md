@@ -118,24 +118,6 @@ NWiiRecomp/
 
 ---
 
-## What's Next
-
-Current refactoring plan execution:
-
-- **Phase 1**: IOS Device Interface abstraction - done!
-- **Phase 2**: MMIO dispatcher table - done!
-- **Phase 3**: IPlatform factory (GC, Wii, Wii U) - done!
-- **Phase 4**: Separation of GX FIFO parsing and rendering - done!
-- **Phase 5**: Universal Input framework - config-driven modes landed
-  (gamepad, pointer assist, tilt, smartphone over UDP, keyboard/mouse);
-  native Bluetooth Wiimote pairing still open.
-- **Phase 6**: Boot both reference titles to their main menus
-  (GameCube boots through OSInit, threads, and interrupts; Wii reaches
-  engine heap initialization).
-- **Phase 7**: Wii U coreinit.rpl HLE and GX2 API translation.
-
----
-
 ## Building
 
 **Requirements:** CMake 3.20+, a C++20 compiler, internet access (Raylib is fetched automatically).

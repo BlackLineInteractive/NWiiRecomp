@@ -513,9 +513,9 @@ extern MMU *g_mmu;
 }
 } // namespace nwii
 
-extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
+extern "C" int32_t handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
   if (!nwii::runtime::g_mmu)
-    return;
+    return 0;
 
   // request_addr is now a virtual address (translated by ipc_fake_ack).
   // If called directly from the old path it could still be physical, so
@@ -617,8 +617,11 @@ extern "C" void handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
   std::cout << "[HW IPC] cmd=" << cmd << " virt=0x" << std::hex << virt_addr
             << " -> result=" << (int32_t)result << std::dec << std::endl;
 
-  // Write result back into the IPC request buffer
-  nwii::runtime::g_mmu->write32(virt_addr + 4, (uint32_t)(int32_t)result);
+  // Write result back into the IPC request buffer only if we are actually replying
+  if (result != -0x70000001) { // IPC_NO_REPLY
+      nwii::runtime::g_mmu->write32(virt_addr + 4, (uint32_t)(int32_t)result);
+  }
+  return result;
 }
 
 namespace nwii {
@@ -882,6 +885,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {
           ctx.vblank_pending = false;
+          nwii::runtime::hw::vi_trigger_interrupt();
           hle_drive_thread_queue(ctx);
       }
   }

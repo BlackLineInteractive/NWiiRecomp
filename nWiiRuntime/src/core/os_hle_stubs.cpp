@@ -123,7 +123,7 @@ extern "C" void OSReport(CPUContext &ctx) {
       result += format_str[i];
     }
   }
-  std::cout << "[OSReport] " << result;
+  std::cout << "[OSReport] [LR:0x" << std::hex << ctx.lr << std::dec << "] " << result;
 }
 
 namespace nwii::runtime {

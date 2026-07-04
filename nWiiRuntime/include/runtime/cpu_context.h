@@ -93,6 +93,9 @@ struct MMU {
 
   void write8(uint32_t addr, uint8_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
+      watch_hit(addr, value, 8);
+
     if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
 
@@ -112,6 +115,9 @@ struct MMU {
 
   void write16(uint32_t addr, uint16_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
+      watch_hit(addr, value, 16);
+
     if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
 
@@ -149,24 +155,32 @@ struct MMU {
   float read_f32(uint32_t addr) { uint32_t val = read32(addr); float f; std::memcpy(&f, &val, 4); return f; }
   void write_f32(uint32_t addr, float value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    
+    uint32_t v;
+    std::memcpy(&v, &value, sizeof(float));
+    if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
+      watch_hit(addr, v, 32);
+
     if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {
-      uint32_t v;
-      std::memcpy(&v, &value, sizeof(float));
       ptr[0] = v >> 24; ptr[1] = (v >> 16) & 0xFF; ptr[2] = (v >> 8) & 0xFF; ptr[3] = v & 0xFF;
     }
   }
 
   void write_f64(uint32_t addr, double value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
+    
+    uint64_t v;
+    std::memcpy(&v, &value, sizeof(double));
+    if (g_watch_addr && (paddr & ~7u) == (g_watch_addr & 0x3FFFFFF8))
+      watch_hit(addr, v >> 32, 64);
+
     if (paddr == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {
-      uint64_t v;
-      std::memcpy(&v, &value, sizeof(double));
       ptr[0] = v >> 56; ptr[1] = (v >> 48) & 0xFF; ptr[2] = (v >> 40) & 0xFF; ptr[3] = (v >> 32) & 0xFF;
       ptr[4] = (v >> 24) & 0xFF; ptr[5] = (v >> 16) & 0xFF; ptr[6] = (v >> 8) & 0xFF; ptr[7] = v & 0xFF;
     }
@@ -179,6 +193,10 @@ struct MMU {
            ((uint64_t)ptr[4] << 24) | ((uint64_t)ptr[5] << 16) | ((uint64_t)ptr[6] << 8) | ptr[7];
   }
   void write64(uint32_t addr, uint64_t value) {
+    uint32_t paddr = addr & 0x3FFFFFFF;
+    if (g_watch_addr && (paddr & ~7u) == (g_watch_addr & 0x3FFFFFF8))
+      watch_hit(addr, value >> 32, 64);
+
     uint8_t *ptr = get_ptr(addr);
     if (!ptr) return;
     ptr[0] = value >> 56; ptr[1] = (value >> 48) & 0xFF; ptr[2] = (value >> 40) & 0xFF; ptr[3] = (value >> 32) & 0xFF;
