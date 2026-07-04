@@ -48,6 +48,10 @@ struct CallbackInfo {
 
 // Removed CallbackInterrupt in favor of setjmp/longjmp for exception unwinding
 
+// Debug watchpoint: NWII_WATCH=80369b20 (hex) logs writes to that word
+void watch_hit(uint32_t addr, uint32_t value, int width);
+extern uint32_t g_watch_addr;
+
 // Strict Dolphin-accurate MMU
 struct MMU {
   std::vector<uint8_t> mem1;
@@ -132,6 +136,8 @@ struct MMU {
   void write32(uint32_t addr, uint32_t value) {
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
+    if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
+      watch_hit(addr, value, 32);
 
     if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
     if (is_hw_reg(paddr)) { HW_Reg_Write32(paddr, value); return; }
@@ -255,6 +261,12 @@ struct CPUContext {
 
   // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
   uint32_t reservation_addr = 0xFFFFFFFF;
+
+  // Context address saved by the last interrupt/callback dispatch.
+  // __OSDispatchInterrupt (whose role our sentinel plays) restores the
+  // context IT saved, not whatever the handler left in __OSCurrentContext:
+  // SDK handlers legitimately leave their own exception context installed.
+  uint32_t dispatch_saved_ctx = 0;
 
   // Decrementer (SPR 22). Ticks with the time base, which this runtime
   // models as inst_count (same clock mftb reads). Underflow raises the

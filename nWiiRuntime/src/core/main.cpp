@@ -144,6 +144,35 @@ int main(int argc, char **argv) {
 
   arena_lo = (arena_lo + 31) & ~31;
 
+  // The crt stack usually sits ABOVE the last section (linker __stack),
+  // and OSClearArena wipes everything from ArenaLo up. Recover the stack
+  // top from the entry code itself: __init_registers loads r1 with
+  // "lis r1, X@ha" (3C20xxxx) followed by "ori/addi r1, r1, X@lo".
+  {
+    uint32_t stack_top = 0;
+    uint32_t hi = 0;
+    bool have_hi = false;
+    for (uint32_t off = 0; off < 0x200; off += 4) {
+      uint32_t insn = ctx->mmu.read32(exe.entry_point + off);
+      if ((insn & 0xFFFF0000) == 0x3C200000) { // lis r1, hi
+        hi = (insn & 0xFFFF) << 16;
+        have_hi = true;
+      } else if (have_hi && (insn & 0xFFFF0000) == 0x60210000) { // ori r1,r1,lo
+        stack_top = hi | (insn & 0xFFFF);
+        break;
+      } else if (have_hi && (insn & 0xFFFF0000) == 0x38210000) { // addi r1,r1,lo
+        stack_top = hi + (int16_t)(insn & 0xFFFF);
+        break;
+      }
+    }
+    if (stack_top >= arena_lo && stack_top < 0x81800000) {
+      std::cout << "[Loader] crt stack top 0x" << std::hex << stack_top
+                << " above section end 0x" << arena_lo
+                << ", raising ArenaLo" << std::dec << std::endl;
+      arena_lo = (stack_top + 31) & ~31u;
+    }
+  }
+
   bool is_gc = nwii::runtime::Config::get().platform ==
                nwii::runtime::Platform::GameCube;
 
@@ -183,10 +212,11 @@ int main(int argc, char **argv) {
   // 0x28: __OSPhysMemSize (MEM1)
   ctx->mmu.write32(0x80000028, mem1_size);
   ctx->mmu.write32(0x8000002C, console_type);
-  // Arena bounds. GC: leave 0x30/0x34 as zero (Dolphin does the same) so
-  // OSInit falls back to the game's own __ArenaLo/__ArenaHi linker symbols.
-  // Section-end-based values are wrong: the runtime stack usually sits
-  // ABOVE the BSS end, and OSClearArena would wipe it (seen in NFS HP2).
+  // Arena bounds, apploader-style (matches Dolphin BS2 emulation):
+  // GC: 0x30 (ArenaLo) stays 0 so OSInit uses the game's linker __ArenaLo
+  // (a section-end guess would overlap the runtime stack and OSClearArena
+  // would wipe it). 0x34 (ArenaHi) must be a real top-of-memory value or
+  // the arena has zero size and every game heap allocation returns NULL.
   // The RVL SDK build of SHSM reads its MEM1 arena lo from 0x34 instead.
   if (!is_gc) {
     ctx->mmu.write32(0x80000030, arena_lo);
@@ -197,25 +227,37 @@ int main(int argc, char **argv) {
     ctx->mmu.write32(0x80000038, arena_hi);
   }
   if (is_gc) {
-    // BI2 pointer (0x800000F4): copy bi2.bin right below the FST, above
-    // any reasonable __ArenaHi, so OSClearArena cannot touch it
+    // BI2 pointer (0x800000F4): the real apploader keeps its BI2 copy in
+    // the apploader scratch area, which the game recycles after OSInit
+    // reads the debug flags. Placing it below the FST would shrink the
+    // arena below what games budget for (NFS HP2 sizes its heap map to
+    // the full ArenaLo..FST range). Same recycling behaviour here.
+    uint32_t gc_arena_hi = arena_hi;
+    uint32_t fst_base = ctx->mmu.read32(0x80000038);
+    if (fst_base >= 0x80000000 && fst_base < 0x81800000)
+      gc_arena_hi = fst_base & ~31u;
     std::filesystem::path bi2_path =
         std::filesystem::path(argv[1]) / "sys" / "bi2.bin";
     if (std::filesystem::exists(bi2_path)) {
       std::ifstream bi2(bi2_path, std::ios::binary);
       std::vector<char> bi2_data((std::istreambuf_iterator<char>(bi2)),
                                  std::istreambuf_iterator<char>());
-      uint32_t fst_base = ctx->mmu.read32(0x80000038);
-      uint32_t top = (fst_base >= 0x80000000 && fst_base < 0x81800000)
-                         ? fst_base
-                         : arena_hi;
-      uint32_t bi2_addr = (top - (uint32_t)bi2_data.size()) & ~31u;
+      uint32_t bi2_addr = 0x81200000; // apploader scratch region
       for (size_t i = 0; i < bi2_data.size(); ++i)
         ctx->mmu.write8(bi2_addr + (uint32_t)i, (uint8_t)bi2_data[i]);
       ctx->mmu.write32(0x800000F4, bi2_addr);
       std::cout << "[Loader] BI2 loaded at 0x" << std::hex << bi2_addr
                 << std::dec << std::endl;
     }
+    // Verified against both SDK generations (EA GC 2002 OSInit and the
+    // RVL 2009 SDK in SHSM): OSInit reads ArenaLo from 0x34 and ArenaHi
+    // from 0x30, not the other way around. ArenaLo = end of sections,
+    // raised above the crt stack detected from the entry code.
+    ctx->mmu.write32(0x80000030, gc_arena_hi);
+    ctx->mmu.write32(0x80000034, arena_lo);
+    std::cout << "[Loader] GC Arena = 0x" << std::hex << arena_lo << " - 0x"
+              << gc_arena_hi << " (" << std::dec
+              << (gc_arena_hi - arena_lo) / 1024 << " KiB)" << std::endl;
   }
   // 0xF0: simulated memory size (read by OSGetConsoleSimulatedMemSize)
   ctx->mmu.write32(0x800000F0, mem1_size);

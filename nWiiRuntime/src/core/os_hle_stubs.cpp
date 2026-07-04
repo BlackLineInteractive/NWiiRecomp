@@ -27,10 +27,27 @@ bool g_trace_calls = []() {
   return env && env[0] == '1';
 }();
 
+uint32_t g_watch_addr = []() -> uint32_t {
+  const char *env = std::getenv("NWII_WATCH");
+  return env ? (uint32_t)std::strtoul(env, nullptr, 16) : 0;
+}();
+
+extern CPUContext *g_ctx_ptr;
+
+void watch_hit(uint32_t addr, uint32_t value, int width) {
+  CPUContext *c = g_ctx_ptr;
+  std::cout << "[Watch] write" << width << " 0x" << std::hex << addr << " = 0x"
+            << value;
+  if (c)
+    std::cout << " pc=0x" << c->pc << " lr=0x" << c->lr;
+  std::cout << std::dec << "\n";
+}
+
 void trace_call(uint32_t func_addr, CPUContext &ctx) {
   std::cout << "[CALL] 0x" << std::hex << func_addr << " lr=0x" << ctx.lr
             << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4] << " r5=0x"
-            << ctx.gpr[5] << std::dec << "\n";
+            << ctx.gpr[5] << " r13=0x" << ctx.gpr[13] << " r1=0x" << ctx.gpr[1]
+            << std::dec << "\n";
 }
 } // namespace nwii::runtime
 

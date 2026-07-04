@@ -782,13 +782,27 @@ static bool hle_load_context_from_guest(CPUContext &ctx) {
 
 
 bool process_pending_callbacks(CPUContext &ctx) {
-  // Sentinel return from a context-dispatched handler (blr with LR=0xFFFFFFFC):
-  // reload state from __OSCurrentContext, exactly like the guest's
-  // OSLoadContext at the end of __OSDispatchInterrupt. Handlers that context
-  // switch instead never reach this point, which is also correct.
+  // Sentinel return from a context-dispatched handler (blr with LR=0xFFFFFFFC).
+  // Act like the tail of __OSDispatchInterrupt: re-install the context WE
+  // saved at dispatch time and load it. Handlers may leave their own
+  // exception context in __OSCurrentContext (the SDK dispatcher is the one
+  // that puts the interrupted context back); trusting 0x800000D4 here used
+  // to restore a never-saved stack context with srr0=0.
   if (ctx.pc == 0xFFFFFFFC && !ctx.in_callback) {
-    if (hle_load_context_from_guest(ctx))
+    if (ctx.dispatch_saved_ctx) {
+      ctx.mmu.write32(0x800000D4, ctx.dispatch_saved_ctx);
+      ctx.dispatch_saved_ctx = 0;
+    }
+    if (hle_load_context_from_guest(ctx)) {
+      static uint32_t restore_count = 0;
+      restore_count++;
+      if (ctx.pc == 0 || (restore_count % 64) == 1) {
+          std::cout << "[HLE PI] Context restore #" << std::dec << restore_count
+                    << " pc=0x" << std::hex << ctx.pc << " r1=0x" << ctx.gpr[1]
+                    << " msr=0x" << ctx.msr << std::dec << "\n";
+      }
       return true;
+    }
   }
 
   if ((ctx.inst_count % 20000000) == 0) {
@@ -829,6 +843,11 @@ bool process_pending_callbacks(CPUContext &ctx) {
           }
           std::cout << std::dec << "\n";
       };
+      // TEMP: NFS heap table forensics
+      std::cout << "  [HeapTbl]";
+      for (int i = 0; i < 8; i++)
+          std::cout << " " << std::hex << ctx.mmu.read32(0x80369B20 + i * 4);
+      std::cout << " defid=" << ctx.mmu.read32(0x803926F8) << std::dec << "\n";
       uint32_t cur = ctx.mmu.read32(0x800000E4);
       if (cur) dump_thread(cur, "CurThread");
       uint32_t th = ctx.mmu.read32(0x800000DC);
@@ -876,15 +895,22 @@ bool process_pending_callbacks(CPUContext &ctx) {
       uint32_t dec_handler = ctx.mmu.read32(0x80003000 + 8 * 4);
       uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
       if (dec_handler != 0 && dec_handler != 0xFFFFFFFF && current_ctx != 0) {
+          static uint32_t dec_count = 0;
+          std::cout << "[HLE DEC] Dispatch #" << std::dec << ++dec_count
+                    << " handler=0x" << std::hex << dec_handler
+                    << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc
+                    << " ctx=0x" << current_ctx << std::dec << "\n";
           hle_save_context_to_guest(ctx, current_ctx);
+          ctx.dispatch_saved_ctx = current_ctx;
           ctx.srr0 = ctx.pc;
           ctx.srr1 = ctx.msr;
           ctx.msr &= ~0x8000;
           ctx.gpr[3] = 8;           // __OS_EXCEPTION_DECREMENTER
           ctx.gpr[4] = current_ctx; // OSContext*
-          ctx.gpr[1] -= 0x100;
-          ctx.mmu.write32(ctx.gpr[1], 0);
-          ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
+          // Real exception vectors run the handler on the interrupted
+          // stack without moving r1 and without touching guest memory:
+          // handlers that exit via a light rfi never restore GPRs, so any
+          // r1 adjustment here would leak stack on every dispatch.
           ctx.lr = 0xFFFFFFFC;
           ctx.pc = dec_handler;
           longjmp(ctx.exception_jmp_buf, 1);
@@ -922,8 +948,9 @@ bool process_pending_callbacks(CPUContext &ctx) {
           if (handler != 0 && handler != 0xFFFFFFFF) {
               // VI fires constantly; log only every 64th dispatch
               static uint32_t vi_dispatch_count = 0;
-              if (os_intr != 24 || (vi_dispatch_count++ % 64) == 0) {
-                  std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler << std::dec << std::endl;
+              if (true && vi_dispatch_count++ >= 0) {
+                  std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler
+                            << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc << std::dec << std::endl;
               }
               // The real 0x500 exception handler clears the PI interrupt cause BEFORE dispatching
               nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
@@ -935,6 +962,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
                   // blr (LR sentinel -> we reload from the context) or context
                   // switches through the guest scheduler; both paths work.
                   hle_save_context_to_guest(ctx, current_ctx);
+                  ctx.dispatch_saved_ctx = current_ctx;
 
                   ctx.srr0 = ctx.pc;
                   ctx.srr1 = ctx.msr;
@@ -943,11 +971,11 @@ bool process_pending_callbacks(CPUContext &ctx) {
                   ctx.gpr[3] = os_intr;
                   ctx.gpr[4] = current_ctx;
 
-                  // Interrupt handlers run on the interrupted stack
-                  ctx.gpr[1] -= 0x100;
-                  ctx.mmu.write32(ctx.gpr[1], 0);
-                  ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
-
+                  // Run the handler on the interrupted stack with r1
+                  // untouched, like the real 0x500 vector. Writing to
+                  // [r1]/[r1+4] here would clobber the interrupted
+                  // function's back chain and saved-LR slot, and handlers
+                  // that exit via rfi never undo an r1 shift.
                   ctx.lr = 0xFFFFFFFC;
                   ctx.pc = handler;
                   longjmp(ctx.exception_jmp_buf, 1);
@@ -980,10 +1008,6 @@ bool process_pending_callbacks(CPUContext &ctx) {
 
               ctx.gpr[3] = os_intr;
               ctx.gpr[4] = 0;
-
-              ctx.gpr[1] -= 16;
-              ctx.mmu.write32(ctx.gpr[1], 0);
-              ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
 
               ctx.lr = 0xFFFFFFFC;
               ctx.pc = handler;
@@ -1036,6 +1060,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
     // Same model as hardware interrupts: state lives in __OSCurrentContext,
     // the callback runs like it was invoked from the IPC interrupt handler.
     hle_save_context_to_guest(ctx, current_ctx);
+    ctx.dispatch_saved_ctx = current_ctx;
 
     ctx.srr0 = ctx.pc;
     ctx.srr1 = ctx.msr;
@@ -1044,10 +1069,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
     ctx.gpr[3] = cb.arg1;
     ctx.gpr[4] = cb.arg2;
 
-    ctx.gpr[1] -= 0x100;
-    ctx.mmu.write32(ctx.gpr[1], 0);
-    ctx.mmu.write32(ctx.gpr[1] + 4, 0xFFFFFFFC);
-
+    // r1 stays untouched; the callback's prologue builds its own frame
     ctx.lr = 0xFFFFFFFC;
     ctx.pc = cb.cb_addr;
     longjmp(ctx.exception_jmp_buf, 1);
