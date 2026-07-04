@@ -908,7 +908,7 @@ void Recompiler::emit_instruction(std::ostream &out,
           << "; // addi r" << rD << ", r" << rA << ", " << simm << "\n";
     }
   } else if (ppc_inst.opcode() == 31 && ppc_inst.extended_opcode() == 444) {
-    // OR rA, rS, rB
+    // OR rA, rS, rB (and its mr rA, rS alias when rS == rB)
     uint32_t rS = ppc_inst.rs();
     uint32_t rA = ppc_inst.ra();
     uint32_t rB = ppc_inst.rb();
@@ -918,6 +918,15 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else {
       out << "    ctx.gpr[" << rA << "] = ctx.gpr[" << rS << "] | ctx.gpr["
           << rB << "]; // or r" << rA << ", r" << rS << ", r" << rB << "\n";
+    }
+    // Rc bit: or./mr. update CR0 from the signed result. Missing this made
+    // conditional branches read a stale CR0 (e.g. NFS HP2 class-heap
+    // registration was skipped because mr. r26,r3 never set CR0).
+    if (ppc_inst.value() & 1) {
+      out << "    ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA << "] < 0);\n";
+      out << "    ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA << "] > 0);\n";
+      out << "    ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
+      out << "    ctx.cr[0].so = (ctx.xer >> 31) & 1;\n";
     }
   } else if (ppc_inst.opcode() == 31 && ppc_inst.extended_opcode() == 339) {
     // mfspr
@@ -1462,28 +1471,38 @@ void Recompiler::emit_instruction(std::ostream &out,
     uint32_t fB = ppc_inst.rb();
     uint32_t fC = ppc_inst.rc();
 
+    // A-form single-precision floats: results are rounded to float.
+    // The multiply-add forms take the multiplier from the C field (fC).
     if (xo == 21) {
       out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA
-          << "] + ctx.fpr[" << fB << "]); // fadds f" << fD << ", f" << fA
-          << ", f" << fB << "\n";
+          << "] + ctx.fpr[" << fB << "]); // fadds\n";
     } else if (xo == 20) {
       out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA
-          << "] - ctx.fpr[" << fB << "]); // fsubs f" << fD << ", f" << fA
-          << ", f" << fB << "\n";
+          << "] - ctx.fpr[" << fB << "]); // fsubs\n";
     } else if (xo == 25) {
       out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA
-          << "] * ctx.fpr[" << fC << "]); // fmuls f" << fD << ", f" << fA
-          << ", f" << fC << "\n";
+          << "] * ctx.fpr[" << fC << "]); // fmuls\n";
     } else if (xo == 18) {
       out << "    ctx.fpr[" << fD << "] = (float)(ctx.fpr[" << fA
-          << "] / ctx.fpr[" << fB << "]); // fdivs f" << fD << ", f" << fA
-          << ", f" << fB << "\n";
+          << "] / ctx.fpr[" << fB << "]); // fdivs\n";
+    } else if (xo == 22) {
+      out << "    ctx.fpr[" << fD << "] = (float)std::sqrt(ctx.fpr[" << fB
+          << "]); // fsqrts\n";
     } else if (xo == 24) {
       out << "    ctx.fpr[" << fD << "] = (float)(1.0f / ctx.fpr[" << fB
           << "]); // fres\n";
+    } else if (xo == 29) {
+      out << "    ctx.fpr[" << fD << "] = (float)std::fma(ctx.fpr[" << fA
+          << "], ctx.fpr[" << fC << "], ctx.fpr[" << fB << "]); // fmadds\n";
+    } else if (xo == 28) {
+      out << "    ctx.fpr[" << fD << "] = (float)std::fma(ctx.fpr[" << fA
+          << "], ctx.fpr[" << fC << "], -ctx.fpr[" << fB << "]); // fmsubs\n";
+    } else if (xo == 31) {
+      out << "    ctx.fpr[" << fD << "] = (float)(-std::fma(ctx.fpr[" << fA
+          << "], ctx.fpr[" << fC << "], ctx.fpr[" << fB << "])); // fnmadds\n";
     } else if (xo == 30) {
-      out << "    ctx.fpr[" << fD << "] = (float)std::sqrt(ctx.fpr[" << fB
-          << "]); // fsqrts\n";
+      out << "    ctx.fpr[" << fD << "] = (float)(-std::fma(ctx.fpr[" << fA
+          << "], ctx.fpr[" << fC << "], -ctx.fpr[" << fB << "])); // fnmsubs\n";
     } else {
       out << "    std::cerr << \"UNIMPLEMENTED Opcode 59 XO \" << " << xo
           << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; "
