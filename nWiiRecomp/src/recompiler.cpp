@@ -412,14 +412,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
       }
     }
     out << "            default: {\n";
-    out << "                std::cerr << \"UNKNOWN DISPATCH TO 0x\" << "
-           "std::hex << target << \"\\n\";\n";
     out << "                bool found = false;\n";
     out << "                for (const auto& fb : g_func_bounds) {\n";
     out << "                    if (fb.start == 0) break;\n";
     out << "                    if (target >= fb.start && target < fb.end) {\n";
-    out << "                        std::cerr << \"  -> Fallback dispatch to "
-           "function 0x\" << std::hex << fb.start << \"\\n\";\n";
     out << "                        ctx.pc = target;\n";
     out << "                        fb.func(ctx);\n";
     out << "                        found = true;\n";
@@ -427,13 +423,10 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     out << "                    }\n";
     out << "                }\n";
     out << "                if (!found) {\n";
-    out << "                    std::cerr << \"[FATAL] Branch to unknown "
-           "address 0x\" << std::hex << target << \" from:\\n\";\n";
-    out << "                    for (int i = 0; i < 10; ++i) {\n";
-    out << "                        std::cerr << \"  0x\" << std::hex << "
-           "pc_history[(pc_history_idx + 9 - i) % 10] << \"\\n\";\n";
-    out << "                    }\n";
-    out << "                    std::exit(1);\n";
+    out << "                    // Not in any recompiled function: this is\n";
+    out << "                    // runtime-generated code (copied to low mem,\n";
+    out << "                    // trampolines). Interpret it from memory.\n";
+    out << "                    nwii::runtime::interpret_step(ctx);\n";
     out << "                }\n";
     out << "            }\n";
     out << "        }\n";
@@ -817,6 +810,24 @@ void Recompiler::emit_function(std::ostream &out,
     return;
   }
 
+  // The OS low-memory region (below the 0x80004000 application base) holds
+  // exception vectors and helper routines the game copies in at runtime;
+  // DOL bytes there are stale. Same for functions that are all zeros in
+  // the image. Execute those from live guest memory instead.
+  bool all_zero = !func.instructions.empty();
+  for (const auto &inst : func.instructions) {
+    if (inst.opcode != 0) {
+      all_zero = false;
+      break;
+    }
+  }
+  bool os_low_mem = (func.start_address & 0x3FFFFFFF) < 0x4000;
+  if (all_zero || os_low_mem) {
+    out << "    nwii::runtime::interpret_step(ctx);\n";
+    out << "}\n\n";
+    return;
+  }
+
   // Optional call tracing: only fires on a true function entry
   // (ctx.pc == start) and only when NWII_TRACE_CALLS=1 at runtime.
   out << "    if (nwii::runtime::g_trace_calls && ctx.pc == 0x" << std::hex
@@ -906,6 +917,8 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ctx.gpr[" << rD << "] = ctx.srr0; // mfsrr0 r" << rD << "\n";
     } else if (spr == 27) {
       out << "    ctx.gpr[" << rD << "] = ctx.srr1; // mfsrr1 r" << rD << "\n";
+    } else if (spr == 22) {
+      out << "    ctx.gpr[" << rD << "] = ctx.read_dec(); // mfdec r" << rD << "\n";
     } else if (spr >= 912 && spr <= 919) {
       out << "    ctx.gpr[" << rD << "] = ctx.gqr[" << (spr - 912)
           << "]; // mfgqr" << (spr - 912) << " r" << rD << "\n";
@@ -941,6 +954,8 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ctx.srr0 = ctx.gpr[" << rS << "]; // mtsrr0 r" << rS << "\n";
     } else if (spr == 27) {
       out << "    ctx.srr1 = ctx.gpr[" << rS << "]; // mtsrr1 r" << rS << "\n";
+    } else if (spr == 22) {
+      out << "    ctx.write_dec(ctx.gpr[" << rS << "]); // mtdec r" << rS << "\n";
     } else if (spr >= 912 && spr <= 919) {
       out << "    ctx.gqr[" << (spr - 912) << "] = ctx.gpr[" << rS
           << "]; // mtgqr" << (spr - 912) << " r" << rS << "\n";

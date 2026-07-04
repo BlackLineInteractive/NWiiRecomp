@@ -143,28 +143,36 @@ int main(int argc, char **argv) {
   // 0x28: __OSPhysMemSize (MEM1)
   ctx->mmu.write32(0x80000028, mem1_size);
   ctx->mmu.write32(0x8000002C, console_type);
-  // Arena bounds. GC (YAGCD): 0x30 = ArenaLo, 0x34 = ArenaHi.
+  // Arena bounds. GC: leave 0x30/0x34 as zero (Dolphin does the same) so
+  // OSInit falls back to the game's own __ArenaLo/__ArenaHi linker symbols.
+  // Section-end-based values are wrong: the runtime stack usually sits
+  // ABOVE the BSS end, and OSClearArena would wipe it (seen in NFS HP2).
   // The RVL SDK build of SHSM reads its MEM1 arena lo from 0x34 instead.
-  ctx->mmu.write32(0x80000030, arena_lo);
-  ctx->mmu.write32(0x80000034, is_gc ? arena_hi : arena_lo);
+  if (!is_gc) {
+    ctx->mmu.write32(0x80000030, arena_lo);
+    ctx->mmu.write32(0x80000034, arena_lo);
+  }
   if (!vdisc.valid()) {
     // No extracted disc: keep legacy behaviour of 0x38 = top of usable MEM1
     ctx->mmu.write32(0x80000038, arena_hi);
   }
   if (is_gc) {
-    // BI2 pointer (0x800000F4): copy bi2.bin below the FST if present
+    // BI2 pointer (0x800000F4): copy bi2.bin right below the FST, above
+    // any reasonable __ArenaHi, so OSClearArena cannot touch it
     std::filesystem::path bi2_path =
         std::filesystem::path(argv[1]) / "sys" / "bi2.bin";
     if (std::filesystem::exists(bi2_path)) {
       std::ifstream bi2(bi2_path, std::ios::binary);
       std::vector<char> bi2_data((std::istreambuf_iterator<char>(bi2)),
                                  std::istreambuf_iterator<char>());
-      uint32_t bi2_addr = (arena_hi - (uint32_t)bi2_data.size()) & ~31u;
+      uint32_t fst_base = ctx->mmu.read32(0x80000038);
+      uint32_t top = (fst_base >= 0x80000000 && fst_base < 0x81800000)
+                         ? fst_base
+                         : arena_hi;
+      uint32_t bi2_addr = (top - (uint32_t)bi2_data.size()) & ~31u;
       for (size_t i = 0; i < bi2_data.size(); ++i)
         ctx->mmu.write8(bi2_addr + (uint32_t)i, (uint8_t)bi2_data[i]);
       ctx->mmu.write32(0x800000F4, bi2_addr);
-      arena_hi = bi2_addr;
-      ctx->mmu.write32(0x80000034, arena_hi);
       std::cout << "[Loader] BI2 loaded at 0x" << std::hex << bi2_addr
                 << std::dec << std::endl;
     }

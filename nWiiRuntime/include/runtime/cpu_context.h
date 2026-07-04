@@ -256,6 +256,30 @@ struct CPUContext {
   // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
   uint32_t reservation_addr = 0xFFFFFFFF;
 
+  // Decrementer (SPR 22). Ticks with the time base, which this runtime
+  // models as inst_count (same clock mftb reads). Underflow raises the
+  // 0x900 exception once per write, delivered in process_pending_callbacks.
+  uint32_t dec_value = 0xFFFFFFFF;
+  uint64_t dec_written_at = 0;
+  bool dec_irq_pending = false;
+
+  void write_dec(uint32_t v) {
+    dec_value = v;
+    dec_written_at = inst_count;
+    dec_irq_pending = (v != 0xFFFFFFFF);
+  }
+
+  uint32_t read_dec() {
+    uint64_t elapsed = inst_count - dec_written_at;
+    if (elapsed >= dec_value)
+      return 0;
+    return dec_value - (uint32_t)elapsed;
+  }
+
+  bool dec_expired() {
+    return dec_irq_pending && (inst_count - dec_written_at) >= dec_value;
+  }
+
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 
                  msr(0), fpscr(0), srr0(0), srr1(0), gqr{0}, exception_pc(0), is_running(true), vblank_pending(false) {}
 
@@ -461,6 +485,9 @@ struct CPUContext {
 
 void hle_set_ipc_arm_msg(uint32_t req_addr);
 void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc);
+// Dispatcher fallback for runtime-generated code (not present in the DOL)
+bool interpret_one(CPUContext& ctx);
+void interpret_step(CPUContext& ctx);
 
 // Call tracing for recompiled functions, enabled with NWII_TRACE_CALLS=1
 extern bool g_trace_calls;
