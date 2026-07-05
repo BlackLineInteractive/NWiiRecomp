@@ -148,6 +148,7 @@ bool VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
     std::memset(dst, 0, len);
 
     uint64_t end = offset + len;
+    uint64_t covered = 0;
     for (const auto& r : m_regions) {
         if (r.offset >= end || r.offset + r.size <= offset)
             continue;
@@ -159,6 +160,18 @@ bool VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
             continue;
         f.seekg((std::streamoff)(lo - r.offset));
         f.read(reinterpret_cast<char*>(dst + (lo - offset)), (std::streamsize)(hi - lo));
+        covered += hi - lo;
+    }
+    // A read that matches no extracted file returns zeros; the game then
+    // parses garbage. Surface it so disc-layout gaps are visible.
+    if (covered < len) {
+        static int miss_budget = 40;
+        if (miss_budget > 0) {
+            miss_budget--;
+            std::cout << "[VDisc] MISS: read off=0x" << std::hex << offset
+                      << " len=0x" << len << " covered=0x" << covered
+                      << std::dec << " (no file region)\n";
+        }
     }
     return true;
 }

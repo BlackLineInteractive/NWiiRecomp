@@ -132,8 +132,12 @@ int main(int argc, char **argv) {
     }
     // Text sections have statically recompiled bodies; everything outside
     // them (low-mem helpers, streamed overlays) runs on the interpreter.
-    // The recompiler emits interpreter stubs for code below 0x80004000
-    // (OS low-mem region), so clip the range to match.
+    // Keep the low-mem region (< 0x80004000) on the interpreter: parts of it
+    // (memset/memcpy loop backedges) are reached only via mid-function jumps
+    // the analyzer did not register as dispatcher cases. Marking them as
+    // "recompiled" makes the interpreter yield to a dispatcher that has no
+    // case, ping-ponging forever. Interpreting straight through is slower
+    // but correct.
     if (sec.is_text) {
       uint32_t start = std::max<uint32_t>(sec.address, 0x80004000);
       uint32_t end = sec.address + sec.size;
@@ -264,6 +268,10 @@ int main(int argc, char **argv) {
   // 0xF0: simulated memory size (read by OSGetConsoleSimulatedMemSize)
   ctx->mmu.write32(0x800000F0, mem1_size);
 
+  // 0x3128: MEM2 Debug Arena or similar bounds. Setting to arena hi to avoid
+  // invalid size calculation in RVL SDK heap initialization.
+  ctx->mmu.write32(0x80003128, 0x90000000 + mem2_size);
+
   if (!is_gc) {
     // Wii-only low-mem fields
     // 0x3118: Simulated MEM2 Size, 0x311C: Physical MEM2 Size
@@ -284,10 +292,15 @@ int main(int argc, char **argv) {
   if (is_gc) {
     ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK
     ctx->mmu.write32(0x800000FC, 162000000); // OS_BUS_CLOCK
+    ctx->tb_freq = 40500000;                 // TB = bus/4
   } else {
     ctx->mmu.write32(0x800000F8, 60750000);  // OS_TIMER_CLOCK
     ctx->mmu.write32(0x800000FC, 243000000); // OS_BUS_CLOCK
+    ctx->tb_freq = 60750000;                 // TB = bus/4
   }
+  // Reset the wall-clock origin now that the platform TB rate is known,
+  // so the guest's first OSGetTime reads a small value.
+  ctx->tb_start = std::chrono::steady_clock::now();
 
   nwii::runtime::init_ipc_client(*ctx);
 

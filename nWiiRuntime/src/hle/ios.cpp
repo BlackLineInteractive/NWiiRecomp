@@ -3,6 +3,7 @@
 #include "runtime/cpu_context.h"
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -785,6 +786,32 @@ static bool hle_load_context_from_guest(CPUContext &ctx) {
 
 
 bool process_pending_callbacks(CPUContext &ctx) {
+  // Targeted loop tracer: NWII_LOOPTRACE=hexpc logs GPRs each time the
+  // guest hits that PC (recompiled backedges call us with ctx.pc set).
+  {
+    static uint32_t trace_pc = []() -> uint32_t {
+      const char *e = std::getenv("NWII_LOOPTRACE");
+      return e ? (uint32_t)std::strtoul(e, nullptr, 16) : 0;
+    }();
+    static uint64_t hits = 0;
+    if (trace_pc && ctx.pc == trace_pc) {
+      if ((hits++ % 200000) == 0)
+        std::cout << "[Loop 0x" << std::hex << trace_pc << "] #" << std::dec
+                  << hits << " r3=0x" << std::hex << ctx.gpr[3] << " r4=0x"
+                  << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << " r30=0x"
+                  << ctx.gpr[30] << " r31=0x" << ctx.gpr[31] << " lr=0x"
+                  << ctx.lr << std::dec << "\n";
+    }
+  }
+  // Hot-PC sampler: NWII_SAMPLE=1 prints ctx.pc every 400000 backedge
+  // checks. A PC that keeps repeating is where the guest is spinning.
+  {
+    static bool sample = std::getenv("NWII_SAMPLE") != nullptr;
+    static uint64_t n = 0;
+    if (sample && (++n % 400000) == 0)
+      std::cout << "[Sample] pc=0x" << std::hex << ctx.pc << " lr=0x" << ctx.lr
+                << " r3=0x" << ctx.gpr[3] << std::dec << "\n";
+  }
   // Sentinel return from a context-dispatched handler (blr with LR=0xFFFFFFFC).
   // Act like the tail of __OSDispatchInterrupt: re-install the context WE
   // saved at dispatch time and load it. Handlers may leave their own
@@ -808,7 +835,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
     }
   }
 
-  if ((ctx.inst_count % 20000000) == 0) {
+  if ((ctx.inst_count % 1000000) == 0) {
       std::cout << "[Heartbeat] PC: 0x" << std::hex << ctx.pc << " LR: 0x" << ctx.lr
                 << " intmr=0x" << nwii::runtime::hw::pi_intmr
                 << " intsr=0x" << nwii::runtime::hw::pi_intsr
@@ -875,6 +902,33 @@ bool process_pending_callbacks(CPUContext &ctx) {
       }
   }
 
+  // One-shot idle-deadlock dump: when the CPU falls to pc==0 (no runnable
+  // thread) repeatedly, report every thread and what it waits on plus the
+  // interrupt-enable state, so the missing wakeup source is visible.
+  if (ctx.pc == 0) {
+      static uint64_t idle_hits = 0;
+      if (++idle_hits == 200000) {
+          std::cout << "[IDLE] no runnable thread. intmr=0x" << std::hex
+                    << nwii::runtime::hw::pi_intmr << " intsr=0x"
+                    << nwii::runtime::hw::pi_intsr << " dec_armed="
+                    << std::dec << ctx.dec_irq_pending << "\n";
+          uint32_t cur = ctx.mmu.read32(0x800000E4);
+          uint32_t th = ctx.mmu.read32(0x800000DC);
+          int guard = 0;
+          while (th != 0 && guard++ < 24) {
+              uint16_t state = ctx.mmu.read16(th + 0x2C8);
+              uint32_t prio = ctx.mmu.read32(th + 0x2D0);
+              uint32_t wq = ctx.mmu.read32(th + 0x2DC);
+              uint32_t srr0 = ctx.mmu.read32(th + 0x198);
+              std::cout << "  [IdleThread] 0x" << std::hex << th
+                        << (th == cur ? "*" : " ") << " state=" << std::dec
+                        << state << " prio=" << prio << " waitq=0x" << std::hex
+                        << wq << " srr0=0x" << srr0 << std::dec << "\n";
+              th = ctx.mmu.read32(th + 0x2FC);
+          }
+      }
+  }
+
   if (g_ipc_interrupt_delay > 0) {
       g_ipc_interrupt_delay--;
       if (g_ipc_interrupt_delay == 0) {
@@ -909,15 +963,36 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Decrementer exception emulation: OSAlarm/OSSetPeriodicAlarm depend on it.
   // Fire the registered DEC handler (exception 8, table at 0x80003000)
   // periodically so alarm-driven game loops keep ticking.
-  if ((ctx.inst_count % 200000) == 0 && (ctx.msr & 0x8000) && !ctx.in_callback) {
+  // Fire the decrementer exception only when the guest's DEC register has
+  // actually underflowed (game arms it via mtdec for OSAlarm). Firing on a
+  // fixed instruction interval instead was over-triggering: a DEC landing
+  // inside a tight recompiled loop (e.g. strncpy) forced a context
+  // save/reschedule every ~200k instructions and starved the main thread.
+  if (ctx.dec_expired() && (ctx.msr & 0x8000) && !ctx.in_callback) {
+      ctx.dec_irq_pending = false; // consumed; re-arms on next mtdec
+      // Every 500th DEC, dump all threads + their wait objects so a
+      // scheduler-churn deadlock (all threads blocked) is visible.
+      static uint32_t dcount = 0;
+      if ((dcount++ % 500) == 0) {
+          uint32_t cur = ctx.mmu.read32(0x800000E4);
+          uint32_t th = ctx.mmu.read32(0x800000DC);
+          std::cout << "[Sched] cur=0x" << std::hex << cur << std::dec << "\n";
+          int guard = 0;
+          while (th != 0 && guard++ < 24) {
+              uint16_t state = ctx.mmu.read16(th + 0x2C8);
+              uint32_t prio = ctx.mmu.read32(th + 0x2D0);
+              uint32_t wq = ctx.mmu.read32(th + 0x2DC);
+              uint32_t srr0 = ctx.mmu.read32(th + 0x198);
+              std::cout << "  th=0x" << std::hex << th << (th==cur?"*":" ")
+                        << " state=" << std::dec << state << " prio=" << prio
+                        << " waitq=0x" << std::hex << wq << " srr0=0x" << srr0
+                        << std::dec << "\n";
+              th = ctx.mmu.read32(th + 0x2FC);
+          }
+      }
       uint32_t dec_handler = ctx.mmu.read32(0x80003000 + 8 * 4);
       uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
       if (dec_handler != 0 && dec_handler != 0xFFFFFFFF && current_ctx != 0) {
-          static uint32_t dec_count = 0;
-          std::cout << "[HLE DEC] Dispatch #" << std::dec << ++dec_count
-                    << " handler=0x" << std::hex << dec_handler
-                    << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc
-                    << " ctx=0x" << current_ctx << std::dec << "\n";
           hle_save_context_to_guest(ctx, current_ctx);
           ctx.dispatch_saved_ctx = current_ctx;
           ctx.srr0 = ctx.pc;
@@ -966,7 +1041,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
           if (handler != 0 && handler != 0xFFFFFFFF) {
               // VI fires constantly; log only every 64th dispatch
               static uint32_t vi_dispatch_count = 0;
-              if (true && vi_dispatch_count++ >= 0) {
+              if (os_intr != 24 && (vi_dispatch_count++ % 256) == 0) {
                   std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler
                             << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc << std::dec << std::endl;
               }

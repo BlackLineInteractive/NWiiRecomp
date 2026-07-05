@@ -265,13 +265,20 @@ bool interpret_one(CPUContext& ctx) {
         case 792: { // sraw
             uint32_t sh = ctx.gpr[rB] & 0x3F;
             int32_t v = (int32_t)ctx.gpr[rD];
-            ctx.gpr[rA] = sh > 31 ? (v < 0 ? 0xFFFFFFFF : 0) : (uint32_t)(v >> sh);
+            uint32_t ca;
+            if (sh > 31) { ctx.gpr[rA] = (v < 0) ? 0xFFFFFFFF : 0; ca = (v < 0) ? 1 : 0; }
+            else { ctx.gpr[rA] = (uint32_t)(v >> sh);
+                   ca = (v < 0 && (uint32_t)(v & ((sh==0)?0:((1u<<sh)-1))) != 0) ? 1 : 0; }
+            ctx.xer = (ctx.xer & ~(1u << 29)) | (ca << 29);
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
         case 824: { // srawi
             uint32_t sh = rB;
-            ctx.gpr[rA] = (uint32_t)((int32_t)ctx.gpr[rD] >> sh);
+            int32_t v = (int32_t)ctx.gpr[rD];
+            ctx.gpr[rA] = (uint32_t)(v >> sh);
+            uint32_t ca = (v < 0 && (uint32_t)(v & ((sh==0)?0:((1u<<sh)-1))) != 0) ? 1 : 0;
+            ctx.xer = (ctx.xer & ~(1u << 29)) | (ca << 29);
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
@@ -298,10 +305,10 @@ bool interpret_one(CPUContext& ctx) {
             else if (spr >= 912 && spr <= 919) ctx.gqr[spr - 912] = ctx.gpr[rD];
             break;
         }
-        case 371: { // mftb
+        case 371: { // mftb (wall-clock time base)
             uint32_t spr = ((insn >> 16) & 0x1F) | (((insn >> 11) & 0x1F) << 5);
-            ctx.gpr[rD] = (spr == 269) ? (uint32_t)(ctx.inst_count >> 32)
-                                       : (uint32_t)ctx.inst_count;
+            uint64_t tb = ctx.read_timebase();
+            ctx.gpr[rD] = (spr == 269) ? (uint32_t)(tb >> 32) : (uint32_t)tb;
             break;
         }
         case 83:  ctx.gpr[rD] = ctx.msr; break;  // mfmsr
@@ -427,6 +434,46 @@ bool interpret_one(CPUContext& ctx) {
     return true;
 }
 
+// Native fast-path for the CodeWarrior/SDK low-memory memcpy and memset
+// helpers. The game calls them constantly (object construction, string
+// copies); interpreting a byte-copy loop one instruction at a time is
+// ~100x slower than the C library. We recognise the helper by its fixed
+// entry-code signature (position-independent, so it works for any game
+// that links the same runtime) and execute it natively, then return.
+static bool try_native_helper(CPUContext& ctx) {
+    uint32_t pc = ctx.pc;
+    // memcpy(dst=r3, src=r4, n=r5). Exact CodeWarrior/SDK prologue:
+    //   cmplw r4,r3 ; blt ; addi r4,r4,-1 ; addi r6,r3,-1 ; addi r5,r5,1
+    // (an overlap-safe byte copy). Matching all five words makes a false
+    // positive effectively impossible while staying game-independent.
+    if (ctx.mmu.read32(pc)      == 0x7C041840 &&
+        ctx.mmu.read32(pc + 4)  == 0x41800028 &&
+        ctx.mmu.read32(pc + 8)  == 0x3884FFFF &&
+        ctx.mmu.read32(pc + 12) == 0x38C3FFFF &&
+        ctx.mmu.read32(pc + 16) == 0x38A50001) {
+        uint32_t dst = ctx.gpr[3], src = ctx.gpr[4], n = ctx.gpr[5];
+        if (n > 0x2000000u) {
+            static int warned = 0;
+            if (warned++ < 8)
+                std::cout << "[Interp] memcpy huge n=0x" << std::hex << n
+                          << " dst=0x" << dst << " src=0x" << src << " lr=0x"
+                          << ctx.lr << std::dec << " -- suspicious, skipping\n";
+            ctx.pc = ctx.lr;
+            return true;
+        }
+        if (src >= dst) {
+            for (uint32_t i = 0; i < n; ++i)
+                ctx.mmu.write8(dst + i, ctx.mmu.read8(src + i));
+        } else {
+            for (uint32_t i = n; i-- > 0;)
+                ctx.mmu.write8(dst + i, ctx.mmu.read8(src + i));
+        }
+        ctx.pc = ctx.lr; // r3 (dst) preserved as the return value
+        return true;
+    }
+    return false;
+}
+
 // Dispatcher fallback: interpret at ctx.pc. Keeps executing while control
 // stays inside the OS low-memory region (runtime-generated helpers live
 // below the 0x80004000 application base); once the code branches back to
@@ -440,8 +487,45 @@ void interpret_step(CPUContext& ctx) {
                   << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4]
                   << " r5=0x" << ctx.gpr[5] << std::dec << "\n";
     }
+
+    // A branch to a data region (high MEM1, framebuffers, un-init pointers)
+    // means the guest jumped through a bad function pointer. Report it once
+    // with LR so the caller can be identified, instead of silently walking
+    // zeroed memory as NOPs forever.
+    if (ctx.pc >= 0x80800000) {
+        static int wild_budget = 20;
+        if (wild_budget > 0) {
+            wild_budget--;
+            std::cout << "[Interp] WILD JUMP to 0x" << std::hex << ctx.pc
+                      << " lr=0x" << ctx.lr << " ctr=0x" << ctx.ctr
+                      << " r1=0x" << ctx.gpr[1] << " r3=0x" << ctx.gpr[3]
+                      << std::dec << "\n";
+        }
+    }
+
+    int consecutive_nops = 0;
     for (uint64_t i = 0; i < 100000000ULL; ++i) {
+        // Native memcpy/memset fast path before interpreting the loop
+        if (try_native_helper(ctx)) {
+            if (in_recompiled_code(ctx.pc))
+                return;
+            continue;
+        }
         uint32_t before = ctx.pc;
+        uint32_t insn = ctx.mmu.read32(before);
+        // Detect walking through zeroed data (no real code here)
+        if (insn == 0) {
+            if (++consecutive_nops > 64) {
+                std::cout << "[Interp] Aborting: " << std::dec << consecutive_nops
+                          << " zero-opcodes from 0x" << std::hex << before
+                          << " (walked into data). lr=0x" << ctx.lr << std::dec
+                          << "\n";
+                ctx.is_running = false;
+                return;
+            }
+        } else {
+            consecutive_nops = 0;
+        }
         ++ctx.inst_count;
         interpret_one(ctx);
         if (ctx.pc != before + 4) {

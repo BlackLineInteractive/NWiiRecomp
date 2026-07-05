@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a> |
   <a href="https://youtube.com/@blacklineinteractive">
     <img src="https://img.shields.io/badge/YouTube-Blackline_Interactive-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Blackline Interactive YouTube"/>
   </a>
@@ -21,6 +22,10 @@
 ## What is this?
 
 NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) and Wii U (`.rpx`, `.rpl`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
+
+> **Note:** The recompiler and runtime are designed to be **universal**. We are currently using *Need For Speed: Hot Pursuit 2* (GameCube) and *Silent Hill: Shattered Memories* (Wii) as primary testing targets.
+> 
+> **Latest Update:** *Need For Speed* (GameCube) is now successfully booting up to the main menu!
 
 ---
 
@@ -63,13 +68,6 @@ NWiiRecomp/
 
 ### Runtime (`nWiiRuntime`)
 
-<p align="center">
-  <img src="image/video/gx-fifo-test.gif" alt="NWiiRuntime GX FIFO test" width="105%"/>
-</p>
-<p align="center">
-  <img src="image/video/gx-fifo-test-2.gif" alt="NWiiRuntime GX FIFO test 2" width="105%"/>
-</p>
-
 - **Configuration**: Per-game TOML profiles via `tomlplusplus` for target platform, HLE hooks, and input.
 - **Interpreter fallback**: A PPC750 integer interpreter executes code that
   does not exist in the DOL image (arena-clear helpers copied to low memory,
@@ -105,16 +103,6 @@ NWiiRecomp/
 - Basic memory map view
 - **Settings & Config Integration**: Direct integration with `recomp_config.toml` to manage paths cleanly.
 - **Thematic Themes**: Includes "Nintendo" theme (GameCube Indigo / Wii aesthetic) for a polished user experience.
-
-<p align="center">
-  <img src="image/1.png" alt="NWiiStudio Disassembly" width="115%"/>
-  &nbsp;
-  <img src="image/2.png" alt="NWiiStudio Settings" width="115%"/>
-  &nbsp;
-  <img src="image/3.png" alt="NWiiStudio Settings" width="115%"/>
-  &nbsp;
-  <img src="image/4.png" alt="NWiiStudio Settings" width="115%"/>
-</p>
 
 ---
 

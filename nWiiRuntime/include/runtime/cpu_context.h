@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <csetjmp>
 #include <cstdint>
 #include <cstring>
@@ -286,28 +287,43 @@ struct CPUContext {
   // SDK handlers legitimately leave their own exception context installed.
   uint32_t dispatch_saved_ctx = 0;
 
-  // Decrementer (SPR 22). Ticks with the time base, which this runtime
-  // models as inst_count (same clock mftb reads). Underflow raises the
-  // 0x900 exception once per write, delivered in process_pending_callbacks.
-  uint32_t dec_value = 0xFFFFFFFF;
-  uint64_t dec_written_at = 0;
+  // Time base / decrementer run off the WALL CLOCK, not inst_count. The
+  // guest's OSGetTime/OSGetTick and every alarm/timeout compare against
+  // the time base; tying it to inst_count made a second of guest time take
+  // many real minutes, so timer-driven waits (the game idling until an
+  // alarm fires) effectively never completed. TB frequency is the console
+  // bus-clock/4 (GC 40.5 MHz, Wii 60.75 MHz), set from main.cpp.
+  uint64_t tb_freq = 40500000;
+  std::chrono::steady_clock::time_point tb_start =
+      std::chrono::steady_clock::now();
+
+  uint64_t read_timebase() const {
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now() - tb_start)
+                  .count();
+    return (uint64_t)((__int128)ns * tb_freq / 1000000000);
+  }
+
+  // Decrementer (SPR 22): counts down from its written value at the TB rate.
+  uint64_t dec_value = 0xFFFFFFFF;
+  uint64_t dec_written_tb = 0;
   bool dec_irq_pending = false;
 
   void write_dec(uint32_t v) {
     dec_value = v;
-    dec_written_at = inst_count;
+    dec_written_tb = read_timebase();
     dec_irq_pending = (v != 0xFFFFFFFF);
   }
 
   uint32_t read_dec() {
-    uint64_t elapsed = inst_count - dec_written_at;
+    uint64_t elapsed = read_timebase() - dec_written_tb;
     if (elapsed >= dec_value)
       return 0;
-    return dec_value - (uint32_t)elapsed;
+    return (uint32_t)(dec_value - elapsed);
   }
 
   bool dec_expired() {
-    return dec_irq_pending && (inst_count - dec_written_at) >= dec_value;
+    return dec_irq_pending && (read_timebase() - dec_written_tb) >= dec_value;
   }
 
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 

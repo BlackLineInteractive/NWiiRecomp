@@ -1734,10 +1734,12 @@ void Recompiler::emit_instruction(std::ostream &out,
       uint32_t spr_bottom = (ppc_inst.value() >> 16) & 0x1F;
       uint32_t spr_top    = (ppc_inst.value() >> 11) & 0x1F;
       uint32_t spr = (spr_top << 5) | spr_bottom;
+      // Wall-clock time base (see CPUContext::read_timebase) so OSGetTime
+      // and timer waits track real time instead of the instruction count.
       if (spr == 269) { // TBU — upper 32 bits of 64-bit timebase
-        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.inst_count >> 32); // mftbu\n";
+        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.read_timebase() >> 32); // mftbu\n";
       } else { // TBL (spr==268) — lower 32 bits
-        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.inst_count & 0xFFFFFFFF); // mftb\n";
+        out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.read_timebase() & 0xFFFFFFFF); // mftb\n";
       }
     } else if (xo == 407) {
       if (rA == 0)
@@ -1969,7 +1971,7 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else if (xo == 234) { // addme
       out << "    {\n";
       out << "        uint64_t res = (uint64_t)ctx.gpr[" << rA
-          << "] + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
+          << "] + 0xFFFFFFFFULL + (uint64_t)((ctx.xer >> 29) & 1);\n";
       out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
       out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << "
              "29); // Set CA bit\n";
@@ -1982,7 +1984,7 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else if (xo == 232) { // subfme
       out << "    {\n";
       out << "        uint64_t res = (uint64_t)(~ctx.gpr[" << rA
-          << "]) + ~(uint64_t)0 + (uint64_t)((ctx.xer >> 29) & 1);\n";
+          << "]) + 0xFFFFFFFFULL + (uint64_t)((ctx.xer >> 29) & 1);\n";
       out << "        ctx.gpr[" << rD << "] = (uint32_t)res;\n";
       out << "        ctx.xer = (ctx.xer & ~(1 << 29)) | (((res >> 32) & 1) << "
              "29); // Set CA bit\n";
@@ -2073,11 +2075,40 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "        ctx.gpr[" << rA << "] = ea;\n";
       out << "    } // sthux\n";
     } else if (xo == 792) { // sraw
-      out << "    ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA
-          << "] >> ctx.gpr[" << rB << "]); // sraw\n";
-    } else if (xo == 824) { // srawi
-      out << "    ctx.gpr[" << rD << "] = (uint32_t)((int32_t)ctx.gpr[" << rA
-          << "] >> " << ((ppc_inst.value() >> 11) & 0x1F) << "); // srawi\n";
+      // Arithmetic shift right by rB[0:5]; sets XER[CA] when a negative
+      // value shifts out any 1-bits (feeds addze for signed div-by-2^n).
+      out << "    {\n";
+      out << "        int32_t sv = (int32_t)ctx.gpr[" << rA << "];\n";
+      out << "        uint32_t sh = ctx.gpr[" << rB << "] & 0x3F;\n";
+      out << "        uint32_t ca;\n";
+      out << "        if (sh >= 32) { ctx.gpr[" << rD
+          << "] = (sv < 0) ? 0xFFFFFFFF : 0; ca = (sv < 0) ? 1 : 0; }\n";
+      out << "        else { ctx.gpr[" << rD << "] = (uint32_t)(sv >> sh);\n";
+      out << "            ca = (sv < 0 && (uint32_t)(sv & ((sh==0)?0:((1u<<sh)-1))) != 0) ? 1 : 0; }\n";
+      out << "        ctx.xer = (ctx.xer & ~(1u << 29)) | (ca << 29);\n";
+      if (ppc_inst.value() & 1)
+        out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rD
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rD
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rD << "] == 0);\n";
+      out << "    } // sraw\n";
+    } else if (xo == 824) { // srawi RA, RS, SH
+      // XS-form: RS (source) = bits 6-10 (= rD accessor), RA (dest) =
+      // bits 11-15. Earlier this read/wrote the wrong register (swapped
+      // source and destination), so e.g. `srawi r6, r0, 1` divided r6 by
+      // itself's field instead of r0 — a decimal-normalise loop in the CW
+      // float runtime then never converged.
+      uint32_t sh = (ppc_inst.value() >> 11) & 0x1F;
+      out << "    {\n";
+      out << "        int32_t sv = (int32_t)ctx.gpr[" << rD << "];\n";
+      out << "        ctx.gpr[" << rA << "] = (uint32_t)(sv >> " << sh << ");\n";
+      out << "        uint32_t ca = (sv < 0 && (uint32_t)(sv & "
+          << (sh == 0 ? 0u : ((1u << sh) - 1)) << "u) != 0) ? 1 : 0;\n";
+      out << "        ctx.xer = (ctx.xer & ~(1u << 29)) | (ca << 29);\n";
+      if (ppc_inst.value() & 1)
+        out << "        ctx.cr[0].lt = ((int32_t)ctx.gpr[" << rA
+            << "] < 0); ctx.cr[0].gt = ((int32_t)ctx.gpr[" << rA
+            << "] > 0); ctx.cr[0].eq = (ctx.gpr[" << rA << "] == 0);\n";
+      out << "    } // srawi\n";
     } else if (xo == 922) { // extsh
       out << "    ctx.gpr[" << rD << "] = (uint32_t)(int32_t)(int16_t)ctx.gpr["
           << rA << "]; // extsh\n";

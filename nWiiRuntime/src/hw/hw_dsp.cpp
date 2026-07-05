@@ -49,10 +49,16 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 if (val16 & 0x0008) dsp_control &= ~0x0008;
                 if (val16 & 0x0020) dsp_control &= ~0x0020;
                 if (val16 & 0x0080) dsp_control &= ~0x0080;
+                // DSP reset/boot: post the 0xDCD10000 "init done" mail so the
+                // game can POLL for it. We deliberately do NOT raise the DSP
+                // mail interrupt here: __DSPHandler would dispatch the current
+                // DSP task's callback, which is uninitialised until the game
+                // uploads a real task (observed: NFS HP2 jumped to a garbage
+                // 0x81800000 callback). Mail-driven audio comes online once a
+                // task is registered; boot only needs the polled ack.
                 if (val16 & 0x0001) {
                     dsp_mbox_dsp_hi = 0xDCD1;
                     dsp_mbox_dsp_lo = 0x0000;
-                    dsp_control |= 0x0080;
                 }
                 bool was_halted = (dsp_control & 0x0800) != 0;
                 bool is_halted = (val16 & 0x0800) != 0;
@@ -60,12 +66,10 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 if (was_halted && !is_halted) {
                     dsp_mbox_dsp_hi = 0xDCD1;
                     dsp_mbox_dsp_lo = 0x0000;
-                    dsp_control |= 0x0080;
                 }
                 bool pi_int = false;
                 if ((dsp_control & 0x0008) && (dsp_control & 0x0010)) pi_int = true;
                 if ((dsp_control & 0x0020) && (dsp_control & 0x0040)) pi_int = true;
-                if ((dsp_control & 0x0080) && (dsp_control & 0x0100)) pi_int = true;
                 if (pi_int) trigger_pi_interrupt(0x40);
                 else clear_pi_interrupt(0x40);
             } else if (addr == 0xCC005020) {
