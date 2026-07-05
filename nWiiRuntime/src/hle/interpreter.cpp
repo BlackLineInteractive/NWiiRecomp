@@ -441,6 +441,9 @@ bool interpret_one(CPUContext& ctx) {
 // entry-code signature (position-independent, so it works for any game
 // that links the same runtime) and execute it natively, then return.
 static bool try_native_helper(CPUContext& ctx) {
+    static bool enabled = std::getenv("NWII_NO_FASTMEM") == nullptr;
+    if (!enabled)
+        return false;
     uint32_t pc = ctx.pc;
     // memcpy(dst=r3, src=r4, n=r5). Exact CodeWarrior/SDK prologue:
     //   cmplw r4,r3 ; blt ; addi r4,r4,-1 ; addi r6,r3,-1 ; addi r5,r5,1

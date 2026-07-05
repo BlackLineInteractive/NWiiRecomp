@@ -1734,13 +1734,15 @@ void Recompiler::emit_instruction(std::ostream &out,
       uint32_t spr_bottom = (ppc_inst.value() >> 16) & 0x1F;
       uint32_t spr_top    = (ppc_inst.value() >> 11) & 0x1F;
       uint32_t spr = (spr_top << 5) | spr_bottom;
-      // Wall-clock time base (see CPUContext::read_timebase) so OSGetTime
-      // and timer waits track real time instead of the instruction count.
       if (spr == 269) { // TBU — upper 32 bits of 64-bit timebase
         out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.read_timebase() >> 32); // mftbu\n";
       } else { // TBL (spr==268) — lower 32 bits
         out << "    ctx.gpr[" << rD << "] = (uint32_t)(ctx.read_timebase() & 0xFFFFFFFF); // mftb\n";
       }
+      // NOTE: read_timebase() is wall-clock. It correctly unblocks
+      // timer-idle waits but breaks the boot's timebase-vs-loop
+      // calibration (loop runs at our slow rate, wall clock races ahead).
+      // A hybrid (guest-cycle-estimated TB) is the proper fix.
     } else if (xo == 407) {
       if (rA == 0)
         out << "    ctx.mmu.write16(ctx.gpr[" << rB << "], (uint16_t)ctx.gpr["

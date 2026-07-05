@@ -835,7 +835,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
     }
   }
 
-  if ((ctx.inst_count % 1000000) == 0) {
+  if ((ctx.inst_count % 20000000) == 0) {
       std::cout << "[Heartbeat] PC: 0x" << std::hex << ctx.pc << " LR: 0x" << ctx.lr
                 << " intmr=0x" << nwii::runtime::hw::pi_intmr
                 << " intsr=0x" << nwii::runtime::hw::pi_intsr
