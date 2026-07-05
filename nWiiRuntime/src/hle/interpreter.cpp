@@ -455,6 +455,15 @@ static bool try_native_helper(CPUContext& ctx) {
         ctx.mmu.read32(pc + 12) == 0x38C3FFFF &&
         ctx.mmu.read32(pc + 16) == 0x38A50001) {
         uint32_t dst = ctx.gpr[3], src = ctx.gpr[4], n = ctx.gpr[5];
+        {   // Runaway-loop probe: same caller invoking memcpy endlessly.
+            static uint32_t last_lr = 0; static uint64_t reps = 0;
+            if (ctx.lr == last_lr) { if (++reps == 200000)
+                std::cout << "[Runaway] memcpy from lr=0x" << std::hex << ctx.lr
+                          << " dst=0x" << dst << " src=0x" << src << " n=0x" << n
+                          << " r30=0x" << ctx.gpr[30] << " r31=0x" << ctx.gpr[31]
+                          << std::dec << "\n"; }
+            else { last_lr = ctx.lr; reps = 0; }
+        }
         if (n > 0x2000000u) {
             static int warned = 0;
             if (warned++ < 8)
@@ -472,6 +481,26 @@ static bool try_native_helper(CPUContext& ctx) {
                 ctx.mmu.write8(dst + i, ctx.mmu.read8(src + i));
         }
         ctx.pc = ctx.lr; // r3 (dst) preserved as the return value
+        return true;
+    }
+
+    // memset(dst=r3, val=r4, n=r5). CodeWarrior/SDK prologue:
+    //   cmplwi r5,0x20 ; rlwinm r4,r4,0,24,31 ; addi r6,r3,-1 ; mr r7,r4
+    // Clears BSS and initialises buffers; the count is often large (a
+    // whole section), so interpreting the byte loop stalls boot badly.
+    if (ctx.mmu.read32(pc)      == 0x28050020 &&
+        ctx.mmu.read32(pc + 4)  == 0x5484063E &&
+        ctx.mmu.read32(pc + 8)  == 0x38C3FFFF &&
+        ctx.mmu.read32(pc + 12) == 0x7C872378) {
+        uint32_t dst = ctx.gpr[3], val = ctx.gpr[4] & 0xFF, n = ctx.gpr[5];
+        static int mslog = 0;
+        if (mslog++ < 4)
+            std::cout << "[FastMem] memset dst=0x" << std::hex << dst << " n=0x"
+                      << n << std::dec << "\n";
+        if (n <= 0x2000000u)
+            for (uint32_t i = 0; i < n; ++i)
+                ctx.mmu.write8(dst + i, (uint8_t)val);
+        ctx.pc = ctx.lr;
         return true;
     }
     return false;
@@ -506,14 +535,15 @@ void interpret_step(CPUContext& ctx) {
         }
     }
 
+    // Fast path is checked only at a function entry (here and after each
+    // call/branch below) — NOT per instruction: probing the 5-word
+    // signature on every interpreted step added ~10 memory reads per
+    // instruction and made a large interpreted memset crawl.
+    if (try_native_helper(ctx) && in_recompiled_code(ctx.pc))
+        return;
+
     int consecutive_nops = 0;
     for (uint64_t i = 0; i < 100000000ULL; ++i) {
-        // Native memcpy/memset fast path before interpreting the loop
-        if (try_native_helper(ctx)) {
-            if (in_recompiled_code(ctx.pc))
-                return;
-            continue;
-        }
         uint32_t before = ctx.pc;
         uint32_t insn = ctx.mmu.read32(before);
         // Detect walking through zeroed data (no real code here)
@@ -530,8 +560,23 @@ void interpret_step(CPUContext& ctx) {
             consecutive_nops = 0;
         }
         ++ctx.inst_count;
+        {
+            static uint64_t s = 0;
+            if ((s++ % 5000000) == 0)
+                std::cout << "[ISpin] pc=0x" << std::hex << before << " insn=0x"
+                          << insn << " r3=0x" << ctx.gpr[3] << " r4=0x"
+                          << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << std::dec
+                          << "\n";
+        }
         interpret_one(ctx);
         if (ctx.pc != before + 4) {
+            // A control transfer may land on a memcpy/memset entry — check
+            // the fast path here (only on branches, so cheap).
+            if (try_native_helper(ctx)) {
+                if (in_recompiled_code(ctx.pc))
+                    return;
+                continue;
+            }
             if ((ctx.pc & 0x3FFFFFFF) < 0x100) {
                 std::cout << "[Interp] Jump to low address 0x" << std::hex
                           << ctx.pc << " from 0x" << before << " insn=0x"
