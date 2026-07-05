@@ -35,6 +35,12 @@ uint32_t HW_Reg_Read32(uint32_t addr);
 void HW_Reg_Write16(uint32_t addr, uint16_t val);
 void HW_Reg_Write32(uint32_t addr, uint32_t val);
 
+// Pending-interrupt signals, referenced by CPUContext::callbacks_pending()
+// (a cheap inline gate the recompiled backedges use to avoid calling the
+// full process_pending_callbacks() when nothing is pending).
+namespace hw { extern uint32_t pi_intsr; extern uint32_t pi_intmr; }
+extern int g_ipc_interrupt_delay;
+
 struct CPUContext;
 void init_ipc_client(CPUContext &ctx);
 bool handle_syscall(CPUContext &ctx);
@@ -327,6 +333,20 @@ struct CPUContext {
 
   bool dec_expired() {
     return dec_irq_pending && (inst_count - dec_written_tb) >= dec_value;
+  }
+
+  // Cheap inline gate for recompiled loop backedges: returns true only if
+  // process_pending_callbacks() would actually do something (sentinel return,
+  // a callback in flight, a pending/masked-in interrupt, decrementer, vblank,
+  // IPC delay). When false the backedge skips the opaque function call, which
+  // both saves the call and lets the compiler keep tight loops in registers.
+  // A signal raised just after the check is serviced on the next backedge.
+  bool callbacks_pending() {
+    return pc == 0xFFFFFFFC || in_callback ||
+           vblank_pending.load(std::memory_order_relaxed) ||
+           pending_cb_count.load(std::memory_order_relaxed) != 0 ||
+           g_ipc_interrupt_delay > 0 || dec_expired() ||
+           (hw::pi_intsr & hw::pi_intmr) != 0;
   }
 
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 

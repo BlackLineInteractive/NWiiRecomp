@@ -3,6 +3,7 @@
 #include "runtime/gx_state.h"
 #include "runtime/cpu_context.h"
 #include <iostream>
+#include <cstdlib>
 #include <vector>
 #include <mutex>
 #include <raylib.h>
@@ -44,6 +45,12 @@ void GX_WGPIPE_Write16(uint16_t val) {
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
+    if (std::getenv("NWII_SAMPLE")) {
+        static uint64_t n = 0;
+        if ((n++ % 100000) == 0)
+            std::cout << "[GX] WGP write32 #" << std::dec << n
+                      << " fifo_bytes=" << g_hw_fifo.size() << "\n";
+    }
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     g_hw_fifo.push_back(val >> 24);
     g_hw_fifo.push_back((val >> 16) & 0xFF);
