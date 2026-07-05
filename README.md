@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a> |
+  <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a> 
   <a href="https://youtube.com/@blacklineinteractive">
     <img src="https://img.shields.io/badge/YouTube-Blackline_Interactive-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Blackline Interactive YouTube"/>
   </a>
