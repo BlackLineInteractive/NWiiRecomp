@@ -824,6 +824,13 @@ bool process_pending_callbacks(CPUContext &ctx) {
       ctx.dispatch_saved_ctx = 0;
     }
     if (hle_load_context_from_guest(ctx)) {
+      // An interrupt/exception handler runs in what the guest models as a
+      // few microseconds, but in our inst_count timebase it burns thousands
+      // of ticks (interpreted context save + recompiled reschedule). Restart
+      // the decrementer countdown from the moment we resume the interrupted
+      // thread, so a short OSAlarm period (e.g. dec=114) can't re-expire
+      // before that thread executes a single instruction and starve it.
+      ctx.dec_written_tb = ctx.inst_count;
       static uint32_t restore_count = 0;
       restore_count++;
       if (ctx.pc == 0 || (restore_count % 64) == 1) {

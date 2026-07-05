@@ -455,15 +455,6 @@ static bool try_native_helper(CPUContext& ctx) {
         ctx.mmu.read32(pc + 12) == 0x38C3FFFF &&
         ctx.mmu.read32(pc + 16) == 0x38A50001) {
         uint32_t dst = ctx.gpr[3], src = ctx.gpr[4], n = ctx.gpr[5];
-        {   // Runaway-loop probe: same caller invoking memcpy endlessly.
-            static uint32_t last_lr = 0; static uint64_t reps = 0;
-            if (ctx.lr == last_lr) { if (++reps == 200000)
-                std::cout << "[Runaway] memcpy from lr=0x" << std::hex << ctx.lr
-                          << " dst=0x" << dst << " src=0x" << src << " n=0x" << n
-                          << " r30=0x" << ctx.gpr[30] << " r31=0x" << ctx.gpr[31]
-                          << std::dec << "\n"; }
-            else { last_lr = ctx.lr; reps = 0; }
-        }
         if (n > 0x2000000u) {
             static int warned = 0;
             if (warned++ < 8)
@@ -493,10 +484,6 @@ static bool try_native_helper(CPUContext& ctx) {
         ctx.mmu.read32(pc + 8)  == 0x38C3FFFF &&
         ctx.mmu.read32(pc + 12) == 0x7C872378) {
         uint32_t dst = ctx.gpr[3], val = ctx.gpr[4] & 0xFF, n = ctx.gpr[5];
-        static int mslog = 0;
-        if (mslog++ < 4)
-            std::cout << "[FastMem] memset dst=0x" << std::hex << dst << " n=0x"
-                      << n << std::dec << "\n";
         if (n <= 0x2000000u)
             for (uint32_t i = 0; i < n; ++i)
                 ctx.mmu.write8(dst + i, (uint8_t)val);
@@ -544,6 +531,7 @@ void interpret_step(CPUContext& ctx) {
 
     int consecutive_nops = 0;
     for (uint64_t i = 0; i < 100000000ULL; ++i) {
+        if (ctx.is_running == 0) return;
         uint32_t before = ctx.pc;
         uint32_t insn = ctx.mmu.read32(before);
         // Detect walking through zeroed data (no real code here)
@@ -560,14 +548,6 @@ void interpret_step(CPUContext& ctx) {
             consecutive_nops = 0;
         }
         ++ctx.inst_count;
-        {
-            static uint64_t s = 0;
-            if ((s++ % 5000000) == 0)
-                std::cout << "[ISpin] pc=0x" << std::hex << before << " insn=0x"
-                          << insn << " r3=0x" << ctx.gpr[3] << " r4=0x"
-                          << ctx.gpr[4] << " r5=0x" << ctx.gpr[5] << std::dec
-                          << "\n";
-        }
         interpret_one(ctx);
         if (ctx.pc != before + 4) {
             // A control transfer may land on a memcpy/memset entry — check

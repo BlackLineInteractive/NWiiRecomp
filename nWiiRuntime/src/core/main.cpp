@@ -22,6 +22,7 @@ extern void ProcessGXFifo();
 #include "runtime/hw/hw.h"
 
 namespace nwii::runtime {
+uint32_t g_debug_pc = 0;
 MMU *g_mmu = nullptr;
 CPUContext *g_ctx_ptr = nullptr;
 
@@ -38,7 +39,8 @@ extern "C" void run_game(nwii::runtime::CPUContext &ctx);
 // CPU Execution Thread
 void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
   nwii::runtime::g_ctx_ptr = ctx;
-  std::cout << "[Thread] CPU Core started." << std::endl;
+  std::cout << "[Thread] CPU Core started. pc=" << std::hex << ctx->pc << " is_running=" << ctx->is_running << std::endl;
+  std::flush(std::cout);
   run_game(*ctx);
   std::cout << "[Thread] CPU Core exited. Final PC: 0x" << std::hex << ctx->pc
             << ", LR: 0x" << ctx->lr << std::dec << std::endl;
@@ -97,9 +99,12 @@ int main(int argc, char **argv) {
 
   // Initialize graphics context FIRST in the main thread
   if (!headless) {
+    /*
     InitWindow(nwii::runtime::Config::get().window_width,
                nwii::runtime::Config::get().window_height, "NWiiRecomp");
     SetTargetFPS(60);
+    InitAudioDevice();
+    */
   }
 
   // Context allocation
@@ -127,8 +132,13 @@ int main(int argc, char **argv) {
   // Second pass: Load Data and Text sections (overwriting BSS if overlapping)
   for (const auto &sec : exe.sections) {
     if (!sec.is_bss) {
-      for (size_t i = 0; i < sec.size; ++i)
+      std::cout << "[Loader] Loading section at 0x" << std::hex << sec.address << " size 0x" << sec.size << std::dec << std::endl;
+      for (size_t i = 0; i < sec.size; ++i) {
+        if ((sec.address + i) == 0x80003448) {
+            std::cout << "[Loader] Found 0x80003448 inside section! val=" << std::hex << (uint32_t)sec.data[i] << std::dec << std::endl;
+        }
         ctx->mmu.write8(sec.address + i, sec.data[i]);
+      }
     }
     // Text sections have statically recompiled bodies; everything outside
     // them (low-mem helpers, streamed overlays) runs on the interpreter.
@@ -268,22 +278,31 @@ int main(int argc, char **argv) {
   // 0xF0: simulated memory size (read by OSGetConsoleSimulatedMemSize)
   ctx->mmu.write32(0x800000F0, mem1_size);
 
-  // 0x3128: MEM2 Debug Arena or similar bounds. Setting to arena hi to avoid
-  // invalid size calculation in RVL SDK heap initialization.
-  ctx->mmu.write32(0x80003128, 0x90000000 + mem2_size);
+  // The 0x8000311x-0x8000315x block below is OS low-memory (MEM2 bounds,
+  // Hollywood revision) on real hardware, but some games load a code/data
+  // section over that range (NFS HP2's CodeWarrior runtime memset/memcpy
+  // helpers sit at 0x80003100). Writing synthesized globals there would
+  // corrupt executable code. Only poke an address the game itself does not
+  // occupy — the loaded section is always authoritative for its own bytes.
+  auto poke_global = [&](uint32_t addr, uint32_t val) {
+    for (const auto &sec : exe.sections)
+      if (!sec.is_bss && addr >= sec.address && addr < sec.address + sec.size)
+        return; // game section owns this address
+    ctx->mmu.write32(addr, val);
+  };
 
   if (!is_gc) {
     // Wii-only low-mem fields
     // 0x3118: Simulated MEM2 Size, 0x311C: Physical MEM2 Size
-    ctx->mmu.write32(0x80003118, mem2_size);
-    ctx->mmu.write32(0x8000311C, mem2_size);
+    poke_global(0x80003118, mem2_size);
+    poke_global(0x8000311C, mem2_size);
     // 0x3124 - 0x3134: usable MEM2 bounds + IOS-reserved region
-    ctx->mmu.write32(0x80003124, 0x90000800);
-    ctx->mmu.write32(0x80003128, 0x93e00000);
-    ctx->mmu.write32(0x80003130, 0x93e00000);
-    ctx->mmu.write32(0x80003134, 0x94000000);
+    poke_global(0x80003124, 0x90000800);
+    poke_global(0x80003128, 0x93e00000);
+    poke_global(0x80003130, 0x93e00000);
+    poke_global(0x80003134, 0x94000000);
     // 0x3158: Hollywood hardware revision (retail = 0x00000023)
-    ctx->mmu.write32(0x80003158, 0x00000023);
+    poke_global(0x80003158, 0x00000023);
   }
 
   // Initial SP
@@ -309,9 +328,14 @@ int main(int argc, char **argv) {
 
   if (headless) {
     // No window: only pace VBlank so the OS thread queue keeps moving
+    uint64_t tick = 0;
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
       ctx->vblank_pending = true;
+      if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0)
+        std::cout << "[Sample] pc=0x" << std::hex << ctx->pc << " lr=0x"
+                  << ctx->lr << " ctr=0x" << ctx->ctr << " r3=0x" << ctx->gpr[3]
+                  << " inst=" << std::dec << ctx->inst_count << "\n";
     }
   } else {
     // Main Raylib/GPU Thread Loop

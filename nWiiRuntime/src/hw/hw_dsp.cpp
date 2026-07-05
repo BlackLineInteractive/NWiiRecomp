@@ -19,6 +19,9 @@ static uint32_t ar_mmaddr = 0;
 static uint32_t ar_araddr = 0;
 static uint32_t ar_cnt = 0;
 static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
+static uint16_t ar_size = 0;    // 0xCC005012 AR_INFO/AR_SIZE
+static uint16_t ar_mode = 0;    // 0xCC005016 AR_MODE
+static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 
 
 void register_dsp(MMIODispatcher& dispatcher) {{
@@ -32,6 +35,12 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 return val;
             }
             if (addr == 0xCC005008 || addr == 0xCC00500A) return dsp_control;
+            if (addr == 0xCC005012) return ar_size;
+            // AR_MODE bit 0 is the ARAM controller "ready" handshake the SDK
+            // ARAM-init/size-detect routine polls for. Our ARAM has no init
+            // latency, so it is always ready.
+            if (addr == 0xCC005016) return ar_mode | 0x0001;
+            if (addr == 0xCC00501A) return ar_refresh;
             if (addr == 0xCC005020) return ar_mmaddr;
             if (addr == 0xCC005024) return ar_araddr;
             if (addr == 0xCC005028) return ar_cnt;
@@ -67,11 +76,22 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     dsp_mbox_dsp_hi = 0xDCD1;
                     dsp_mbox_dsp_lo = 0x0000;
                 }
-                bool pi_int = false;
-                if ((dsp_control & 0x0008) && (dsp_control & 0x0010)) pi_int = true;
-                if ((dsp_control & 0x0020) && (dsp_control & 0x0040)) pi_int = true;
+                // Only the DSP-mailbox interrupt (status 0x08 & mask 0x10)
+                // drives __DSPHandler. We do NOT raise the ARAM-DMA completion
+                // interrupt (status 0x20 & mask 0x40): our ARAM DMA finishes
+                // synchronously and the SDK polls AR_DMA_CNT for it, so raising
+                // it only invokes __DSPHandler spuriously, which then consumes
+                // the fake 0xDCD10000 boot mail as a DSP-task "resume" message
+                // and calls an unregistered task callback (garbage 0x81800000).
+                bool pi_int = (dsp_control & 0x0008) && (dsp_control & 0x0010);
                 if (pi_int) trigger_pi_interrupt(0x40);
                 else clear_pi_interrupt(0x40);
+            } else if (addr == 0xCC005012) {
+                ar_size = val & 0xFFFF;
+            } else if (addr == 0xCC005016) {
+                ar_mode = val & 0xFFFF;
+            } else if (addr == 0xCC00501A) {
+                ar_refresh = val & 0xFFFF;
             } else if (addr == 0xCC005020) {
                 ar_mmaddr = val;
             } else if (addr == 0xCC005024) {
@@ -98,9 +118,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                         else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
                     }
                 }
+                // Synchronous completion: clear the busy count and set the
+                // ARAM-DMA status bit for pollers. No interrupt (see the CSR
+                // write handler above for why we do not raise PI 0x40 here).
                 ar_cnt = 0;
                 dsp_control |= 0x0020;
-                if (dsp_control & 0x0040) trigger_pi_interrupt(0x40);
             }
         }
     );

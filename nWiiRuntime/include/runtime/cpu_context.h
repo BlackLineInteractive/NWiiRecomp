@@ -92,7 +92,10 @@ struct MMU {
     return ptr ? *ptr : 0;
   }
 
+  void custom_watch(uint32_t, uint32_t, int) {}
+
   void write8(uint32_t addr, uint8_t value) {
+    custom_watch(addr, value, 8);
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 8);
@@ -115,6 +118,7 @@ struct MMU {
   }
 
   void write16(uint32_t addr, uint16_t value) {
+    custom_watch(addr, value, 16);
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 16);
@@ -141,6 +145,7 @@ struct MMU {
   }
 
   void write32(uint32_t addr, uint32_t value) {
+    custom_watch(addr, value, 32);
     uint32_t paddr = addr & 0x3FFFFFFF;
     if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
