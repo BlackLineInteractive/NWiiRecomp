@@ -99,12 +99,10 @@ int main(int argc, char **argv) {
 
   // Initialize graphics context FIRST in the main thread
   if (!headless) {
-    /*
     InitWindow(nwii::runtime::Config::get().window_width,
                nwii::runtime::Config::get().window_height, "NWiiRecomp");
     SetTargetFPS(60);
     InitAudioDevice();
-    */
   }
 
   // Context allocation

@@ -1133,7 +1133,7 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ++ctx.inst_count;\n";
       out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
           << std::dec << ";\n";
-      out << "    if (ctx.callbacks_pending() && process_pending_callbacks(ctx)) return;\n";
+      out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
           << std::uppercase << std::hex << inst.address << std::dec
@@ -1242,7 +1242,7 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "    ++ctx.inst_count;\n";
       out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
           << std::dec << ";\n";
-      out << "    if (ctx.callbacks_pending() && process_pending_callbacks(ctx)) return;\n";
+      out << "    if (process_pending_callbacks(ctx)) return;\n";
       out << "    if ((ctx.inst_count % 10000000) == 0) { std::cout << "
              "\"Spinning at PC: 0x\" << std::hex << 0x"
           << std::uppercase << std::hex << inst.address << std::dec
