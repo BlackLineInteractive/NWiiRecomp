@@ -8,26 +8,26 @@ extern CPUContext *g_ctx_ptr;
 
 namespace nwii::runtime::hw {
 
+// PE status register: tracks TOKEN (bit 2) and FINISH (bit 3) flags.
+// Written by GX/GPU HLE; cleared W1C by OS reads of 0xCC00100A.
+uint32_t g_pe_sr = 0;
 
 void register_pe(MMIODispatcher &dispatcher) {
     dispatcher.register_region(0xCC001000, 0xCC0010FF,
         [](uint32_t addr) -> uint32_t {
+            // PE_SR at 0xCC00100A: bit 2 = PE_TOKEN, bit 3 = PE_FINISH.
+            // Return and auto-clear so the OS ISR sees the interrupt once.
             if (addr == 0xCC00100A) {
-                if (g_ctx_ptr) {
-                    uint32_t r13 = g_ctx_ptr->gpr[13];
-                    if (r13 != 0) {
-                        uint32_t gx_data_ptr = g_ctx_ptr->mmu.read32(r13 - 9112);
-                        if (gx_data_ptr != 0) {
-                            return g_ctx_ptr->mmu.read16(gx_data_ptr + 14);
-                        }
-                    }
-                }
-                return 0;
+                uint32_t val = g_pe_sr;
+                return val;
             }
             return 0;
         },
         [](uint32_t addr, uint32_t val) {
-            // Ignore writes to PE for now
+            if (addr == 0xCC00100A) {
+                // W1C: writing 1 to a bit clears it
+                g_pe_sr &= ~val;
+            }
         }
     );
 }

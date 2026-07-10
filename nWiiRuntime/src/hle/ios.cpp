@@ -957,11 +957,14 @@ bool process_pending_callbacks(CPUContext &ctx) {
           ctx.vblank_pending = false;
           nwii::runtime::hw::vi_trigger_interrupt();
           
-          // HACK: Auto-trigger PE_TOKEN and PE_FINISH on VBlank to unblock GXDrawDone.
-          // Since we have no actual GPU to consume tokens and trigger this, we fire it
-          // every frame to simulate GX making progress.
-          nwii::runtime::hw::pi_intsr |= 0x00000200; // PE_TOKEN
-          nwii::runtime::hw::pi_intsr |= 0x00000400; // PE_FINISH
+          // Signal PE_TOKEN and PE_FINISH each VBlank to unblock GXDrawDone.
+          // Set through g_pe_sr (the PE MMIO register state) so the OS PE ISR
+          // can read/clear them via 0xCC00100A — avoids polluting pi_intsr.
+          nwii::runtime::hw::g_pe_sr |= 0x04; // PE_TOKEN  (bit 2)
+          nwii::runtime::hw::g_pe_sr |= 0x08; // PE_FINISH (bit 3)
+          nwii::runtime::hw::pi_intsr |= 0x00000200; // INT_CAUSE_PE_TOKEN
+          nwii::runtime::hw::pi_intsr |= 0x00000400; // INT_CAUSE_PE_FINISH
+
           
           hle_drive_thread_queue(ctx);
       }
@@ -983,32 +986,54 @@ bool process_pending_callbacks(CPUContext &ctx) {
       nwii::runtime::hw::vi_trigger_interrupt();
   }
 
-  // Decrementer exception emulation: OSAlarm/OSSetPeriodicAlarm depend on it.
-  // Fire the registered DEC handler (exception 8, table at 0x80003000)
-  // periodically so alarm-driven game loops keep ticking.
-  // Fire the decrementer exception only when the guest's DEC register has
-  // actually underflowed (game arms it via mtdec for OSAlarm). Firing on a
-  // fixed instruction interval instead was over-triggering: a DEC landing
-  // inside a tight recompiled loop (e.g. strncpy) forced a context
-  // save/reschedule every ~200k instructions and starved the main thread.
+  // Fire DEC exception only on actual underflow (game arms via mtdec).
+  // Avoids starving recompiled tight loops with premature reschedules.
   if (ctx.dec_expired() && (ctx.msr & 0x8000) && !ctx.in_callback) {
       ctx.dec_irq_pending = false; // consumed; re-arms on next mtdec
 
-      // Deadlock breaker: if the main thread is spinning in the OS alarm
-      // dispatcher (0x801813EC) and all other threads are blocked, the tick
-      // counter [r13-9676] will never advance because FUN_80180c88 (which
-      // normally increments it) runs in a thread that is blocked on a mutex
-      // held by... the alarm loop itself.  Detect this and advance the counter
-      // directly from the HLE side so the alarm can fire.
-      if (ctx.pc == 0x801813EC && ctx.gpr[13] != 0) {
-          uint32_t tick_addr = ctx.gpr[13] - 9676;
-          uint32_t ticks = ctx.mmu.read32(tick_addr);
-          ctx.mmu.write32(tick_addr, ticks + 1);
-          // Also advance the hi-word tick counter at r13-9680
-          uint32_t tick_hi_addr = ctx.gpr[13] - 9680;
-          uint32_t hi = ctx.mmu.read32(tick_hi_addr);
-          if (ticks + 1 == 0) ctx.mmu.write32(tick_hi_addr, hi + 1);
-          return false; // let the alarm loop re-check immediately
+
+      // Alarm-spin deadlock breaker: if DEC fires 64 times at the same PC,
+      // the thread is stuck waiting for an OSAlarm that can't self-advance.
+      // Scan SDA below r13 for OSAlarm structs and force-expire pending ones.
+      // OSAlarm layout: +0x08 fire_hi, +0x0C fire_lo, +0x18 handler.
+      {
+          static uint32_t dec_same_pc_count = 0;
+          static uint32_t dec_last_pc = 0;
+          if (ctx.pc == dec_last_pc) {
+              dec_same_pc_count++;
+          } else {
+              dec_same_pc_count = 0;
+              dec_last_pc = ctx.pc;
+          }
+
+          if (dec_same_pc_count == 64) {
+              dec_same_pc_count = 0;
+              if (ctx.gpr[13] != 0) {
+                  uint64_t now_tb = ctx.read_timebase();
+                  uint32_t now_hi = (uint32_t)(now_tb >> 32);
+                  uint32_t now_lo = (uint32_t)(now_tb & 0xFFFFFFFF);
+                  uint32_t base = ctx.gpr[13];
+                  for (int i = 0; i < 512; i++) {
+                      uint32_t addr = base - (uint32_t)(i * 4);
+                      if (addr < 0x80000000u || addr > 0x81FFFFFFu) continue;
+                      uint32_t handler = ctx.mmu.read32(addr + 0x18);
+                      if (handler < 0x80000000u || handler >= 0x82000000u) continue;
+                      uint32_t fire_hi = ctx.mmu.read32(addr + 0x08);
+                      uint32_t fire_lo = ctx.mmu.read32(addr + 0x0C);
+                      if (fire_hi == 0 && fire_lo == 0) continue;
+                      if (fire_hi < now_hi || (fire_hi == now_hi && fire_lo <= now_lo))
+                          continue;
+                      ctx.mmu.write32(addr + 0x08, now_hi);
+                      ctx.mmu.write32(addr + 0x0C, now_lo);
+                      static uint32_t forced_count = 0;
+                      if ((forced_count++ % 32) == 0)
+                          std::cout << "[HLE DEC] force-expired alarm 0x"
+                                    << std::hex << addr << " handler=0x"
+                                    << handler << std::dec << "\n";
+                  }
+              }
+              return false;
+          }
       }
 
       // Every 500th DEC, dump all threads + their wait objects so a

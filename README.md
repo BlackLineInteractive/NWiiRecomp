@@ -147,7 +147,9 @@ NWII_TRACE_CALLS=1   # print every recompiled function entry
 
 ---
 
-- [N64Recomp](https://github.com/N64Recomp/N64Recomp) — Original inspiration for the static recompilation approach
+- [PS2Recomp](https://github.com/ran-j/PS2Recomp) — Project structure and early inspiration from former friend Ran-J; the foundation this recompiler is built on.
+- [N64Recomp](https://github.com/N64Recomp/N64Recomp) — Inspiration for the static recompilation approach
+
 - [Dolphin Emulator](https://github.com/dolphin-emu/dolphin) — Huge thanks for the endless hardware documentation, GX/DSP accuracy, and HLE inspiration!
 - [Cemu](https://github.com/cemu-project/Cemu.git) — Reference for Cafe OS RPL imports, hardware emulation, and GX2 to Vulkan translation.
 - [Decaf-emu](https://github.com/decaf-emu/decaf-emu.git) — Great resource for RPX/RPL loaders and Cafe OS kernel/syscalls.

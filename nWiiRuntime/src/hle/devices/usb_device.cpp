@@ -48,15 +48,24 @@ public:
 
         switch (req.ioctl_cmd) {
         case USBV0_CTRLMSG: {
-            // Control transfer: setup fields (bmRequestType..wLength) are the
-            // input vectors [0..4]; the HCI command packet is the payload,
-            // i.e. the output/payload vector at index arg_cnt_in.
-            uint16_t wlen = 0;
-            if (req.ioctlv_vecs.size() > 4 && req.ioctlv_vecs[4].addr)
-                wlen = (uint16_t)(ctx.mmu.read8(req.ioctlv_vecs[4].addr) |
-                                  (ctx.mmu.read8(req.ioctlv_vecs[4].addr + 1) << 8));
-            if (out_ptr != 0 && out_len >= 3)
-                handle_hci_command(ctx, out_ptr, wlen ? wlen : out_len);
+            // The BTE stack passes the control-transfer setup fields and the
+            // payload as separate vectors, but their order and the pointer
+            // form (physical vs. virtual) vary between call sites. Instead of
+            // trusting an index, scan every vector and validate its bytes as
+            // an HCI command packet (opcode LE u16 with a sane OGF, third
+            // byte = parameter length). The MMU masks both address forms.
+            for (size_t i = req.ioctlv_vecs.size(); i-- > 0;) {
+                uint32_t p = req.ioctlv_vecs[i].addr;
+                if (p == 0 || p < 0x100)
+                    continue; // tiny values are inline setup fields, not pointers
+                uint16_t opcode = (uint16_t)(ctx.mmu.read8(p) |
+                                             (ctx.mmu.read8(p + 1) << 8));
+                uint16_t ogf = opcode >> 10;
+                if (opcode == 0 || opcode == 0xFFFF || ogf == 0 || ogf > 0x3F)
+                    continue;
+                handle_hci_command(ctx, p, 3u + ctx.mmu.read8(p + 2));
+                break;
+            }
             return IPC_OK;
         }
 
