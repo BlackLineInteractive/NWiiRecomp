@@ -274,6 +274,12 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
     generated_files.push_back(main_name);
     out.open(config_.output_dir + "/" + main_name);
     emit_headers(out);
+    out << "#if defined(__GNUC__) || defined(__clang__)\n";
+    out << "#pragma GCC optimize (\"O0\")\n";
+    out << "#endif\n";
+    out << "#if defined(__clang__)\n";
+    out << "#pragma clang optimize off\n";
+    out << "#endif\n\n";
     out << "#include \"functions.h\"\n\n";
 
     std::string entry_func;
@@ -330,7 +336,7 @@ std::vector<std::string> Recompiler::generate_cpp(uint32_t entry_point) {
            "          }\n"
            "          continue;\n"
            "      }\n";
-    out << "      if (setjmp(ctx.exception_jmp_buf) == 0) {\n";
+    out << "      if (_setjmp(ctx.exception_jmp_buf) == 0) {\n";
     out << "        process_pending_callbacks(ctx);\n";
     out << "        if (ctx.pc == 0xFFFFFFFC) {\n";
     out << "            if (!ctx.backup_stack.empty()) {\n";
@@ -869,12 +875,14 @@ void Recompiler::emit_function(std::ostream &out,
             << std::dec << ";\n";
       }
     }
+    out << "            case 0x0: return; // idle: no runnable thread\n";
     out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO "
            "0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x"
         << std::hex << std::uppercase << func.start_address << std::dec
         << " LR: 0x\" << std::hex << ctx.lr << \"\\n\"; std::exit(1);\n";
     out << "        }\n";
     out << "    }\n";
+
   }
   for (const auto &inst : func.instructions) {
     emit_instruction(out, inst, func);

@@ -30,6 +30,7 @@ add_library(nwiiruntime STATIC
     src/platform/wii_platform.cpp
     src/platform/gc_platform.cpp
     src/hw/hw_pi.cpp
+    src/hw/hw_pe.cpp
     src/hw/hw_vi.cpp
     src/hw/hw_dsp.cpp
     src/hw/hw_exi.cpp

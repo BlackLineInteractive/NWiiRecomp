@@ -142,9 +142,9 @@ void VirtualDisc::parse_fst() {
     }
 }
 
-bool VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
+size_t VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
     if (!m_valid)
-        return false;
+        return 0;
     std::memset(dst, 0, len);
 
     uint64_t end = offset + len;
@@ -155,12 +155,36 @@ bool VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
         uint64_t lo = std::max(offset, r.offset);
         uint64_t hi = std::min(end, r.offset + r.size);
 
-        std::ifstream f(r.host_path, std::ios::binary);
-        if (!f.is_open())
+        FILE* f = nullptr;
+        if (m_cached_path == r.host_path && m_cached_file != nullptr) {
+            f = m_cached_file;
+        } else {
+            if (m_cached_file) {
+                fclose(m_cached_file);
+                m_cached_file = nullptr;
+            }
+            f = fopen(r.host_path.c_str(), "rb");
+            if (f) {
+                m_cached_path = r.host_path;
+                m_cached_file = f;
+            }
+        }
+
+        if (!f) {
+            std::cout << "[VDisc] ERROR: Cannot open file " << r.host_path << "\n";
             continue;
-        f.seekg((std::streamoff)(lo - r.offset));
-        f.read(reinterpret_cast<char*>(dst + (lo - offset)), (std::streamsize)(hi - lo));
-        covered += hi - lo;
+        }
+        fseeko(f, (off_t)(lo - r.offset), SEEK_SET);
+        size_t bytes_read = fread(dst + (lo - offset), 1, hi - lo, f);
+        if (bytes_read < (hi - lo)) {
+            static int trunc_budget = 20;
+            if (trunc_budget > 0) {
+                trunc_budget--;
+                std::cout << "[VDisc] TRUNCATED FILE: " << r.host_path 
+                          << " expected " << (hi - lo) << " but got " << bytes_read << "\n";
+            }
+        }
+        covered += bytes_read;
     }
     // A read that matches no extracted file returns zeros; the game then
     // parses garbage. Surface it so disc-layout gaps are visible.
@@ -173,7 +197,7 @@ bool VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
                       << std::dec << " (no file region)\n";
         }
     }
-    return true;
+    return covered;
 }
 
 } // namespace nwii::runtime

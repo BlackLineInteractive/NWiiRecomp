@@ -26,15 +26,20 @@ static uint32_t di_cr = 0;
 static uint32_t di_imm = 0;
 static uint32_t di_sr = 0;
 static uint32_t di_cvr = 0;
+static bool di_stream_playing = false;
 
 static constexpr uint32_t SR_BRK = 0x01, SR_DEINTMASK = 0x02, SR_DEINT = 0x04;
 static constexpr uint32_t SR_TCINTMASK = 0x08, SR_TCINT = 0x10, SR_BRKINTMASK = 0x20;
 static constexpr uint32_t CVR_CVRINTMASK = 0x02, CVR_CVRINT = 0x04;
 
+// Declared in ios.cpp (namespace hw), same translation unit is nwiiruntime.
+// Referenced here to schedule async DI interrupt instead of firing immediately.
+int g_di_interrupt_delay = 0;
+
 static void di_update_interrupt() {
-    bool assert_int = ((di_sr & SR_TCINT) && (di_sr & SR_TCINTMASK)) ||
-                      ((di_sr & SR_DEINT) && (di_sr & SR_DEINTMASK)) ||
-                      ((di_sr & SR_BRK) && (di_sr & SR_BRKINTMASK)) ||
+    bool assert_int = ((di_sr & SR_TCINT)  && (di_sr & SR_TCINTMASK)) ||
+                      ((di_sr & SR_DEINT)  && (di_sr & SR_DEINTMASK)) ||
+                      ((di_sr & SR_BRK)    && (di_sr & SR_BRKINTMASK)) ||
                       ((di_cvr & CVR_CVRINT) && (di_cvr & CVR_CVRINTMASK));
     if (assert_int)
         trigger_pi_interrupt(0x04); // DI = PI_INTSR bit 2
@@ -42,34 +47,48 @@ static void di_update_interrupt() {
         clear_pi_interrupt(0x04);
 }
 
+// Counts down the completion delay armed by di_execute() and raises the DI
+// interrupt when it elapses. Without this the transfer-complete status is set
+// but the interrupt never fires, so the OS never runs its DVD completion
+// callback and the game stalls after its first read.
+void di_tick() {
+    if (g_di_interrupt_delay > 0 && --g_di_interrupt_delay == 0)
+        di_update_interrupt();
+}
+
 // Execute the drive command latched in DICMDBUF0..2 (DICR TSTART written)
 static void di_execute() {
     uint32_t cmd = di_cmd[0] >> 24;
+    di_cr &= ~1; // TSTART self-clears
 
     switch (cmd) {
     case 0xA8: { // Read: DICMDBUF1 = offset>>2, DILENGTH = byte count
         auto& vd = VirtualDisc::get();
         if (!vd.valid())
-            vd.init(nwii::runtime::Config::get().game_dir);
+            vd.init(Config::get().game_dir);
         uint64_t offset = (uint64_t)di_cmd[1] << 2;
         uint32_t length = di_len ? di_len : di_cmd[2];
-        uint32_t dst = di_mar | 0x80000000;
+        uint32_t dst = di_mar;
         if (nwii::runtime::g_mmu && length > 0 && length < 0x4000000) {
             std::vector<uint8_t> tmp(length, 0);
-            if (vd.valid())
-                vd.read(offset, length, tmp.data());
+            size_t actual = vd.read(offset, length, tmp.data());
+            if (actual < length) {
+                std::cout << "[VDisc] MISS: read off=0x" << std::hex << offset
+                          << " len=0x" << length << " covered=0x" << actual << " (no file region)\n";
+                std::memset(tmp.data() + actual, 0, length - actual);
+            }
             for (uint32_t i = 0; i < length; ++i)
                 nwii::runtime::g_mmu->write8(dst + i, tmp[i]);
             std::cout << "[HW DI] DMA read off=0x" << std::hex << offset
-                      << " len=0x" << length << " dst=0x" << dst << std::dec
-                      << std::endl;
+                      << " len=0x" << length << " dst=0x" << dst << std::dec << "\n";
         }
         di_len = 0;
+        di_sr |= SR_TCINT;
         break;
     }
     case 0x12: { // Inquiry: DMA 0x20 bytes of drive info
         if (nwii::runtime::g_mmu && di_len > 0 && di_len <= 0x40) {
-            uint32_t dst = di_mar | 0x80000000;
+            uint32_t dst = di_mar;
             for (uint32_t i = 0; i < di_len; ++i)
                 nwii::runtime::g_mmu->write8(dst + i, 0);
             if (di_len >= 8) {
@@ -78,29 +97,60 @@ static void di_execute() {
             }
         }
         di_len = 0;
+        di_sr |= SR_TCINT;
         break;
     }
     case 0xAB: // Seek
     case 0xE0: // RequestError: 0 = no error
-    case 0xE1: // PlayAudio (streaming)
-    case 0xE2: // RequestAudioStatus
+    case 0xE1: { // PlayAudio (streaming)
+        uint32_t sub = (di_cmd[0] >> 16) & 0xFF;
+        if (sub == 0x00) { // Start
+            uint64_t offset = di_cmd[1];
+            uint32_t length = di_cmd[2];
+            if (offset == 0 && length == 0) {
+                // stop at track end (not really stopping immediately)
+            } else {
+                di_stream_playing = true;
+            }
+        } else if (sub == 0x01) { // Stop
+            di_stream_playing = false;
+        }
+        di_imm = 0;
+        di_sr |= SR_DEINT;
+        break;
+    }
+    case 0xE2: { // RequestAudioStatus
+        uint32_t sub = (di_cmd[0] >> 16) & 0xFF;
+        if (sub == 0x00) {
+            di_imm = di_stream_playing ? 1 : 0;
+        } else {
+            di_imm = 0;
+        }
+        di_sr |= SR_DEINT;
+        break;
+    }
     case 0xE3: // StopMotor
     case 0xE4: // AudioBufferConfig
         di_imm = 0;
+        di_sr |= SR_DEINT;
         break;
     default:
-        std::cout << "[HW DI] Unhandled drive command 0x" << std::hex << cmd
-                  << std::dec << "\n";
+        if (cmd != 0xE0 && cmd != 0xAB) {
+            std::cout << "[HW DI] Unhandled drive command 0x" << std::hex << cmd
+                      << std::dec << "\n";
+        }
         di_imm = 0;
+        di_sr |= SR_DEINT;
         break;
     }
 
-    di_cr &= ~1;         // TSTART self-clears
-    di_sr |= SR_TCINT;   // transfer complete
+    // Raise the completion interrupt right away. A deferred IRQ loses the
+    // race with the OS clearing the transfer-complete status while polling,
+    // which strands the drive after its first read.
     di_update_interrupt();
 }
 
-void register_di(MMIODispatcher& dispatcher) {{
+void register_di(MMIODispatcher& dispatcher) {
     dispatcher.register_region(0xCC006000, 0xCC0060FF,
         [](uint32_t addr) -> uint32_t {
             if (addr == 0xCC006000) return di_sr;
@@ -139,6 +189,6 @@ void register_di(MMIODispatcher& dispatcher) {{
             else if (addr == 0xCC006020) { di_imm = val; }
         }
     );
-}}
+}
 
 } // namespace nwii::runtime::hw

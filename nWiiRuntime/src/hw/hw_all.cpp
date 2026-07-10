@@ -3,6 +3,7 @@
 namespace nwii::runtime::hw {
 void register_all_hw(MMIODispatcher &dispatcher) {
   register_pi(dispatcher);
+  register_pe(dispatcher);
   register_vi(dispatcher);
   register_dsp(dispatcher);
   register_exi(dispatcher);

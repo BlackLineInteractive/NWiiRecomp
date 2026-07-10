@@ -19,7 +19,7 @@ public:
     bool valid() const { return m_valid; }
 
     // Read `len` bytes at partition byte offset into dst. Gaps read as zero.
-    bool read(uint64_t offset, uint32_t len, uint8_t* dst);
+    size_t read(uint64_t offset, uint32_t len, uint8_t* dst);
 
     uint32_t fst_size() const { return (uint32_t)m_fst_data.size(); }
     const std::vector<uint8_t>& fst_data() const { return m_fst_data; }
@@ -45,6 +45,10 @@ private:
     std::vector<uint8_t> m_boot_data;
     std::vector<uint8_t> m_fst_data;
     std::vector<Region> m_regions;
+
+    // File caching
+    std::string m_cached_path;
+    FILE* m_cached_file = nullptr;
 };
 
 } // namespace nwii::runtime

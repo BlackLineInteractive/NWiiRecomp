@@ -77,12 +77,12 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     dsp_mbox_dsp_lo = 0x0000;
                 }
                 // Only the DSP-mailbox interrupt (status 0x08 & mask 0x10)
-                // drives __DSPHandler. We do NOT raise the ARAM-DMA completion
-                // interrupt (status 0x20 & mask 0x40): our ARAM DMA finishes
-                // synchronously and the SDK polls AR_DMA_CNT for it, so raising
-                // it only invokes __DSPHandler spuriously, which then consumes
-                // the fake 0xDCD10000 boot mail as a DSP-task "resume" message
-                // and calls an unregistered task callback (garbage 0x81800000).
+                // drives __DSPHandler. Do NOT raise it for ARAM-DMA completion
+                // (status 0x20 & mask 0x40): our ARAM DMA finishes synchronously
+                // and the SDK polls AR_DMA_CNT for it. Raising it invokes
+                // __DSPHandler spuriously, which consumes the fake 0xDCD10000
+                // boot mail as a DSP-task "resume" and calls an unregistered
+                // task callback (garbage 0x81800000) -> WILD JUMP.
                 bool pi_int = (dsp_control & 0x0008) && (dsp_control & 0x0010);
                 if (pi_int) trigger_pi_interrupt(0x40);
                 else clear_pi_interrupt(0x40);
@@ -119,8 +119,9 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     }
                 }
                 // Synchronous completion: clear the busy count and set the
-                // ARAM-DMA status bit for pollers. No interrupt (see the CSR
-                // write handler above for why we do not raise PI 0x40 here).
+                // ARAM-DMA status bit for pollers. No interrupt here -- see the
+                // CSR write handler above for why raising PI 0x40 for ARAM DMA
+                // sends __DSPHandler into an unregistered task callback.
                 ar_cnt = 0;
                 dsp_control |= 0x0020;
             }
@@ -129,3 +130,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
 }}
 
 } // namespace nwii::runtime::hw
+namespace nwii::runtime::hw {
+void dsp_trigger_interrupt() {
+    if (dsp_control & 0x0010) {
+        dsp_control |= 0x0008;
+        trigger_pi_interrupt(0x40);
+    }
+}
+}

@@ -820,7 +820,12 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // to restore a never-saved stack context with srr0=0.
   if (ctx.pc == 0xFFFFFFFC && !ctx.in_callback) {
     if (ctx.dispatch_saved_ctx) {
-      ctx.mmu.write32(0x800000D4, ctx.dispatch_saved_ctx);
+      uint32_t current_thread = ctx.mmu.read32(0x800000E4);
+      if (current_thread != 0 && current_thread != ctx.dispatch_saved_ctx) {
+        ctx.mmu.write32(0x800000D4, current_thread);
+      } else {
+        ctx.mmu.write32(0x800000D4, ctx.dispatch_saved_ctx);
+      }
       ctx.dispatch_saved_ctx = 0;
     }
     if (hle_load_context_from_guest(ctx)) {
@@ -943,10 +948,21 @@ bool process_pending_callbacks(CPUContext &ctx) {
       }
   }
 
+  // Drive-command completion: di_execute() arms a short delay so the OS can
+  // return from the TSTART write before the DI interrupt preempts it.
+  nwii::runtime::hw::di_tick();
+
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {
           ctx.vblank_pending = false;
           nwii::runtime::hw::vi_trigger_interrupt();
+          
+          // HACK: Auto-trigger PE_TOKEN and PE_FINISH on VBlank to unblock GXDrawDone.
+          // Since we have no actual GPU to consume tokens and trigger this, we fire it
+          // every frame to simulate GX making progress.
+          nwii::runtime::hw::pi_intsr |= 0x00000200; // PE_TOKEN
+          nwii::runtime::hw::pi_intsr |= 0x00000400; // PE_FINISH
+          
           hle_drive_thread_queue(ctx);
       }
   }
@@ -977,6 +993,24 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // save/reschedule every ~200k instructions and starved the main thread.
   if (ctx.dec_expired() && (ctx.msr & 0x8000) && !ctx.in_callback) {
       ctx.dec_irq_pending = false; // consumed; re-arms on next mtdec
+
+      // Deadlock breaker: if the main thread is spinning in the OS alarm
+      // dispatcher (0x801813EC) and all other threads are blocked, the tick
+      // counter [r13-9676] will never advance because FUN_80180c88 (which
+      // normally increments it) runs in a thread that is blocked on a mutex
+      // held by... the alarm loop itself.  Detect this and advance the counter
+      // directly from the HLE side so the alarm can fire.
+      if (ctx.pc == 0x801813EC && ctx.gpr[13] != 0) {
+          uint32_t tick_addr = ctx.gpr[13] - 9676;
+          uint32_t ticks = ctx.mmu.read32(tick_addr);
+          ctx.mmu.write32(tick_addr, ticks + 1);
+          // Also advance the hi-word tick counter at r13-9680
+          uint32_t tick_hi_addr = ctx.gpr[13] - 9680;
+          uint32_t hi = ctx.mmu.read32(tick_hi_addr);
+          if (ticks + 1 == 0) ctx.mmu.write32(tick_hi_addr, hi + 1);
+          return false; // let the alarm loop re-check immediately
+      }
+
       // Every 500th DEC, dump all threads + their wait objects so a
       // scheduler-churn deadlock (all threads blocked) is visible.
       static uint32_t dcount = 0;
@@ -1016,6 +1050,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
           longjmp(ctx.exception_jmp_buf, 1);
       }
   }
+
 
   uint32_t active_ints = nwii::runtime::hw::pi_intsr & nwii::runtime::hw::pi_intmr;
 
