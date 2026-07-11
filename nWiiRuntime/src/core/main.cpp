@@ -17,7 +17,6 @@
 #include <vector>
 
 // Forward declarations of GX FIFO processing
-extern void ProcessGXFifo();
 
 #include "runtime/hw/hw.h"
 
@@ -329,6 +328,7 @@ int main(int argc, char **argv) {
     uint64_t tick = 0;
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
+
       ctx->vblank_pending = true;
       if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0) {
         std::cout << "[Sample] pc=0x" << std::hex << ctx->pc << " lr=0x"
@@ -353,12 +353,14 @@ int main(int argc, char **argv) {
           // flips + sends the frame message when [vidstate+0xa2]==0 and the
           // flip-pending byte [r13-0x29b6] is set.
           uint32_t vs = ctx->mmu.read32(r13 - 0x29c0);
+          uint32_t ef_obj = ctx->mmu.read32(r13 - 0x2AF0);
           std::cout << "  [FlipG] r13=0x" << std::hex << r13 << " vs=0x" << vs
                     << " vsA2=" << std::dec << (int)ctx->mmu.read8(vs + 0xa2)
                     << " pend29b6=" << (int)ctx->mmu.read8(r13 - 0x29b6)
                     << " b29b5=" << (int)ctx->mmu.read8(r13 - 0x29b5)
                     << " b4808=" << (int)ctx->mmu.read8(r13 - 0x4808)
                     << " vsB0=0x" << std::hex << ctx->mmu.read32(vs + 0xb0)
+                    << " efB0=0x" << std::hex << (ef_obj ? ctx->mmu.read32(ef_obj + 0xb0) : 0)
                     << " vs9C=" << std::dec << ctx->mmu.read32(vs + 0x9c)
                     << " pe_sr=0x" << std::hex << nwii::runtime::hw::g_pe_sr
                     << std::dec << "\n";
@@ -372,6 +374,9 @@ int main(int argc, char **argv) {
           uint32_t th = ctx->mmu.read32(0x800000DC);
           int guard = 0;
           while (th >= 0x80000000u && th < 0x81800000u && guard++ < 16) {
+          uint32_t q = 0x803540e0;
+          std::cout << "Queue " << std::hex << q << ": msgArray=" << ctx->mmu.read32(q+16) << " count=" << ctx->mmu.read32(q+20) << " first=" << ctx->mmu.read32(q+24) << " used=" << ctx->mmu.read32(q+28) << "\n";
+
             uint16_t state = ctx->mmu.read16(th + 0x2C8);
             uint32_t prio = ctx->mmu.read32(th + 0x2D0);
             uint32_t wq = ctx->mmu.read32(th + 0x2DC);
@@ -400,7 +405,6 @@ int main(int argc, char **argv) {
       ClearBackground(BLACK);
 
       // Drain GX FIFO and issue OpenGL/rlgl calls safely in the main thread
-      ProcessGXFifo();
 
       EndDrawing();
 

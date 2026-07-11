@@ -1,3 +1,6 @@
+#include "runtime/cpu_context.h"
+namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
+
 #include "runtime/gx/fifo_parser.h"
 #include "runtime/gx/renderer.h"
 #include "runtime/hw/hw.h"
@@ -45,6 +48,7 @@ static void pe_sniff_byte(uint8_t b) {
 
 
 void ProcessGXFifo() {
+
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     if (g_hw_fifo.empty()) return;
 

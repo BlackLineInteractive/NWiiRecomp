@@ -40,6 +40,7 @@ add_library(nwiiruntime STATIC
     src/hw/hw_ipc.cpp
     src/hw/hw_all.cpp
     src/hw/hw_mi.cpp
+    src/hw/hw_cp.cpp
     src/hle/devices/di_device.cpp
     src/hle/devices/fs_device.cpp
     src/hle/devices/stm_device.cpp
