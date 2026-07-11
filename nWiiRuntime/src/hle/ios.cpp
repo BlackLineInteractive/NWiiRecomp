@@ -582,6 +582,7 @@ extern "C" int32_t handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
 
     IpcRequest req{};
     req.fd = fd;
+    req.req_addr = virt_addr;
     req.ioctl_cmd = ioctl_cmd;
     req.in_buf = in_buf;
     req.in_size = in_size;
@@ -598,6 +599,7 @@ extern "C" int32_t handle_ios_ipc(CPUContext& ctx, uint32_t request_addr) {
     IpcRequest req{};
     req.cmd = cmd;
     req.fd = fd;
+    req.req_addr = virt_addr;
     req.ioctl_cmd = ioctl_cmd;
     req.arg_cnt_in = arg_in;
     req.arg_cnt_out = arg_out;
@@ -719,8 +721,21 @@ void hle_drive_thread_queue(CPUContext& ctx) {
 //   0x090 fpr[32], 0x194 fpscr, 0x198 srr0, 0x19C srr1,
 //   0x1A4 gqr[8], 0x1C8 psf[32]; total 0x2C8
 static void hle_save_context_to_guest(CPUContext &ctx, uint32_t c) {
+  if (std::getenv("NWII_SAMPLE")) {
+      static int n = 0;
+      if (n++ < 40)
+          std::cout << "[CtxSave] #" << n << " ctx=0x" << std::hex << c
+                    << " srr0<=0x" << ctx.pc << " msr=0x" << ctx.msr
+                    << " lr=0x" << ctx.lr << std::dec << "\n";
+  }
   for (int i = 0; i < 32; i++)
     ctx.mmu.write32(c + i * 4, ctx.gpr[i]);
+  // Mark this as an exception-saved (full) context, like the real 0x500
+  // prologue does: OSLoadContext keys on OS_CONTEXT_STATE_EXC (bit 1 of the
+  // state halfword at +0x1A2) to restore r5-r12 too; without it the light
+  // path reloads only r13-r31 and the interrupted code resumes with junk in
+  // the volatile registers.
+  ctx.mmu.write16(c + 0x1A2, ctx.mmu.read16(c + 0x1A2) | 0x0002);
   uint32_t cr_val = 0;
   for (int i = 0; i < 8; i++) {
     cr_val |= (ctx.cr[i].lt ? 8u : 0) << (28 - i * 4);
@@ -781,11 +796,45 @@ static bool hle_load_context_from_guest(CPUContext &ctx) {
   }
   ctx.pc = ctx.mmu.read32(c + 0x198);  // srr0
   ctx.msr = ctx.mmu.read32(c + 0x19C); // srr1
+  // Consume OS_CONTEXT_STATE_EXC exactly like the guest's OSLoadContext
+  // full-restore path does. Leaving it set poisons the context: a later
+  // light OSSaveContext (r13-r31 only) followed by OSLoadContext would see
+  // the stale flag and reload r5-r12 from exception-era slots — random
+  // volatile-register garbage that surfaced as jump-into-format-string and
+  // negative memcpy lengths.
+  ctx.mmu.write16(c + 0x1A2, ctx.mmu.read16(c + 0x1A2) & ~0x0002);
   return true;
 }
 
 
+int g_trace_after_dec = 0;
+
 bool process_pending_callbacks(CPUContext &ctx) {
+  // EE rising-edge probe: logs where interrupts get re-enabled. An idle
+  // system must reach the SDK idle spin with EE=1; if this never fires
+  // after boot, every resumed context is stuck in EE=0 scheduler code.
+  if (std::getenv("NWII_SAMPLE")) {
+      static uint32_t last_ee = 0, edges = 0;
+      uint32_t ee = ctx.msr & 0x8000;
+      if (ee && !last_ee && edges < 8)
+          std::cout << "[EEup] #" << ++edges << " pc=0x" << std::hex << ctx.pc
+                    << " lr=0x" << ctx.lr << std::dec << "\n";
+      last_ee = ee;
+  }
+  // One-shot control-flow trace armed by the first DEC fire: prints the pc
+  // seen at every backedge/dispatcher check so the handler's exit path
+  // (sentinel vs OSLoadContext/rfi vs a structural loop) becomes visible.
+  if (g_trace_after_dec > 0) {
+      static int skip = 20000; // land the trace window in the steady-state ring
+      if (skip > 0) { skip--; }
+      else {
+          g_trace_after_dec--;
+          std::cout << "[T] 0x" << std::hex << ctx.pc << " lr=0x" << ctx.lr
+                    << " r1=0x" << ctx.gpr[1] << " r3=0x" << ctx.gpr[3]
+                    << " r29=0x" << ctx.gpr[29] << " sr0=0x" << ctx.srr0
+                    << std::dec << "\n";
+      }
+  }
   // Targeted loop tracer: NWII_LOOPTRACE=hexpc logs GPRs each time the
   // guest hits that PC (recompiled backedges call us with ctx.pc set).
   {
@@ -945,27 +994,27 @@ bool process_pending_callbacks(CPUContext &ctx) {
       g_ipc_interrupt_delay--;
       if (g_ipc_interrupt_delay == 0) {
           nwii::runtime::hw::trigger_pi_interrupt(0x00004000);
+          if (std::getenv("NWII_SAMPLE"))
+              std::cout << "[IPC] irq raised intmr=0x" << std::hex
+                        << nwii::runtime::hw::pi_intmr << " msr=0x" << ctx.msr
+                        << " pc=0x" << ctx.pc << std::dec << "\n";
       }
   }
 
   // Drive-command completion: di_execute() arms a short delay so the OS can
   // return from the TSTART write before the DI interrupt preempts it.
   nwii::runtime::hw::di_tick();
+  // Deferred DSP-mail acknowledge (models real DSP frame latency).
+  nwii::runtime::hw::dsp_tick();
 
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {
           ctx.vblank_pending = false;
           nwii::runtime::hw::vi_trigger_interrupt();
-          
-          // Signal PE_TOKEN and PE_FINISH each VBlank to unblock GXDrawDone.
-          // Set through g_pe_sr (the PE MMIO register state) so the OS PE ISR
-          // can read/clear them via 0xCC00100A — avoids polluting pi_intsr.
-          nwii::runtime::hw::g_pe_sr |= 0x04; // PE_TOKEN  (bit 2)
-          nwii::runtime::hw::g_pe_sr |= 0x08; // PE_FINISH (bit 3)
-          nwii::runtime::hw::pi_intsr |= 0x00000200; // INT_CAUSE_PE_TOKEN
-          nwii::runtime::hw::pi_intsr |= 0x00000400; // INT_CAUSE_PE_FINISH
-
-          
+          // PE token/finish are no longer faked here: the GX write-gather
+          // capture signals them when the game's own command stream carries
+          // BP 0x45 (draw-done) / 0x47/0x48 (draw-sync token), so GXDrawDone
+          // and token waits complete with the right token value.
           hle_drive_thread_queue(ctx);
       }
   }
@@ -976,8 +1025,16 @@ bool process_pending_callbacks(CPUContext &ctx) {
     ctx.in_callback = false;
   }
 
-  if (ctx.in_callback)
+  if (ctx.in_callback) {
+    if (std::getenv("NWII_SAMPLE") && (nwii::runtime::hw::pi_intsr & 0x4000)) {
+        static uint64_t n = 0;
+        if ((n++ % 100000) == 0)
+            std::cout << "[IPC] irq pending but in_callback pc=0x" << std::hex
+                      << ctx.pc << " lr=0x" << ctx.lr << " depth="
+                      << std::dec << ctx.callback_depth << "\n";
+    }
     return false;
+  }
 
   // Periodically raise VI (PI_INTSR bit 8 = 0x100, Dolphin INT_CAUSE_VI)
   // once the game unmasked it. Substitutes for real video timing.
@@ -990,6 +1047,15 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Avoids starving recompiled tight loops with premature reschedules.
   if (ctx.dec_expired() && (ctx.msr & 0x8000) && !ctx.in_callback) {
       ctx.dec_irq_pending = false; // consumed; re-arms on next mtdec
+      if (std::getenv("NWII_SAMPLE")) {
+          static uint32_t df = 0;
+          if (df++ < 12)
+              std::cout << "[DECfire] #" << df << " pc=0x" << std::hex << ctx.pc
+                        << " lr=0x" << ctx.lr << " inst=" << std::dec
+                        << ctx.inst_count << "\n";
+          extern int g_trace_after_dec;
+          if (df == 1) g_trace_after_dec = 300;
+      }
 
 
       // Alarm-spin deadlock breaker: if DEC fires 64 times at the same PC,
@@ -1053,6 +1119,18 @@ bool process_pending_callbacks(CPUContext &ctx) {
                         << " state=" << std::dec << state << " prio=" << prio
                         << " waitq=0x" << std::hex << wq << " srr0=0x" << srr0
                         << std::dec << "\n";
+              // Peek at the wait object so an empty queue (producer never
+              // posts) is distinguishable from a stuck wakeup (data present
+              // but the sleeper never runs). The waitq pointer aims at a
+              // thread-queue embedded in an OSMessageQueue/OSSemaphore, so
+              // dumping the words around it shows count/first/used fields.
+              if (wq >= 0x80000000u && wq < 0x81800000u &&
+                  std::getenv("NWII_SAMPLE")) {
+                  std::cout << "    wq[-2..5]:" << std::hex;
+                  for (int i = -2; i < 6; ++i)
+                      std::cout << " " << ctx.mmu.read32(wq + i * 4);
+                  std::cout << std::dec << "\n";
+              }
               th = ctx.mmu.read32(th + 0x2FC);
           }
       }
@@ -1106,17 +1184,49 @@ bool process_pending_callbacks(CPUContext &ctx) {
           uint32_t handler = ctx.mmu.read32(0x80003040 + os_intr * 4);
 
           if (handler != 0 && handler != 0xFFFFFFFF) {
+              if (std::getenv("NWII_SAMPLE") && os_intr == 24) {
+                  static int vn = 0;
+                  if (vn++ < 5)
+                      std::cout << "[VIdisp] #" << vn << " handler=0x" << std::hex
+                                << handler << " pc=0x" << ctx.pc << std::dec << "\n";
+              }
               // VI fires constantly; log only every 64th dispatch
               static uint32_t vi_dispatch_count = 0;
               if (os_intr != 24 && (vi_dispatch_count++ % 256) == 0) {
                   std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler
                             << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc << std::dec << std::endl;
               }
-              // The real 0x500 exception handler clears the PI interrupt cause BEFORE dispatching
-              nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
-
+              // Honest per-interrupt dispatch census (the throttled line above
+              // hides all but every 256th non-VI dispatch, which has already
+              // misled one investigation).
+              if (std::getenv("NWII_SAMPLE")) {
+                  static uint64_t census[32] = {0};
+                  static uint64_t total = 0;
+                  if (os_intr >= 0 && os_intr < 32) census[os_intr]++;
+                  if ((++total % 2000) == 0) {
+                      std::cout << "[IntCensus]";
+                      for (int i = 0; i < 32; ++i)
+                          if (census[i])
+                              std::cout << " " << std::dec << i << ":" << census[i];
+                      std::cout << "\n";
+                  }
+              }
               uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
-              if (current_ctx != 0) {
+              if (current_ctx == 0) {
+                  // No __OSCurrentContext to save into (mid context switch):
+                  // leave the cause bit set so the interrupt retries on the
+                  // next check instead of being lost. Losing it here silently
+                  // dropped deferred-IPC acks and stalled the BTE bring-up.
+                  if (std::getenv("NWII_SAMPLE")) {
+                      static int n = 0;
+                      if (n++ < 4)
+                          std::cout << "[HLE PI] int " << std::dec << os_intr
+                                    << " deferred: no current context\n";
+                  }
+              } else {
+                  // The real 0x500 exception handler clears the PI interrupt
+                  // cause before dispatching.
+                  nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
                   // Save the interrupted state into __OSCurrentContext like the
                   // 0x500 exception vector does. The handler either returns via
                   // blr (LR sentinel -> we reload from the context) or context

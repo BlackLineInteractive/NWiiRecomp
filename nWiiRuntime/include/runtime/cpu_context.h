@@ -313,6 +313,14 @@ struct CPUContext {
   bool dec_irq_pending = false;
 
   void write_dec(uint32_t v) {
+    if (std::getenv("NWII_SAMPLE")) {
+      static uint64_t n = 0;
+      ++n;
+      if (n <= 10 || (n % 500) == 0)
+        std::cout << "[DEC] mtdec #" << n << " val=" << v << " pc=0x"
+                  << std::hex << pc << " lr=0x" << lr << std::dec
+                  << " inst=" << inst_count << "\n";
+    }
     dec_value = v;
     dec_written_tb = inst_count;
     dec_irq_pending = (v != 0xFFFFFFFF);

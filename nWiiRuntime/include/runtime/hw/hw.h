@@ -20,9 +20,13 @@ inline void trigger_pi_interrupt(uint32_t mask) {
 inline void clear_pi_interrupt(uint32_t mask) { pi_intsr &= ~mask; }
 
 void vi_trigger_interrupt();
+void ipc_post_reply(uint32_t req_addr); // complete a deferred (IPC_NO_REPLY) request
 void ai_update();
 void dsp_trigger_interrupt();
-void di_tick(); // counts down g_di_interrupt_delay, raises the DI IRQ at zero
+void di_tick();  // counts down g_di_interrupt_delay, raises the DI IRQ at zero
+void dsp_tick(); // counts down the deferred DSP-mail ack, raises PI 0x40
+void pe_signal_token(uint32_t token, bool raise_interrupt); // GX stream saw BP 0x47/0x48
+void pe_signal_finish();                                    // GX stream saw draw-done (BP 0x45)
 
 void register_pi(MMIODispatcher &dispatcher);
 void register_pe(MMIODispatcher &dispatcher);

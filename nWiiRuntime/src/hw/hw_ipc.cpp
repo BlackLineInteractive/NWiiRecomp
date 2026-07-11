@@ -2,6 +2,7 @@
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
 #include <iostream>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 
@@ -45,6 +46,16 @@ void hle_set_ipc_arm_msg(uint32_t req_addr) {
   g_ipc_interrupt_delay = 5000;
 }
 
+// Complete a request that a device previously deferred with IPC_NO_REPLY:
+// publish the request as the reply message and raise the IPC interrupt,
+// exactly like the synchronous reply path in the ctrl-register handler.
+void ipc_post_reply(uint32_t req_addr) {
+  ipc_arm_msg = req_addr & 0x1FFFFFFF;
+  ipc_ppc_ctrl &= ~0x01;
+  ipc_ppc_ctrl |= 0x26; // Y1 (reply ready) + X2 + IPC_INTE
+  g_ipc_interrupt_delay = 50;
+}
+
 
 void register_ipc(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCD000000, 0xCD00FFFF, 
@@ -84,11 +95,14 @@ void register_ipc(MMIODispatcher& dispatcher) {{
                         // Trigger IPC PI interrupt after short delay
                         g_ipc_interrupt_delay = 50;
                     } else {
-                        // Request is asynchronous, Starlet is not ready to reply yet.
-                        // We still clear X1 (request accepted) and set X2 (ready for next request).
-                        // Do not set Y1, and do not trigger PI interrupt!
+                        // Deferred request: Starlet has no reply yet, but the
+                        // PPC IPC driver still needs the command-acknowledge
+                        // (Y2) interrupt to free its slot and send further
+                        // requests. Ack without Y1; the reply arrives later
+                        // via ipc_post_reply.
                         ipc_ppc_ctrl &= ~0x01;
-                        ipc_ppc_ctrl |= 0x04; // X2
+                        ipc_ppc_ctrl |= 0x2C; // Y2 (ack) + X2 + IPC_INTE
+                        g_ipc_interrupt_delay = 50;
                     }
                 }
 
@@ -101,8 +115,15 @@ void register_ipc(MMIODispatcher& dispatcher) {{
 
             case 0x00000C: {
                 ipc_arm_ctrl &= ~(val & 0x03);
-                if (!(ipc_arm_ctrl & 3))
+                if (!(ipc_arm_ctrl & 3)) {
+                    if (std::getenv("NWII_SAMPLE") && (pi_intsr & 0x4000)) {
+                        static int n = 0;
+                        if (n++ < 6)
+                            std::cout << "[IPC] armctrl write 0x" << std::hex
+                                      << val << " swallows pending irq\n" << std::dec;
+                    }
                     clear_pi_interrupt(0x00004000);
+                }
                 break;
             }
             } // close switch

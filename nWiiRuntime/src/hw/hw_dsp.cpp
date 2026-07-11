@@ -22,6 +22,23 @@ static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
 static uint16_t ar_size = 0;    // 0xCC005012 AR_INFO/AR_SIZE
 static uint16_t ar_mode = 0;    // 0xCC005016 AR_MODE
 static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
+// Countdown to the deferred DSP-mail acknowledge (see the mail write
+// handler); models the milliseconds a real DSP spends on an audio frame.
+int g_dsp_mail_delay = 0;
+
+// Called from the backedge callback pump: completes a pending mail ack.
+void dsp_tick() {
+    if (g_dsp_mail_delay > 0 && --g_dsp_mail_delay == 0) {
+        // 0xDCD10000 = task resumed/init done: __DSPHandler's branch for it
+        // marks the task started and invokes the task's resume callback,
+        // which is what AX init blocks on. (0xDCD10002 is the yield path.)
+        dsp_mbox_dsp_hi = 0xDCD1;
+        dsp_mbox_dsp_lo = 0x0000;
+        dsp_control |= 0x0008;
+        if (dsp_control & 0x0010)
+            trigger_pi_interrupt(0x40);
+    }
+}
 
 
 void register_dsp(MMIODispatcher& dispatcher) {{
@@ -32,6 +49,16 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC005006) {
                 uint16_t val = dsp_mbox_dsp_lo;
                 dsp_mbox_dsp_hi &= ~0x8000;
+                // Mail consumed: drop the mailbox interrupt status with it.
+                // Leaving 0x08 set let any later CSR write (mask bits) re-raise
+                // PI 0x40 with an empty mailbox, parking __DSPHandler forever
+                // in its entry mail-poll with EE off.
+                dsp_control &= ~0x0008;
+                clear_pi_interrupt(0x40);
+                if (std::getenv("NWII_DSPTRACE"))
+                    std::cout << "[DSPm] mail read lo=0x" << std::hex << val
+                              << " (hi was 0x" << (dsp_mbox_dsp_hi | 0x8000)
+                              << ") csr=0x" << dsp_control << std::dec << "\n";
                 return val;
             }
             if (addr == 0xCC005008 || addr == 0xCC00500A) return dsp_control;
@@ -51,10 +78,29 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 dsp_mbox_cpu_hi = (val & 0x7FFF) | 0x8000;
                 dsp_mbox_cpu_hi &= ~0x8000;
                 dsp_mbox_dsp_hi = 0x8000;
+                // Once the game unmasks the DSP-mailbox interrupt it has a
+                // task registered and __DSPHandler's callback slots are live
+                // (the AX init loop spins on a flag that only the handler's
+                // 0xDCD10002 "resumed" branch sets). Acknowledge each CPU
+                // mail with that resume mail, but AFTER a delay: an instant
+                // ack made the audio task submit the next frame immediately,
+                // an unbounded ping-pong that starved the rest of the game.
+                // Before the mask is set (boot probes) stay silent: raising
+                // the interrupt with no task installed jumped to garbage.
+                if (dsp_control & 0x0010)
+                    g_dsp_mail_delay = 15000;
+                if (std::getenv("NWII_DSPTRACE"))
+                    std::cout << "[DSPm] cpu mail write @" << std::hex
+                              << (addr & 0xFFFF) << " val=0x" << val
+                              << " csr=0x" << dsp_control << std::dec << "\n";
             } else if (addr == 0xCC005004 || addr == 0xCC005006) {
                 if (val & 0x8000) dsp_mbox_dsp_hi &= ~0x8000;
             } else if (addr == 0xCC005008 || addr == 0xCC00500A) {
                 uint16_t val16 = val & 0xFFFF;
+                if (std::getenv("NWII_DSPTRACE"))
+                    std::cout << "[DSPm] csr write val=0x" << std::hex
+                              << (val & 0xFFFF) << " csr=0x" << dsp_control
+                              << std::dec << "\n";
                 if (val16 & 0x0008) dsp_control &= ~0x0008;
                 if (val16 & 0x0020) dsp_control &= ~0x0020;
                 if (val16 & 0x0080) dsp_control &= ~0x0080;

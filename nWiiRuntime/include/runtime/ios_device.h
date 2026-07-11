@@ -21,6 +21,11 @@ struct IoctlvVector {
 struct IpcRequest {
     uint32_t cmd;      // e.g. 1=OPEN, 2=CLOSE, 3=READ, 4=WRITE, 6=IOCTL, 7=IOCTLV
     uint32_t fd;
+    // Guest (virtual) address of the IPC request block. Lets a device return
+    // IPC_NO_REPLY and complete the request later via hw::ipc_post_reply,
+    // matching real IOS semantics where an IN URB stays pending until data
+    // arrives.
+    uint32_t req_addr = 0;
     // For IOCTL
     uint32_t ioctl_cmd;
     uint32_t in_buf;

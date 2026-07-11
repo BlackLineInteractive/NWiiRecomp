@@ -548,7 +548,15 @@ void interpret_step(CPUContext& ctx) {
             consecutive_nops = 0;
         }
         ++ctx.inst_count;
+        uint32_t ee_was = ctx.msr & 0x8000;
         interpret_one(ctx);
+        // Rising edge of MSR.EE: real hardware takes pending interrupts the
+        // moment they are re-enabled; sample them here too or a short EE
+        // window (SDK idle loop) never sees the pending decrementer.
+        if (!ee_was && (ctx.msr & 0x8000)) {
+            if (process_pending_callbacks(ctx) && in_recompiled_code(ctx.pc))
+                return;
+        }
         if (ctx.pc != before + 4) {
             // A control transfer may land on a memcpy/memset entry — check
             // the fast path here (only on branches, so cheap).

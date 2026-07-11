@@ -330,10 +330,65 @@ int main(int argc, char **argv) {
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
       ctx->vblank_pending = true;
-      if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0)
+      if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0) {
         std::cout << "[Sample] pc=0x" << std::hex << ctx->pc << " lr=0x"
-                  << ctx->lr << " ctr=0x" << ctx->ctr << " r3=0x" << ctx->gpr[3]
-                  << " inst=" << std::dec << ctx->inst_count << "\n";
+                  << ctx->lr << " msr=0x" << ctx->msr << " r3=0x" << ctx->gpr[3]
+                  << " cb=" << (ctx->in_callback ? 1 : 0) << " inst=" << std::dec
+                  << ctx->inst_count << "\n";
+        // Run-queue bitmap + reschedule flag (SDA offsets from the SDK
+        // scheduler): shows whether the OS ever reaches its EE=1 idle spin
+        // (bitmap==0) or keeps churning ready threads.
+        if ((tick % 300) == 0 && ctx->gpr[13] >= 0x80000000u) {
+          uint32_t r13 = ctx->gpr[13];
+          std::cout << "  [RunQ] bitmap=0x" << std::hex
+                    << ctx->mmu.read32(r13 - 0x21c8) << " resched=0x"
+                    << ctx->mmu.read32(r13 - 0x21c4) << " cur=0x"
+                    << ctx->mmu.read32(0x800000E4)
+                    // VI retrace state (SDA offsets from the VI handler):
+                    // count, pre-retrace CB, post-CB/flip flag slots.
+                    << " retrace=" << std::dec << ctx->mmu.read32(r13 - 0x2358)
+                    << std::hex << " postCB=0x" << ctx->mmu.read32(r13 - 0x2344)
+                    << std::dec << "\n";
+          // Gates of the game's post-retrace callback (0x80137584): it only
+          // flips + sends the frame message when [vidstate+0xa2]==0 and the
+          // flip-pending byte [r13-0x29b6] is set.
+          uint32_t vs = ctx->mmu.read32(r13 - 0x29c0);
+          std::cout << "  [FlipG] r13=0x" << std::hex << r13 << " vs=0x" << vs
+                    << " vsA2=" << std::dec << (int)ctx->mmu.read8(vs + 0xa2)
+                    << " pend29b6=" << (int)ctx->mmu.read8(r13 - 0x29b6)
+                    << " b29b5=" << (int)ctx->mmu.read8(r13 - 0x29b5)
+                    << " b4808=" << (int)ctx->mmu.read8(r13 - 0x4808)
+                    << " vsB0=0x" << std::hex << ctx->mmu.read32(vs + 0xb0)
+                    << " vs9C=" << std::dec << ctx->mmu.read32(vs + 0x9c)
+                    << " pe_sr=0x" << std::hex << nwii::runtime::hw::g_pe_sr
+                    << std::dec << "\n";
+        }
+        // Wall-clock thread dump: walk the OS active-thread list and peek at
+        // each sleeper's wait object so a starved producer/consumer chain is
+        // visible even when DEC (the other dump site) barely fires. Racy
+        // reads against the CPU thread are fine for diagnostics.
+        if ((tick % 300) == 0) {
+          uint32_t cur = ctx->mmu.read32(0x800000E4);
+          uint32_t th = ctx->mmu.read32(0x800000DC);
+          int guard = 0;
+          while (th >= 0x80000000u && th < 0x81800000u && guard++ < 16) {
+            uint16_t state = ctx->mmu.read16(th + 0x2C8);
+            uint32_t prio = ctx->mmu.read32(th + 0x2D0);
+            uint32_t wq = ctx->mmu.read32(th + 0x2DC);
+            uint32_t srr0 = ctx->mmu.read32(th + 0x198);
+            std::cout << "  [Thr] 0x" << std::hex << th << (th == cur ? "*" : " ")
+                      << " st=" << std::dec << state << " pr=" << prio
+                      << " wq=0x" << std::hex << wq << " srr0=0x" << srr0;
+            if (wq >= 0x80000000u && wq < 0x81800000u) {
+              std::cout << " wq[-2..5]:";
+              for (int i = -2; i < 6; ++i)
+                std::cout << " " << ctx->mmu.read32(wq + i * 4);
+            }
+            std::cout << std::dec << "\n";
+            th = ctx->mmu.read32(th + 0x2FC);
+          }
+        }
+      }
     }
   } else {
     // Main Raylib/GPU Thread Loop

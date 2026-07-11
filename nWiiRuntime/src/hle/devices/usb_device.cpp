@@ -1,4 +1,5 @@
 #include "runtime/devices.h"
+#include "runtime/hw/hw.h"
 #include <cstdint>
 #include <deque>
 #include <iostream>
@@ -39,12 +40,19 @@ public:
     }
 
     int32_t ioctlv(CPUContext& ctx, const IpcRequest& req) override {
-        // Output vectors follow the input vectors in ioctlv_vecs.
-        const uint32_t out_idx = req.arg_cnt_in;
-        const uint32_t out_ptr = out_idx < req.ioctlv_vecs.size()
-                                     ? req.ioctlv_vecs[out_idx].addr : 0;
-        const uint32_t out_len = out_idx < req.ioctlv_vecs.size()
-                                     ? req.ioctlv_vecs[out_idx].len : 0;
+        // The output/payload buffer is nominally the vector at index
+        // arg_cnt_in, but this stack frequently leaves that slot zeroed and
+        // carries the real buffer in another vector. Scan from the end for
+        // the last plausible pointer with a usable length instead.
+        uint32_t out_ptr = 0, out_len = 0;
+        for (size_t i = req.ioctlv_vecs.size(); i-- > 0;) {
+            const auto& v = req.ioctlv_vecs[i];
+            if (v.addr >= 0x100 && v.len >= 2 && v.len < 0x10000) {
+                out_ptr = v.addr;
+                out_len = v.len;
+                break;
+            }
+        }
 
         switch (req.ioctl_cmd) {
         case USBV0_CTRLMSG: {
@@ -69,11 +77,29 @@ public:
             return IPC_OK;
         }
 
-        case USBV0_INTRMSG:
-            return deliver_event(ctx, out_ptr, out_len);
+        case USBV0_INTRMSG: {
+            // Real IOS keeps an IN URB pending until the endpoint produces
+            // data. Completing it immediately with zero bytes makes the BTE
+            // stack count a command timeout and abandon its init sequence,
+            // so with no event queued we defer the reply instead.
+            if (!m_events.empty())
+                return deliver_event(ctx, out_ptr, out_len);
+            if (req.req_addr != 0 && out_ptr != 0) {
+                m_pending_intr.push_back({req.req_addr, out_ptr, out_len});
+                return IPC_NO_REPLY;
+            }
+            return IPC_OK;
+        }
 
-        case USBV0_BLKMSG:
-            return IPC_OK; // no ACL traffic without a paired remote
+        case USBV0_BLKMSG: {
+            // Bulk IN (endpoint bit 0x80) carries ACL data from a paired
+            // remote; none exists, so the URB stays pending forever like on
+            // hardware with no Wiimote connected. Bulk OUT completes at once.
+            uint8_t ep = endpoint_of(ctx, req);
+            if ((ep & 0x80) && req.req_addr != 0)
+                return IPC_NO_REPLY;
+            return IPC_OK;
+        }
 
         default:
             std::cout << "[USB] ioctlv cmd=" << req.ioctl_cmd << std::endl;
@@ -83,6 +109,18 @@ public:
 
 private:
     std::deque<std::vector<uint8_t>> m_events;
+
+    // Interrupt-IN URBs parked until an HCI event exists (real-IOS behaviour).
+    struct PendingRead { uint32_t req_addr, ptr, len; };
+    std::deque<PendingRead> m_pending_intr;
+
+    // bEndpointAddress travels as the request's single-byte vector.
+    static uint8_t endpoint_of(CPUContext& ctx, const IpcRequest& req) {
+        for (const auto& v : req.ioctlv_vecs)
+            if (v.len == 1 && v.addr >= 0x100)
+                return ctx.mmu.read8(v.addr);
+        return 0;
+    }
 
     // HCI command packet: opcode (LE u16), parameter length, parameters.
     void handle_hci_command(CPUContext& ctx, uint32_t p, uint32_t len) {
@@ -96,6 +134,16 @@ private:
             m_events.push_back(make_command_status(opcode));
         else
             m_events.push_back(make_command_complete(opcode));
+
+        // Wake a parked interrupt URB with the new event. Only one reply can
+        // be in flight per IPC tick; further events go out on later reads.
+        if (!m_pending_intr.empty()) {
+            PendingRead pr = m_pending_intr.front();
+            m_pending_intr.pop_front();
+            int32_t n = deliver_event(ctx, pr.ptr, pr.len);
+            ctx.mmu.write32(pr.req_addr + 4, (uint32_t)n);
+            nwii::runtime::hw::ipc_post_reply(pr.req_addr);
+        }
     }
 
     // Returns the number of bytes handed to the guest, or 0 when idle.
@@ -107,6 +155,13 @@ private:
         uint32_t n = (uint32_t)evt.size() < len ? (uint32_t)evt.size() : len;
         for (uint32_t i = 0; i < n; ++i)
             ctx.mmu.write8(p + i, evt[i]);
+        if (std::getenv("NWII_SAMPLE")) {
+            std::cout << "[USB] event -> 0x" << std::hex << p << " len=" << std::dec
+                      << n << " bytes:";
+            for (uint32_t i = 0; i < n && i < 8; ++i)
+                std::cout << " " << std::hex << (int)evt[i];
+            std::cout << std::dec << "\n";
+        }
         return (int32_t)n;
     }
 

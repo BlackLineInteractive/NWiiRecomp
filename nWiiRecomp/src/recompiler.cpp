@@ -885,6 +885,13 @@ void Recompiler::emit_function(std::ostream &out,
 
   }
   for (const auto &inst : func.instructions) {
+    // Credit every retired instruction to the time base. The optimizer
+    // coalesces consecutive increments into one add per basic block, so the
+    // cost is small — and unlike backedge-only crediting, guest time keeps
+    // flowing through call/return chains such as the OS idle loop
+    // (reschedule -> load context -> rfi), whose alarm wait otherwise
+    // freezes forever because no backward branch ever executes.
+    out << "    ++ctx.inst_count;\n";
     emit_instruction(out, inst, func);
   }
 
@@ -1138,7 +1145,8 @@ void Recompiler::emit_instruction(std::ostream &out,
         func.instructions.end();
 
     if (target <= inst.address && is_local) {
-      out << "    ++ctx.inst_count;\n";
+      // Time-base credit happens per emitted instruction (see emit_function);
+      // the backedge only surfaces pending interrupts/callbacks.
       out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
           << std::dec << ";\n";
       out << "    if (process_pending_callbacks(ctx)) return;\n";
@@ -1247,7 +1255,8 @@ void Recompiler::emit_instruction(std::ostream &out,
         func.instructions.end();
 
     if (target <= inst.address && is_local) {
-      out << "    ++ctx.inst_count;\n";
+      // Time-base credit happens per emitted instruction (see emit_function);
+      // the backedge only surfaces pending interrupts/callbacks.
       out << "    ctx.pc = 0x" << std::hex << std::uppercase << inst.address
           << std::dec << ";\n";
       out << "    if (process_pending_callbacks(ctx)) return;\n";
@@ -2007,7 +2016,21 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else if (xo == 83) { // mfmsr
       out << "    ctx.gpr[" << ppc_inst.rd() << "] = ctx.msr;\n";
     } else if (xo == 146) { // mtmsr
-      out << "    ctx.msr = ctx.gpr[" << ppc_inst.rs() << "];\n";
+      // Interrupts are taken asynchronously on real hardware the moment
+      // MSR.EE goes high; our checks otherwise run only at loop backedges.
+      // The SDK idle loop opens its EE window for just a few straight-line
+      // instructions, so without a rising-edge check here a pending
+      // decrementer/PI interrupt is never sampled inside the window and the
+      // whole OS sleeps forever.
+      out << "    {\n";
+      out << "        uint32_t ee_was = ctx.msr & 0x8000;\n";
+      out << "        ctx.msr = ctx.gpr[" << ppc_inst.rs() << "];\n";
+      out << "        if (!ee_was && (ctx.msr & 0x8000)) {\n";
+      out << "            ctx.pc = 0x" << std::hex << std::uppercase
+          << (inst.address + 4) << std::dec << ";\n";
+      out << "            if (process_pending_callbacks(ctx)) return;\n";
+      out << "        }\n";
+      out << "    }\n";
     } else if (xo == 124) { // nor
       out << "    ctx.gpr[" << rA << "] = ~(ctx.gpr[" << rS << "] | ctx.gpr["
           << rB << "]); // nor\n";
