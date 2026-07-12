@@ -16,6 +16,10 @@
   <a href="https://youtube.com/@blacklineinteractive">
     <img src="https://img.shields.io/badge/YouTube-Blackline_Interactive-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Blackline Interactive YouTube"/>
   </a>
+  &nbsp;
+  <a href="https://discord.gg/wp7zdxyqT">
+    <img src="https://img.shields.io/badge/Discord-NWiiRecomp_Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="NWiiRecomp Discord"/>
+  </a>
 </p>
 
 ---
