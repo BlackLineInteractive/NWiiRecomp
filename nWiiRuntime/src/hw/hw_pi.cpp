@@ -5,10 +5,12 @@
 #include <cstring>
 #include <algorithm>
 
+#include <atomic>
+
 namespace nwii::runtime::hw {
 
-uint32_t pi_intsr = 0;
-uint32_t pi_intmr = 0;
+std::atomic<uint32_t> pi_intsr = 0;
+std::atomic<uint32_t> pi_intmr = 0;
 
 void register_pi(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCC003000, 0xCC0030FF, 

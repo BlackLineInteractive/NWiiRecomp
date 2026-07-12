@@ -88,6 +88,7 @@ void register_ipc(MMIODispatcher& dispatcher) {{
                         // Process the IOS request synchronously (HLE Starlet)
                         result = ipc_dispatch_request(*g_ctx_ptr, ipc_ppc_msg);
                     }
+                    std::cout << "[IPC] Request sent from PPC! result=" << result << "\n";
                     if (result != -0x70000001) { // IPC_NO_REPLY
                         // Starlet clears X1 and sets Y1+X2 (reply ready + ARM ready for next cmd)
                         ipc_ppc_ctrl &= ~0x01;

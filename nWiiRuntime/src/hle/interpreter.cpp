@@ -51,6 +51,11 @@ static inline void set_crf(CPUContext& ctx, uint32_t crf, bool lt, bool gt, bool
 // Executes one instruction at ctx.pc. Returns true if it was handled.
 bool interpret_one(CPUContext& ctx) {
     uint32_t pc = ctx.pc;
+    if (pc == 0x801c6124) {
+        static int count = 0;
+        if (count++ < 20)
+            std::cout << "[DEBUG] OSDispatchInterrupt: r0 (pending)=0x" << std::hex << ctx.gpr[0] << " r3 (mask)=0x" << ctx.gpr[3] << " r4 (result)=0x" << ctx.gpr[4] << std::dec << "\n";
+    }
     uint32_t insn = ctx.mmu.read32(pc);
     uint32_t op = insn >> 26;
     uint32_t rD = (insn >> 21) & 0x1F;
@@ -170,8 +175,13 @@ bool interpret_one(CPUContext& ctx) {
             return true;
         }
         if (xo == 50) { // rfi
+            uint32_t ee_was = ctx.msr & 0x8000;
             ctx.msr = ctx.srr1;
             ctx.pc = ctx.srr0;
+            ctx.dispatch_saved_ctx = 0; // exit ISR
+            if (!ee_was && (ctx.msr & 0x8000)) {
+                if (process_pending_callbacks(ctx)) return true;
+            }
             return true;
         }
         if (xo == 150) break; // isync

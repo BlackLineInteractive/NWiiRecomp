@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/hw/mmio_dispatcher.h"
 #include <cstdint>
+#include <atomic>
 
 namespace nwii::runtime {
 uint64_t get_os_time();
@@ -8,16 +9,17 @@ uint64_t get_os_time();
 
 namespace nwii::runtime::hw {
 
-extern uint32_t pi_intsr;
-extern uint32_t pi_intmr;
-extern uint32_t g_pe_sr;       // PE status register (TOKEN/FINISH bits), W1C
+extern std::atomic<uint32_t> pi_intsr;
+extern std::atomic<uint32_t> pi_intmr;
+extern std::atomic<uint32_t> g_pe_sr;       // PE status register (TOKEN/FINISH bits), W1C
 extern int g_di_interrupt_delay; // countdown to DI completion interrupt
 
 inline void trigger_pi_interrupt(uint32_t mask) {
-  pi_intsr |=
-      mask; /* TODO: trigger CPU interrupt if (pi_intsr & pi_intmr) != 0 */
+  pi_intsr.fetch_or(mask, std::memory_order_relaxed);
 }
-inline void clear_pi_interrupt(uint32_t mask) { pi_intsr &= ~mask; }
+inline void clear_pi_interrupt(uint32_t mask) {
+  pi_intsr.fetch_and(~mask, std::memory_order_relaxed);
+}
 
 void vi_trigger_interrupt();
 void ipc_post_reply(uint32_t req_addr); // complete a deferred (IPC_NO_REPLY) request

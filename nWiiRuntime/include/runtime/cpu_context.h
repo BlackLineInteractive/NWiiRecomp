@@ -296,6 +296,11 @@ struct CPUContext {
   // return can model the post-ISR reschedule __OSDispatchInterrupt performs.
   bool ext_resched_pending = false;
 
+  // Set when HLE has jumped into the guest __OSDispatchInterrupt (new path).
+  // Prevents the HLE VI timer from re-asserting VI while the dispatcher is
+  // running its internal interrupt-draining poll loop, which would create an
+  // infinite interrupt delivery cycle.
+
   // Time base / decrementer run off the WALL CLOCK, not inst_count. The
   // guest's OSGetTime/OSGetTick and every alarm/timeout compare against
   // the time base; tying it to inst_count made a second of guest time take

@@ -1333,8 +1333,16 @@ void Recompiler::emit_instruction(std::ostream &out,
     if (xo == 150) { // isync
       out << "    // isync\n";
     } else if (xo == 50) { // rfi
-      out << "    ctx.msr = ctx.srr1; // rfi: restore MSR from SRR1\n";
-      out << "    ctx.pc = ctx.srr0; return; // rfi: jump to SRR0\n";
+        out << "    {\n";
+        out << "        uint32_t ee_was = ctx.msr & 0x8000;\n";
+        out << "        ctx.msr = ctx.srr1; // rfi: restore MSR from SRR1\n";
+        out << "        ctx.pc = ctx.srr0;  // rfi: jump to SRR0\n";
+        out << "        ctx.dispatch_saved_ctx = 0; // exit ISR\n";
+        out << "        if (!ee_was && (ctx.msr & 0x8000)) {\n";
+        out << "            if (process_pending_callbacks(ctx)) return;\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "    return;\n";
     } else if (xo == 16 || xo == 528) { // BCLR (16) and BCCTR (528)
       uint32_t bo = ppc_inst.bo();
       uint32_t bi = ppc_inst.bi();

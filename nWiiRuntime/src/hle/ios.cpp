@@ -713,7 +713,7 @@ static inline uint32_t get_callback_stack_top() {
 }
 
 void hle_drive_thread_queue(CPUContext& ctx) {
-    ThreadManager::get().on_vblank();
+    // ThreadManager is deprecated in favor of native guest OS thread structures.
 }
 
 // OSContext layout (GC/RVL SDK ABI):
@@ -1196,145 +1196,258 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // External interrupts are only taken when MSR.EE=1, like real hardware.
   // Pending bits stay set in pi_intsr until the OS re-enables interrupts.
   if (active_ints != 0 && (ctx.msr & 0x8000)) {
-      int os_intr = -1;
-      uint32_t bit_to_clear = 0;
-      // PI_INTSR bits are Dolphin ProcessorInterface.h INT_CAUSE_*:
-      //   0x04 DI, 0x08 SI, 0x10 EXI, 0x20 AI(stream), 0x40 DSP, 0x80 MEM,
-      //   0x100 VI, 0x200 PE_TOKEN, 0x400 PE_FINISH, 0x800 CP, 0x4000 IPC.
-      // __OSInterruptTable indices confirmed by observed game tables
-      // (SHSM: IPC@27, EXI trio@9-11; NFS: SI@20, VI ISR@24):
-      //   DSP_DSP=7 AI=8 EXI_0_EXI=9 CP=17 PE_TOKEN=18 PE_FINISH=19
-      //   SI=20 DI=21 VI=24 ACR/IPC=27
-      if      (active_ints & 0x00004000) { os_intr = 27; bit_to_clear = 0x00004000; } // IPC (Wii ACR)
-      else if (active_ints & 0x00000100) { os_intr = 24; bit_to_clear = 0x00000100; } // VI
-      else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI
-      else if (active_ints & 0x00000008) { os_intr = 20; bit_to_clear = 0x00000008; } // SI
-      else if (active_ints & 0x00000010) { os_intr =  9; bit_to_clear = 0x00000010; } // EXI 0
-      else if (active_ints & 0x00000040) { os_intr =  7; bit_to_clear = 0x00000040; } // DSP
-      else if (active_ints & 0x00000020) { os_intr =  8; bit_to_clear = 0x00000020; } // AI streaming
-      else if (active_ints & 0x00000400) { os_intr = 19; bit_to_clear = 0x00000400; } // PE_FINISH
-      else if (active_ints & 0x00000200) { os_intr = 18; bit_to_clear = 0x00000200; } // PE_TOKEN
-      else if (active_ints & 0x00000800) { os_intr = 17; bit_to_clear = 0x00000800; } // CP
 
-      if (os_intr != -1) {
-          uint32_t handler = ctx.mmu.read32(0x80003040 + os_intr * 4);
-
-          if (handler != 0 && handler != 0xFFFFFFFF) {
-              if (std::getenv("NWII_SAMPLE") && os_intr == 24) {
-                  static int vn = 0;
-                  if (vn++ < 5)
-                      std::cout << "[VIdisp] #" << vn << " handler=0x" << std::hex
-                                << handler << " pc=0x" << ctx.pc << std::dec << "\n";
-              }
-              // VI fires constantly; log only every 64th dispatch
-              static uint32_t vi_dispatch_count = 0;
-              if (os_intr != 24 && (vi_dispatch_count++ % 256) == 0) {
-                  std::cout << "[HLE PI] Dispatching interrupt " << std::dec << os_intr << " to handler 0x" << std::hex << handler
-                            << " r1=0x" << ctx.gpr[1] << " pc=0x" << ctx.pc << std::dec << std::endl;
-              }
-              // Honest per-interrupt dispatch census (the throttled line above
-              // hides all but every 256th non-VI dispatch, which has already
-              // misled one investigation).
-              if (std::getenv("NWII_SAMPLE")) {
-                  static uint64_t census[32] = {0};
-                  static uint64_t total = 0;
-                  if (os_intr >= 0 && os_intr < 32) census[os_intr]++;
-                  if ((++total % 2000) == 0) {
-                      std::cout << "[IntCensus]";
-                      for (int i = 0; i < 32; ++i)
-                          if (census[i])
-                              std::cout << " " << std::dec << i << ":" << census[i];
-                      std::cout << "\n";
-                  }
-              }
-              uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
-              if (current_ctx == 0) {
-                  // No __OSCurrentContext to save into (mid context switch):
-                  // leave the cause bit set so the interrupt retries on the
-                  // next check instead of being lost. Losing it here silently
-                  // dropped deferred-IPC acks and stalled the BTE bring-up.
-                  if (std::getenv("NWII_SAMPLE")) {
-                      static int n = 0;
-                      if (n++ < 4)
-                          std::cout << "[HLE PI] int " << std::dec << os_intr
-                                    << " deferred: no current context\n";
-                  }
-              } else {
-                  // The real 0x500 exception handler clears the PI interrupt
-                  // cause before dispatching.
-                  nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
-                  // Save the interrupted state into __OSCurrentContext like the
-                  // 0x500 exception vector does. The handler either returns via
-                  // blr (LR sentinel -> we reload from the context) or context
-                  // switches through the guest scheduler; both paths work.
-                  hle_save_context_to_guest(ctx, current_ctx);
-                  ctx.dispatch_saved_ctx = current_ctx;
-
-                  ctx.srr0 = ctx.pc;
-                  ctx.srr1 = ctx.msr;
-                  ctx.msr &= ~0x8000; // EE=0 inside the handler
-
-                  ctx.gpr[3] = os_intr;
-                  ctx.gpr[4] = current_ctx;
-
-                  // Run the handler on the interrupted stack with r1
-                  // untouched, like the real 0x500 vector. Writing to
-                  // [r1]/[r1+4] here would clobber the interrupted
-                  // function's back chain and saved-LR slot, and handlers
-                  // that exit via rfi never undo an r1 shift.
-                  ctx.lr = 0xFFFFFFFC;
-                  ctx.pc = handler;
-                  ctx.ext_resched_pending = true;
-                  longjmp(ctx.exception_jmp_buf, 1);
-              }
-
-              // Legacy path (thread system not initialised yet): backup-stack
-              ctx.msr &= ~0x8000;
-              CPUContext::BackupState bk;
-              bk.gpr = ctx.gpr;
-              bk.fpr = ctx.fpr;
-              bk.ps1 = ctx.ps1;
-              bk.cr  = ctx.cr;
-              bk.lr  = ctx.lr;
-              bk.ctr = ctx.ctr;
-              bk.xer = ctx.xer;
-              bk.pc  = ctx.pc;
-              bk.srr0 = ctx.srr0;
-              bk.srr1 = ctx.srr1;
-              bk.msr = ctx.msr | 0x8000; // Restore with EE enabled
-              bk.fpscr = ctx.fpscr;
-              bk.gqr = ctx.gqr;
-              bk.sprg = ctx.sprg;
-              ctx.backup_stack.push(bk);
-
-              ctx.in_callback = true;
-              ctx.callback_depth++;
-
-              ctx.srr0 = ctx.pc;
-              ctx.srr1 = ctx.msr | 0x8000;
-
-              ctx.gpr[3] = os_intr;
-              ctx.gpr[4] = 0;
-
-              ctx.lr = 0xFFFFFFFC;
-              ctx.pc = handler;
-              longjmp(ctx.exception_jmp_buf, 1);
-          } else {
-              // Handler is NULL — OS is mid-reinit (cleared table, re-registering).
-              // Leave pi_intsr set so interrupt stays pending.
-              // Use a non-static counter so it resets each re-init window.
-              static uint32_t last_null_pc = 0;
-              static int null_warn_count = 0;
-              if (ctx.pc != last_null_pc) {
-                  null_warn_count = 0;
-                  last_null_pc = ctx.pc;
-              }
-              if (null_warn_count++ < 3) {
-                  std::cout << "[HLE PI] Handler for interrupt " << std::dec << os_intr
-                            << " is NULL (OS reinit in progress, deferring)." << std::endl;
-              }
+      // §6.3 Guard: do not interrupt the guest scheduler in its critical section.
+      // If the OS scheduler is disabled (disable-count > 0 at [r13-0x6e60]) or
+      // another handler is already in flight (dispatch_saved_ctx != 0), defer
+      // the interrupt. This prevents "worker parked mid-reschedule" corruption
+      // where HLE interrupts __OSReschedule itself, leaving it in an
+      // inconsistent state and eventually causing PC=0 wild jumps.
+      bool sched_disabled = false;
+      uint32_t r13 = ctx.gpr[13];
+      uint32_t lock_off = nwii::runtime::Config::get().game_profile.sched_lock_offset;
+      if (lock_off != 0 && r13 >= 0x80200000u && r13 < 0x81800000u) {
+          uint32_t lock_addr = r13 - lock_off;
+          if (lock_addr >= 0x80000000u && lock_addr < 0x82000000u) {
+              uint32_t lock_val = ctx.mmu.read32(lock_addr);
+              // Scheduler lock count is a small integer (typically 0, 1, or 2).
+              // Values > 255 indicate uninitialized memory — ignore.
+              sched_disabled = (lock_val > 0 && lock_val < 256);
           }
       }
+      bool handler_in_flight = (ctx.dispatch_saved_ctx != 0);
+
+      // The §6.3 guard and the whole __OSDispatchInterrupt reschedule path are
+      // only enabled for games that explicitly set [hle] ext_interrupt_dispatch
+      // (currently MP7). For legacy-leaf games (NFS/SHSM) deferring on
+      // handler_in_flight starved the first IPC interrupt and stalled the boot,
+      // so those games keep the original leaf-dispatch behaviour untouched.
+      bool use_new_path =
+          (nwii::runtime::Config::get().game_profile.ext_interrupt_dispatch != 0);
+
+      if (use_new_path && (sched_disabled || handler_in_flight)) {
+          // Interrupt stays pending in pi_intsr; retry next backedge.
+          if (std::getenv("NWII_SAMPLE")) {
+              static uint64_t defer_count = 0;
+              if ((++defer_count % 500000) == 0)
+                  std::cout << "[HLE PI] int deferred: sched_disabled="
+                            << sched_disabled << " in_flight=" << handler_in_flight
+                            << " pc=0x" << std::hex << ctx.pc << std::dec << "\n";
+          }
+      } else {
+          // --- Determine __OSDispatchInterrupt address (lazy, cached) ---
+          // Priority: config > ExcTable[4] (games that fill it: NFS, SHSM) >
+          // 0 (games like MP7 that use physical 0x500 stub without ExcTable).
+          static uint32_t s_dispatch_addr = 0xFFFFFFFF; // sentinel = not yet resolved
+          if (s_dispatch_addr == 0xFFFFFFFF) {
+              // 1. From game profile config (highest priority, explicit)
+              uint32_t from_cfg = nwii::runtime::Config::get().game_profile.ext_interrupt_dispatch;
+              if (from_cfg != 0) {
+                  s_dispatch_addr = from_cfg;
+                  std::cout << "[HLE PI] __OSDispatchInterrupt from config: 0x"
+                            << std::hex << s_dispatch_addr << std::dec << "\n";
+              } else {
+                  // No explicit config → keep the proven leaf-dispatch path.
+                  // (Auto-resolving from ExcTable[4] was regressing SHSM: the
+                  // reschedule path is opt-in per game via ext_interrupt_dispatch.)
+                  s_dispatch_addr = 0;
+              }
+          }
+
+          // --- Route interrupt ---
+          if (s_dispatch_addr != 0) {
+              // NEW PATH: forward directly to guest __OSDispatchInterrupt.
+              // The guest dispatcher will:
+              //   1. Save interrupted context (its own convention)
+              //   2. Decode PI_INTSR and clear the cause bit
+              //   3. Call the leaf handler
+              //   4. Call __OSReschedule(0) → potentially switch threads
+              //   5. OSLoadContext / rfi — returns to whoever won the schedule
+              //
+              // We must NOT pre-save context, NOT pre-clear PI_INTSR, NOT set
+              // dispatch_saved_ctx — the guest handles all of this.
+              //
+              // The only setup we do is what the real 0x500 exception prologue
+              // does before jumping to __OSDispatchInterrupt: set srr0/srr1,
+              // disable EE, and jump. The dispatcher reads PI_INTSR itself.
+              ctx.srr0 = ctx.pc;
+              ctx.srr1 = ctx.msr;
+
+              // The hardware exception prologue reads __OSCurrentContext (0x800000D4).
+              // If it is NULL (idle), it falls back to __OSDefaultThread's context
+              // (or __OSExceptionContext) stored at 0x800000D0.
+              uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
+              if (current_ctx == 0) {
+                  current_ctx = ctx.mmu.read32(0x800000D0);
+              }
+              if (current_ctx == 0) {
+                  std::cout << "[HLE PI] FATAL: current_ctx is 0! pc=0x" << std::hex << ctx.pc << " intmr=0x" << nwii::runtime::hw::pi_intmr << " intsr=0x" << nwii::runtime::hw::pi_intsr << std::dec << "\n";
+              }
+
+              // Save the full interrupted CPU state into the OSContext.
+              // The hardware exception prologue does this. The guest dispatcher
+              // will later call OSLoadContext(current_ctx) to restore it.
+              if (current_ctx != 0) {
+                  hle_save_context_to_guest(ctx, current_ctx);
+              }
+
+              // Set up arguments for the C handler
+              // r3 = exception number (0x4 = external interrupt, matches SDK)
+              ctx.gpr[3] = 0x04;
+              // r4 = pointer to interrupted OSContext (what 0x500 passes)
+              ctx.gpr[4] = current_ctx;
+
+              // Now disable EE, just like the real hardware exception vector does
+              // BEFORE jumping into the C handler.
+              ctx.msr &= ~0x8000u; // EE=0 inside exception handler
+
+              // Sentinel LR so our sentinel-return handler sees the return if
+              // the dispatcher ever blr's back (should not happen normally —
+              // the real dispatcher exits via OSLoadContext/rfi).
+              ctx.lr = 0xFFFFFFFC;
+              ctx.pc = s_dispatch_addr;
+
+              if (std::getenv("NWII_SAMPLE")) {
+                  static int count = 0;
+                  if (count++ < 20)
+                      std::cout << "[HLE PI] JUMP __OSDispatchInterrupt pi_intsr=0x" << std::hex << nwii::runtime::hw::pi_intsr.load() << " pi_intmr=0x" << nwii::runtime::hw::pi_intmr.load() << std::dec << "\n";
+              }
+              if (std::getenv("NWII_SAMPLE")) {
+                  std::cout << "[HLE PI] JUMP __OSDispatchInterrupt r13=0x" << std::hex << ctx.gpr[13] << std::dec << "\n";
+              }
+
+              if (std::getenv("NWII_SAMPLE")) {
+                  static uint32_t dc = 0;
+                  if ((dc++ % 1000) == 0)
+                      std::cout << "[HLE PI] -> __OSDispatchInterrupt #" << std::dec
+                                << dc << " pc=0x" << std::hex << ctx.pc
+                                << " cur=0x" << ctx.mmu.read32(0x800000E4)
+                                << std::dec << "\n";
+              }
+
+              longjmp(ctx.exception_jmp_buf, 1);
+
+          } else {
+              // LEGACY LEAF PATH (games without ExcTable[4] and no config override).
+              // Decodes os_intr and dispatches directly to the leaf handler.
+              // No reschedule after the handler — threads are not preempted.
+              int os_intr = -1;
+              uint32_t bit_to_clear = 0;
+              // PI_INTSR bits → __OSInterruptTable index mapping
+              if      (active_ints & 0x00004000) { os_intr = 27; bit_to_clear = 0x00004000; } // IPC (Wii ACR)
+              else if (active_ints & 0x00000100) { os_intr = 24; bit_to_clear = 0x00000100; } // VI
+              else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI
+              else if (active_ints & 0x00000008) { os_intr = 20; bit_to_clear = 0x00000008; } // SI
+              else if (active_ints & 0x00000010) { os_intr =  9; bit_to_clear = 0x00000010; } // EXI 0
+              else if (active_ints & 0x00000040) { os_intr =  7; bit_to_clear = 0x00000040; } // DSP
+              else if (active_ints & 0x00000020) { os_intr =  8; bit_to_clear = 0x00000020; } // AI streaming
+              else if (active_ints & 0x00000400) { os_intr = 19; bit_to_clear = 0x00000400; } // PE_FINISH
+              else if (active_ints & 0x00000200) { os_intr = 18; bit_to_clear = 0x00000200; } // PE_TOKEN
+              else if (active_ints & 0x00000800) { os_intr = 17; bit_to_clear = 0x00000800; } // CP
+
+              if (os_intr != -1) {
+                  uint32_t handler = ctx.mmu.read32(0x80003040 + os_intr * 4);
+
+                  if (handler != 0 && handler != 0xFFFFFFFF) {
+                      if (std::getenv("NWII_SAMPLE") && os_intr == 24) {
+                          static int vn = 0;
+                          if (vn++ < 5)
+                              std::cout << "[VIdisp] #" << vn << " handler=0x"
+                                        << std::hex << handler << " pc=0x"
+                                        << ctx.pc << std::dec << "\n";
+                      }
+                      // VI fires constantly; log only every 256th dispatch
+                      static uint32_t vi_dispatch_count = 0;
+                      if (os_intr != 24 && (vi_dispatch_count++ % 256) == 0) {
+                          std::cout << "[HLE PI] Dispatching interrupt "
+                                    << std::dec << os_intr << " to handler 0x"
+                                    << std::hex << handler << " r1=0x"
+                                    << ctx.gpr[1] << " pc=0x" << ctx.pc
+                                    << std::dec << std::endl;
+                      }
+                      if (std::getenv("NWII_SAMPLE")) {
+                          static uint64_t census[32] = {0};
+                          static uint64_t total = 0;
+                          if (os_intr >= 0 && os_intr < 32) census[os_intr]++;
+                          if ((++total % 2000) == 0) {
+                              std::cout << "[IntCensus]";
+                              for (int i = 0; i < 32; ++i)
+                                  if (census[i])
+                                      std::cout << " " << std::dec << i
+                                                << ":" << census[i];
+                              std::cout << "\n";
+                          }
+                      }
+                      uint32_t current_ctx = ctx.mmu.read32(0x800000D4);
+                      if (current_ctx == 0) {
+                          // No context to save into — defer.
+                          if (std::getenv("NWII_SAMPLE")) {
+                              static int n = 0;
+                              if (n++ < 4)
+                                  std::cout << "[HLE PI] int " << std::dec
+                                            << os_intr << " deferred: no current context\n";
+                          }
+                      } else {
+                          // Clear cause, save context, run leaf.
+                          nwii::runtime::hw::pi_intsr &= ~bit_to_clear;
+                          hle_save_context_to_guest(ctx, current_ctx);
+                          ctx.dispatch_saved_ctx = current_ctx;
+                          ctx.srr0 = ctx.pc;
+                          ctx.srr1 = ctx.msr;
+                          ctx.msr &= ~0x8000u; // EE=0
+                          ctx.gpr[3] = os_intr;
+                          ctx.gpr[4] = current_ctx;
+                          ctx.lr = 0xFFFFFFFC;
+                          ctx.pc = handler;
+                          ctx.ext_resched_pending = true;
+                          longjmp(ctx.exception_jmp_buf, 1);
+                      }
+
+                      // Legacy backup-stack path (pre-thread-system).
+                      ctx.msr &= ~0x8000u;
+                      CPUContext::BackupState bk;
+                      bk.gpr = ctx.gpr;
+                      bk.fpr = ctx.fpr;
+                      bk.ps1 = ctx.ps1;
+                      bk.cr  = ctx.cr;
+                      bk.lr  = ctx.lr;
+                      bk.ctr = ctx.ctr;
+                      bk.xer = ctx.xer;
+                      bk.pc  = ctx.pc;
+                      bk.srr0 = ctx.srr0;
+                      bk.srr1 = ctx.srr1;
+                      bk.msr = ctx.msr | 0x8000;
+                      bk.fpscr = ctx.fpscr;
+                      bk.gqr = ctx.gqr;
+                      bk.sprg = ctx.sprg;
+                      ctx.backup_stack.push(bk);
+
+                      ctx.in_callback = true;
+                      ctx.callback_depth++;
+                      ctx.srr0 = ctx.pc;
+                      ctx.srr1 = ctx.msr | 0x8000;
+                      ctx.gpr[3] = os_intr;
+                      ctx.gpr[4] = 0;
+                      ctx.lr = 0xFFFFFFFC;
+                      ctx.pc = handler;
+                      longjmp(ctx.exception_jmp_buf, 1);
+                  } else {
+                      // Handler is NULL — OS is mid-reinit. Leave pi_intsr set.
+                      static uint32_t last_null_pc = 0;
+                      static int null_warn_count = 0;
+                      if (ctx.pc != last_null_pc) {
+                          null_warn_count = 0;
+                          last_null_pc = ctx.pc;
+                      }
+                      if (null_warn_count++ < 3)
+                          std::cout << "[HLE PI] Handler for interrupt "
+                                    << std::dec << os_intr
+                                    << " is NULL (OS reinit in progress, deferring)."
+                                    << std::endl;
+                  }
+              }
+          } // end leaf path
+      } // end !sched_disabled && !handler_in_flight
   } else if (nwii::runtime::hw::pi_intsr != 0) {
       // intsr has bits not in intmr — masked pending interrupt, no action needed
   }

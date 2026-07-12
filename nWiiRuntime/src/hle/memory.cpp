@@ -96,14 +96,31 @@ void OSAllocFromHeap(CPUContext& ctx) {
     }
     
     uint32_t heap_start = g_heaps[handle].start_addr;
+    uint32_t heap_end = g_heaps[handle].end_addr;
     uint32_t alloc_size = (req_size + 31) & ~31;
     uint32_t current_block = heap_start;
     
-    while (true) {
+    while (current_block < heap_end) {
         uint32_t magic = ctx.mmu.read32(current_block + 0x18);
         uint32_t size  = ctx.mmu.read32(current_block + 0x1C);
         
         if (magic == 0) break;
+        
+        // Coalesce adjacent free blocks
+        if ((magic >> 16) == 0x4652) {
+            uint32_t next_block = current_block + 32 + size;
+            while (next_block < heap_end) {
+                uint32_t next_magic = ctx.mmu.read32(next_block + 0x18);
+                uint32_t next_size  = ctx.mmu.read32(next_block + 0x1C);
+                if ((next_magic >> 16) == 0x4652) {
+                    size += 32 + next_size;
+                    ctx.mmu.write32(current_block + 0x1C, size);
+                    next_block += 32 + next_size;
+                } else {
+                    break;
+                }
+            }
+        }
         
         if ((magic >> 16) == 0x4652 && size >= alloc_size) {
             if (size > alloc_size + 32) {
@@ -134,8 +151,14 @@ void OSFreeToHeap(CPUContext& ctx) {
     int handle = ctx.gpr[3];
     uint32_t ptr = ctx.gpr[4];
     if (ptr == 0) return;
+    if (handle < 0 || handle >= MAX_HEAPS || !g_heaps[handle].active) return;
     
     uint32_t block_addr = ptr - 32;
+    if (block_addr < g_heaps[handle].start_addr || block_addr >= g_heaps[handle].end_addr) {
+        std::cerr << "[HLE Memory] WARNING: free out of bounds block at 0x" << std::hex << ptr << "\n";
+        return;
+    }
+    
     uint32_t magic = ctx.mmu.read32(block_addr + 0x18);
     
     if ((magic >> 16) == 0x7373) {

@@ -179,6 +179,8 @@ void register_exi(MMIODispatcher& dispatcher) {{
                 exi_chan[ch].csr =
                     keep | ((exi_chan[ch].csr & 0x80A & ~w1c)) |
                     (val & ~0x80A & ~0x1000);
+                if (w1c & 0x02) clear_pi_interrupt(0x10); // EXIINT cleared
+                if (w1c & 0x08) clear_pi_interrupt(0x10); // TCINT cleared
             }
             else if (reg == 0x04) exi_chan[ch].mar = val;
             else if (reg == 0x08) exi_chan[ch].len = val;

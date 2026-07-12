@@ -149,9 +149,14 @@ void register_si(MMIODispatcher& dispatcher) {{
             }
             if (addr == 0xCC006430) { si_poll = val; return; }
             if (addr == 0xCC006434) {
-                // Keep mask bits, latch transfer parameters
-                si_com_csr = (si_com_csr & 0x80000000) | (val & ~0x80000000);
-                if (val & 0x80000000) si_com_csr &= ~0x80000000; // TCINT w1c
+                if (std::getenv("NWII_SAMPLE")) std::cout << "[HW SI] Write to si_com_csr: 0x" << std::hex << val << std::dec << "\n";
+                // Bits 31 (TCINT), 29 (RDSTINT), 28 (WRSTINT) are W1C
+                si_com_csr &= ~(val & 0xA0000000);
+                si_com_csr |= (val & ~0x80000000);
+                if (val & 0x80000000) {
+                    si_com_csr &= ~0x80000000; // TCINT w1c
+                    clear_pi_interrupt(0x08); // SI = PI bit 3
+                }
                 if (val & 1) si_transfer();
                 return;
             }

@@ -8,11 +8,12 @@ extern CPUContext *g_ctx_ptr;
 
 namespace nwii::runtime::hw {
 
+#include <atomic>
 // PE status register: tracks TOKEN (bit 2) and FINISH (bit 3) flags.
 // Set by the GX FIFO capture when the game's own command stream carries a
 // draw-done (BP 0x45, low nibble 2) or token (BP 0x47/0x48); cleared W1C by
 // the OS PE ISR writing 0xCC00100A.
-uint32_t g_pe_sr = 0;
+std::atomic<uint32_t> g_pe_sr = 0;
 // Last GXSetDrawSync token seen in the command stream (BP 0x47/0x48 payload);
 // the PE ISR reads it back from 0xCC00100E to hand to the game's callback.
 uint32_t g_pe_token = 0;

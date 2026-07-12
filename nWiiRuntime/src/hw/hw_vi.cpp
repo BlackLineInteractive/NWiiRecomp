@@ -19,7 +19,9 @@ void vi_trigger_interrupt() {
     }
     vi_vtr[0] |= 0x80000000;
     // VI = PI_INTSR bit 8 = 0x00000100 (Dolphin ProcessorInterface INT_CAUSE_VI)
-    trigger_pi_interrupt(0x00000100);
+    if (vi_dcr & 1) {
+        trigger_pi_interrupt(0x00000100);
+    }
 }
 
 void register_vi(MMIODispatcher& dispatcher) {{

@@ -101,9 +101,12 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     std::cout << "[DSPm] csr write val=0x" << std::hex
                               << (val & 0xFFFF) << " csr=0x" << dsp_control
                               << std::dec << "\n";
-                if (val16 & 0x0008) dsp_control &= ~0x0008;
-                if (val16 & 0x0020) dsp_control &= ~0x0020;
-                if (val16 & 0x0080) dsp_control &= ~0x0080;
+                if (!(val16 & 0x0008)) dsp_control &= ~0x0008;
+                if (!(val16 & 0x0020)) {
+                    dsp_control &= ~0x0020;
+                    clear_pi_interrupt(0x80); // Clear PI_INT_ARAM
+                }
+                if (!(val16 & 0x0080)) dsp_control &= ~0x0080;
                 // DSP reset/boot: post the 0xDCD10000 "init done" mail so the
                 // game can POLL for it. We deliberately do NOT raise the DSP
                 // mail interrupt here: __DSPHandler would dispatch the current
@@ -164,12 +167,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                         else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
                     }
                 }
-                // Synchronous completion: clear the busy count and set the
-                // ARAM-DMA status bit for pollers. No interrupt here -- see the
-                // CSR write handler above for why raising PI 0x40 for ARAM DMA
-                // sends __DSPHandler into an unregistered task callback.
                 ar_cnt = 0;
                 dsp_control |= 0x0020;
+                if (dsp_control & 0x0040) {
+                    trigger_pi_interrupt(0x80); // PI_INT_ARAM is 0x80
+                }
             }
         }
     );

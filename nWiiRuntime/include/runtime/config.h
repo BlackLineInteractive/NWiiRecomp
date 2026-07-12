@@ -24,6 +24,18 @@ struct GameProfile {
     // Path to RPX file (Wii U only, relative to game_dir)
     // e.g. "code/game.rpx"
     std::string rpl_path;
+
+    // Address of guest __OSDispatchInterrupt for post-ISR reschedule.
+    // 0 = auto-detect from ExcTable[4] ([0x80003000+16]) at runtime.
+    // Set explicitly in [hle] ext_interrupt_dispatch = 0x... for games
+    // where ExcTable[4] is zero (e.g. MP7 which uses physical 0x80000500).
+    uint32_t ext_interrupt_dispatch = 0;
+
+    // Offset from r13 (SDA base) to the OS scheduler disable-count word
+    // (§6.3 guard: don't interrupt __OSReschedule mid-critical-section).
+    // 0 = unknown for this game -> SKIP the guard rather than risk a false
+    // positive that starves every external interrupt. MP7 (GP7P01): 0x6e60.
+    uint32_t sched_lock_offset = 0;
 };
 
 class Config {

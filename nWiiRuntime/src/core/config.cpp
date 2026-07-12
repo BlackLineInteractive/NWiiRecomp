@@ -69,7 +69,25 @@ void Config::load(const std::string& filepath) {
         auto pport = tbl["input"]["phone_port"].value<int>();
         if (pport) phone_port = *pport;
 
+        // [hle] section in main config.toml — per-game overrides without assets/
+        auto eid = tbl["hle"]["ext_interrupt_dispatch"].value<int64_t>();
+        if (eid && *eid != 0) {
+            game_profile.ext_interrupt_dispatch = (uint32_t)*eid;
+            std::cout << "[Config] ext_interrupt_dispatch = 0x"
+                      << std::hex << game_profile.ext_interrupt_dispatch
+                      << std::dec << std::endl;
+        }
+
+        auto slo = tbl["hle"]["sched_lock_offset"].value<int64_t>();
+        if (slo && *slo != 0) {
+            game_profile.sched_lock_offset = (uint32_t)*slo;
+            std::cout << "[Config] sched_lock_offset = 0x"
+                      << std::hex << game_profile.sched_lock_offset
+                      << std::dec << std::endl;
+        }
+
     } catch (const toml::parse_error& err) {
+
         std::cerr << "[Config] Failed to parse config.toml:\n" << err << std::endl;
     }
 }
@@ -113,6 +131,15 @@ void Config::load_game_profile() {
 
         auto rpl = tbl["game"]["rpl_path"].value<std::string>();
         if (rpl) game_profile.rpl_path = *rpl;
+
+        auto eid = tbl["hle"]["ext_interrupt_dispatch"].value<int64_t>();
+        if (eid) {
+            game_profile.ext_interrupt_dispatch = (uint32_t)*eid;
+            std::cout << "[Config] Game profile: ext_interrupt_dispatch = 0x"
+                      << std::hex << game_profile.ext_interrupt_dispatch
+                      << std::dec << std::endl;
+        }
+
 
         std::cout << "[Config] Loaded game profile: " << found_path << std::endl;
 
