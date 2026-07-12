@@ -1039,7 +1039,15 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Periodically raise VI (PI_INTSR bit 8 = 0x100, Dolphin INT_CAUSE_VI)
   // once the game unmasked it. Substitutes for real video timing.
   // Pre-VIInit wakeups are the decrementer's job, not VI's.
-  if (ctx.inst_count % 500000 == 0 && (nwii::runtime::hw::pi_intmr & 0x100)) {
+  // Guard against a retrace storm: a long VI ISR that re-enables EE mid-way
+  // would let the next periodic tick assert a fresh VI and nest the handler
+  // (each nesting pushes the guest stack down ~0x300 until it wraps past 0 and
+  // control jumps through a null pointer). Only assert VI when no handler is in
+  // flight (dispatch_saved_ctx==0) and the line is not already pending — real
+  // hardware keeps a single retrace asserted until the ISR acknowledges it.
+  if (ctx.inst_count % 500000 == 0 && (nwii::runtime::hw::pi_intmr & 0x100) &&
+      ctx.dispatch_saved_ctx == 0 && !ctx.in_callback &&
+      !(nwii::runtime::hw::pi_intsr & 0x100)) {
       nwii::runtime::hw::vi_trigger_interrupt();
   }
 

@@ -25,45 +25,37 @@ namespace nwii::runtime {
 std::mutex g_fifo_mutex;
 std::vector<uint8_t> g_hw_fifo;
 
-// Rolling 5-byte window over the raw command stream to catch PE signals the
-// moment the game submits them: BP load (0x61) of reg 0x45 with low nibble 2
-// = draw-done (GXDrawDone), reg 0x47/0x48 = draw-sync token. This models an
-// instant GPU so GXWaitDrawDone/token waits complete. A data byte can fake
-// the 0x61 prefix in rare cases; a false PE signal is harmless (the ISR just
-// runs its callback once more).
-static void pe_sniff_byte(uint8_t b) {
-    static uint8_t w[5];
-    w[0] = w[1]; w[1] = w[2]; w[2] = w[3]; w[3] = w[4]; w[4] = b;
-    if (w[0] != 0x61)
-        return;
-    uint8_t reg = w[1];
-    uint32_t val = ((uint32_t)w[2] << 16) | ((uint32_t)w[3] << 8) | w[4];
-    if (reg == 0x45 && (val & 0xF) == 2)
-        nwii::runtime::hw::pe_signal_finish();
-    else if (reg == 0x47)
-        nwii::runtime::hw::pe_signal_token(val & 0xFFFF, false);
-    else if (reg == 0x48)
-        nwii::runtime::hw::pe_signal_token(val & 0xFFFF, true);
-}
-
+// PE draw-done/token signals are detected inside FifoParser::Parse (it sees
+// display-list contents too), not by sniffing the raw byte stream here.
 
 void ProcessGXFifo() {
 
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     if (g_hw_fifo.empty()) return;
 
+    static int dbg_count = 0;
+    if (dbg_count++ < 20) {
+        std::cout << "[GX FIFO] Drain " << g_hw_fifo.size() << " bytes. First 16: ";
+        for (size_t i = 0; i < std::min<size_t>(g_hw_fifo.size(), 16); i++) {
+            std::cout << std::hex << (int)g_hw_fifo[i] << " ";
+        }
+        std::cout << std::dec << "\n";
+    }
+
     std::vector<nwii::runtime::gx::GXCommand> commands;
     nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
-    nwii::runtime::gx::Renderer::Render(commands);
+
+    g_hw_fifo.clear();
+    // Headless runs still parse (PE signals, GX state) but have no GL context.
+    if (IsWindowReady())
+        nwii::runtime::gx::Renderer::Render(commands);
 }
 
 namespace nwii::runtime {
 
-// Single entry point for every captured command byte: feeds the FIFO and
-// the PE-signal sniffer. Callers hold g_fifo_mutex.
+// Single entry point for every captured command byte. Callers hold g_fifo_mutex.
 static inline void wgp_push(uint8_t b) {
     g_hw_fifo.push_back(b);
-    pe_sniff_byte(b);
 }
 
 void GX_WGPIPE_Write8(uint8_t val) {

@@ -329,6 +329,8 @@ int main(int argc, char **argv) {
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
 
+      extern void ProcessGXFifo();
+      ProcessGXFifo();
       ctx->vblank_pending = true;
       if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0) {
         std::cout << "[Sample] pc=0x" << std::hex << ctx->pc << " lr=0x"
@@ -353,17 +355,33 @@ int main(int argc, char **argv) {
           // flips + sends the frame message when [vidstate+0xa2]==0 and the
           // flip-pending byte [r13-0x29b6] is set.
           uint32_t vs = ctx->mmu.read32(r13 - 0x29c0);
-          uint32_t ef_obj = ctx->mmu.read32(r13 - 0x2AF0);
-          std::cout << "  [FlipG] r13=0x" << std::hex << r13 << " vs=0x" << vs
+          // EndFrame (0x801376dc) operates on the object at [r13-0x2AF0]:
+          // +0xB0 frame ptr, +0xB4 float gate, +0xB8/BA flags, +0xBE wait
+          // mode (0=msg queue, else token spin), +0x9C countdown.
+          uint32_t ef = ctx->mmu.read32(r13 - 0x2AF0);
+          std::cout << "  [FlipG] vs=0x" << std::hex << vs
                     << " vsA2=" << std::dec << (int)ctx->mmu.read8(vs + 0xa2)
                     << " pend29b6=" << (int)ctx->mmu.read8(r13 - 0x29b6)
                     << " b29b5=" << (int)ctx->mmu.read8(r13 - 0x29b5)
                     << " b4808=" << (int)ctx->mmu.read8(r13 - 0x4808)
-                    << " vsB0=0x" << std::hex << ctx->mmu.read32(vs + 0xb0)
-                    << " efB0=0x" << std::hex << (ef_obj ? ctx->mmu.read32(ef_obj + 0xb0) : 0)
-                    << " vs9C=" << std::dec << ctx->mmu.read32(vs + 0x9c)
-                    << " pe_sr=0x" << std::hex << nwii::runtime::hw::g_pe_sr
+                    << " ef=0x" << std::hex << ef
+                    << " efB0=0x" << (ef ? ctx->mmu.read32(ef + 0xb0) : 0)
+                    << " efB4=0x" << (ef ? ctx->mmu.read32(ef + 0xb4) : 0)
+                    << " efB8=" << std::dec << (ef ? (int)ctx->mmu.read8(ef + 0xb8) : -1)
+                    << " efBE=" << (ef ? (int)ctx->mmu.read8(ef + 0xbe) : -1)
+                    << " ef9C=" << (ef ? (int)ctx->mmu.read32(ef + 0x9c) : -1)
+                    << " ddflag=" << (int)ctx->mmu.read8(r13 - 0x2368)
+                    << std::hex << " tok=0x" << ctx->mmu.read16(r13 - 0x29b8)
+                    << " pe_sr=0x" << nwii::runtime::hw::g_pe_sr
                     << std::dec << "\n";
+          // Which HW block the game's own retrace-ish handler polls: hwp is
+          // the register base it reads +8/+0xC from, shp a shadow struct,
+          // sdkPre/wrapPre the SDK and wrapper pre-retrace callback slots.
+          std::cout << "  [VIwrap] hwp=0x" << std::hex
+                    << ctx->mmu.read32(r13 - 0x4118) << " shp=0x"
+                    << ctx->mmu.read32(r13 - 0x239c) << " sdkPre=0x"
+                    << ctx->mmu.read32(r13 - 0x2348) << " wrapPre=0x"
+                    << ctx->mmu.read32(r13 - 0x237c) << std::dec << "\n";
         }
         // Wall-clock thread dump: walk the OS active-thread list and peek at
         // each sleeper's wait object so a starved producer/consumer chain is
@@ -404,11 +422,14 @@ int main(int argc, char **argv) {
       BeginDrawing();
       ClearBackground(BLACK);
 
-      // Drain GX FIFO and issue OpenGL/rlgl calls safely in the main thread
+      extern void ProcessGXFifo();
+      ProcessGXFifo();
 
       EndDrawing();
 
       // Trigger VBlank interrupt to drive the OS thread queue
+      extern void ProcessGXFifo();
+      ProcessGXFifo();
       ctx->vblank_pending = true;
     }
   }

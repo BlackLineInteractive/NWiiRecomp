@@ -5,6 +5,7 @@ test_export/
 out/
 bin/
 export_gc/
+export_gc_mp7/
 
 # IDE files
 .vscode/

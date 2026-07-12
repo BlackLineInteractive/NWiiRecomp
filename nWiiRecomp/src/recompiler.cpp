@@ -876,10 +876,11 @@ void Recompiler::emit_function(std::ostream &out,
       }
     }
     out << "            case 0x0: return; // idle: no runnable thread\n";
-    out << "            default: std::cerr << \"UNKNOWN MID-FUNCTION ENTRY TO "
-           "0x\" << std::hex << ctx.pc << \" IN FUNCTION 0x"
-        << std::hex << std::uppercase << func.start_address << std::dec
-        << " LR: 0x\" << std::hex << ctx.lr << \"\\n\"; std::exit(1);\n";
+    // A context restore can route a mid-function PC to the wrong function when
+    // analyzed function bounds overlap. Rather than abort, hand off to the
+    // interpreter, which executes from any PC and returns once control reaches
+    // recompiled code again. Universal and safe: no bytes are skipped.
+    out << "            default: nwii::runtime::interpret_step(ctx); return;\n";
     out << "        }\n";
     out << "    }\n";
 

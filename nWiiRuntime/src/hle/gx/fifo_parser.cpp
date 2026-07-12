@@ -1,7 +1,9 @@
 #include "runtime/gx/fifo_parser.h"
 #include "runtime/gx_state.h"
 #include "runtime/cpu_context.h"
+#include "runtime/hw/hw.h"
 #include <cstring>
+#include <iostream>
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
@@ -21,6 +23,22 @@ namespace {
     }
 
     void ParseBP(uint8_t reg, uint32_t val) {
+        // PE signals live in the BP stream: reg 0x45 val&0xF==2 is the
+        // draw-done strobe (GXSetDrawDone), 0x47/0x48 carry the draw-sync
+        // token (0x48 also raises the token interrupt). Signalling from the
+        // parser sees tokens inside display lists too.
+        if (reg == 0x45 && (val & 0xF) == 2) {
+            static int n = 0;
+            if (n++ < 8) std::cout << "[PE] draw-done from BP stream\n";
+            nwii::runtime::hw::pe_signal_finish();
+        } else if (reg == 0x47) {
+            nwii::runtime::hw::pe_signal_token(val & 0xFFFF, false);
+        } else if (reg == 0x48) {
+            static int n = 0;
+            if (n++ < 8) std::cout << "[PE] token+irq 0x" << std::hex
+                                   << (val & 0xFFFF) << std::dec << "\n";
+            nwii::runtime::hw::pe_signal_token(val & 0xFFFF, true);
+        }
         if (reg == 0x00) {
             g_state.numTexGens = (val & 0xF);
             g_state.numChans = ((val >> 4) & 0x7);
@@ -108,14 +126,61 @@ namespace {
     }
 }
 
+static void ParseStream(std::vector<uint8_t>& fifo, std::vector<GXCommand>& commands, int depth);
+
+// GX_CMD_CALL_DL (0x40): addr + size of a display list in guest RAM. Real
+// hardware re-reads those bytes through the same command processor, so we
+// fetch them and parse recursively (bounded depth guards against garbage).
+static void ExpandDisplayList(uint32_t addr, uint32_t size,
+                              std::vector<GXCommand>& commands, int depth) {
+    uint32_t phys = addr & 0x1FFFFFFF;
+    if (!nwii::runtime::g_mmu || size == 0 || size > 0x400000 ||
+        phys + size > 0x01800000 || depth >= 4) {
+        static int n = 0;
+        if (n++ < 8)
+            std::cout << "[GX DL] rejected call addr=0x" << std::hex << addr
+                      << " size=0x" << size << std::dec << " depth=" << depth << "\n";
+        return;
+    }
+    static int n = 0;
+    if (n++ < 8)
+        std::cout << "[GX DL] call addr=0x" << std::hex << addr
+                  << " size=0x" << size << std::dec << " depth=" << depth << "\n";
+    std::vector<uint8_t> dl(size);
+    for (uint32_t i = 0; i < size; i++)
+        dl[i] = nwii::runtime::g_mmu->read8(addr + i);
+    ParseStream(dl, commands, depth + 1);
+}
+
 void FifoParser::Parse(std::vector<uint8_t>& fifo, std::vector<GXCommand>& commands) {
+    ParseStream(fifo, commands, 0);
+}
+
+static void ParseStream(std::vector<uint8_t>& fifo, std::vector<GXCommand>& commands, int depth) {
     if (fifo.empty()) return;
 
     size_t offset = 0;
     while (offset < fifo.size()) {
         uint8_t cmd = fifo[offset];
 
-        if (cmd == 0x61) {
+        if (cmd == 0x00) {
+            // NOP
+            offset++;
+        } else if (cmd == 0x40) {
+            // CALL_DL: 1 cmd + 4 addr + 4 size
+            if (offset + 9 > fifo.size()) break;
+            uint32_t dl_addr = Read32(fifo, offset + 1);
+            uint32_t dl_size = Read32(fifo, offset + 5);
+            ExpandDisplayList(dl_addr, dl_size, commands, depth);
+            offset += 9;
+        } else if (cmd == 0x48) {
+            // INVL_VC: invalidate vertex cache, single byte
+            offset++;
+        } else if (cmd == 0x20 || cmd == 0x28 || cmd == 0x30 || cmd == 0x38) {
+            // LOAD_INDX A-D: 1 cmd + 4 payload
+            if (offset + 5 > fifo.size()) break;
+            offset += 5;
+        } else if (cmd == 0x61) {
             if (offset + 5 > fifo.size()) break;
             uint8_t reg = fifo[offset + 1];
             uint32_t val = Read24(fifo, offset + 2);

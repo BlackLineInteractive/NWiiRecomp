@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <string>
 
 using namespace nwii::runtime;
@@ -43,7 +44,26 @@ void watch_hit(uint32_t addr, uint32_t value, int width) {
   std::cout << std::dec << "\n";
 }
 
+// Optional allow-list: NWII_TRACE_ONLY=addr,addr,... restricts [CALL] logging
+// to those function entries (hex, comma-separated). Empty = trace everything.
+static std::set<uint32_t> g_trace_only = []() {
+  std::set<uint32_t> s;
+  const char *env = std::getenv("NWII_TRACE_ONLY");
+  if (env) {
+    std::string in(env);
+    size_t p = 0;
+    while (p < in.size()) {
+      size_t c = in.find(',', p);
+      if (c == std::string::npos) c = in.size();
+      s.insert((uint32_t)std::strtoul(in.substr(p, c - p).c_str(), nullptr, 16));
+      p = c + 1;
+    }
+  }
+  return s;
+}();
+
 void trace_call(uint32_t func_addr, CPUContext &ctx) {
+  if (!g_trace_only.empty() && !g_trace_only.count(func_addr)) return;
   std::cout << "[CALL] 0x" << std::hex << func_addr << " lr=0x" << ctx.lr
             << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4] << " r5=0x"
             << ctx.gpr[5] << " r13=0x" << ctx.gpr[13] << " r1=0x" << ctx.gpr[1]
