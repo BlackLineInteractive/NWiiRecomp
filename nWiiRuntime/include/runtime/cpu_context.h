@@ -552,5 +552,12 @@ bool in_recompiled_code(uint32_t pc);
 extern bool g_trace_calls;
 void trace_call(uint32_t func_addr, CPUContext& ctx);
 
+// An indirect call (bcctrl) through a null pointer means the guest invoked an
+// unregistered callback slot. Real hardware would fault; we instead treat it
+// as a no-op return (the callee "does nothing") so early-boot code that prints
+// through a not-yet-registered putchar, etc., keeps running. Logged (throttled)
+// so the divergence is visible.
+void note_null_call(uint32_t site, uint32_t lr);
+
 } // namespace runtime
 } // namespace nwii

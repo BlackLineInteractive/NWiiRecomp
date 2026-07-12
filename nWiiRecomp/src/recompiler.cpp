@@ -1405,11 +1405,25 @@ void Recompiler::emit_instruction(std::ostream &out,
           out << "    ctx.lr = 0x" << std::hex << std::uppercase
               << (inst.address + 4) << std::dec << "; // save return address\n";
         }
+        // A function-pointer call (bcctrl, LK set) through a null CTR is an
+        // unregistered-callback invocation: skip it as a no-op return instead
+        // of jumping to 0 and crashing. Only guard genuine calls via CTR.
+        bool null_guard = ppc_inst.lk() && target_reg == "ctx.ctr";
         if (cond_expr == "true") {
-          out << "    ctx.pc = " << target_reg << "; return;\n";
+          if (null_guard)
+            out << "    if (" << target_reg << ") { ctx.pc = " << target_reg
+                << "; return; } else nwii::runtime::note_null_call(0x"
+                << std::hex << std::uppercase << inst.address << std::dec
+                << ", ctx.lr);\n";
+          else
+            out << "    ctx.pc = " << target_reg << "; return;\n";
         } else {
-          out << "    if (" << cond_expr << ") { ctx.pc = " << target_reg
-              << "; return; }\n";
+          if (null_guard)
+            out << "    if ((" << cond_expr << ") && " << target_reg
+                << ") { ctx.pc = " << target_reg << "; return; }\n";
+          else
+            out << "    if (" << cond_expr << ") { ctx.pc = " << target_reg
+                << "; return; }\n";
         }
       }
     } else if (xo == 257 || xo == 129 || xo == 289 || xo == 225 || xo == 33 ||

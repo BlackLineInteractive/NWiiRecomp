@@ -302,6 +302,24 @@ int main(int argc, char **argv) {
     poke_global(0x80003158, 0x00000023);
   }
 
+  // VI current TV mode (__VIDTVStatus / OS low-mem 0x800000CC): the bootrom
+  // leaves this set to the console's video system. A PAL title configures a
+  // PAL render mode and the SDK VIConfigure asserts+halts if it sees this as
+  // an NTSC->PAL change. Derive NTSC vs PAL from the disc region letter (4th
+  // char of the game id) so any title gets a consistent starting mode — the
+  // game's own VIConfigure still overwrites it (and only matters here for the
+  // very first configure). VITVMode: NTSC=0, PAL=1.
+  {
+    const std::string &gid = nwii::runtime::Config::get().game_id;
+    char region = gid.size() >= 4 ? gid[3] : 'E';
+    // PAL/50Hz regions per the Nintendo disc region letters.
+    bool pal = (region == 'P' || region == 'D' || region == 'F' ||
+                region == 'I' || region == 'S' || region == 'H' ||
+                region == 'U' || region == 'X' || region == 'Y' ||
+                region == 'Z');
+    poke_global(0x800000CC, pal ? 1u : 0u);
+  }
+
   // Initial SP
   ctx->gpr[1] = 0x816FFFF0;
 

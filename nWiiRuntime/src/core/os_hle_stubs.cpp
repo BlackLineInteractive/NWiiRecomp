@@ -62,11 +62,19 @@ static std::set<uint32_t> g_trace_only = []() {
   return s;
 }();
 
+void note_null_call(uint32_t site, uint32_t lr) {
+  static int n = 0;
+  if (n++ < 20)
+    std::cout << "[NullCall] no-op call through null ptr at site 0x" << std::hex
+              << site << " lr=0x" << lr << std::dec << "\n";
+}
+
 void trace_call(uint32_t func_addr, CPUContext &ctx) {
   if (!g_trace_only.empty() && !g_trace_only.count(func_addr)) return;
   std::cout << "[CALL] 0x" << std::hex << func_addr << " lr=0x" << ctx.lr
             << " r3=0x" << ctx.gpr[3] << " r4=0x" << ctx.gpr[4] << " r5=0x"
-            << ctx.gpr[5] << " r13=0x" << ctx.gpr[13] << " r1=0x" << ctx.gpr[1]
+            << ctx.gpr[5] << " r6=0x" << ctx.gpr[6] << " r7=0x" << ctx.gpr[7]
+            << " r13=0x" << ctx.gpr[13] << " r1=0x" << ctx.gpr[1]
             << std::dec << "\n";
 }
 } // namespace nwii::runtime

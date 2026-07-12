@@ -26,6 +26,12 @@ void register_vi(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCC002000, 0xCC0020FF,
         [](uint32_t addr) -> uint32_t {
             if (addr == 0xCC00202C) return vi_vblank_counter++;
+            // VI Display Config Register (0xCC002002, halfword): report ENB=1
+            // (bit0) so the SDK's VIInit sees VI already enabled by the bootrom
+            // and skips its hardcoded NTSC default configure. Without this, a
+            // PAL title's later VIConfigure(PAL) is seen as an illegal
+            // NTSC->PAL switch and the SDK asserts+halts (vi.c).
+            if (addr == 0xCC002002) return 0x0001;
             if (addr == 0xCC002030) {
                 // A register READ must never raise an interrupt — doing so let
                 // the SDK VI ISR re-trigger VI while it was still reading VI
