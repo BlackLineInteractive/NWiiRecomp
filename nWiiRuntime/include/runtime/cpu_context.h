@@ -292,6 +292,10 @@ struct CPUContext {
   // SDK handlers legitimately leave their own exception context installed.
   uint32_t dispatch_saved_ctx = 0;
 
+  // Set when an external-interrupt leaf handler is dispatched, so the sentinel
+  // return can model the post-ISR reschedule __OSDispatchInterrupt performs.
+  bool ext_resched_pending = false;
+
   // Time base / decrementer run off the WALL CLOCK, not inst_count. The
   // guest's OSGetTime/OSGetTick and every alarm/timeout compare against
   // the time base; tying it to inst_count made a second of guest time take

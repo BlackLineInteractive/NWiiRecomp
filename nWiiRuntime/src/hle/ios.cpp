@@ -868,6 +868,34 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // that puts the interrupted context back); trusting 0x800000D4 here used
   // to restore a never-saved stack context with srr0=0.
   if (ctx.pc == 0xFFFFFFFC && !ctx.in_callback) {
+    // Post-ISR reschedule (see cpu_context.h): after an external-interrupt leaf
+    // handler returns, hand off to the guest __OSReschedule(0) once so a
+    // higher-priority thread the handler just readied can preempt the
+    // interrupted one, exactly as the real __OSDispatchInterrupt does. The
+    // outgoing context is already saved by our dispatch; __OSReschedule either
+    // switches away (OSLoadContext) or, if the interrupted thread is still
+    // highest priority, returns here (flag now clear) to resume it.
+    static uint32_t g_resched_addr = []() -> uint32_t {
+      const char *e = std::getenv("NWII_RESCHED");
+      return e ? (uint32_t)std::strtoul(e, nullptr, 16) : 0;
+    }();
+    if (ctx.ext_resched_pending && g_resched_addr) {
+      ctx.ext_resched_pending = false;
+      if (std::getenv("NWII_SAMPLE")) {
+        static int n = 0;
+        if (n++ < 12) {
+          uint32_t cur = ctx.mmu.read32(0x800000E4);
+          std::cout << "[Resched] cur=0x" << std::hex << cur
+                    << " prio=" << std::dec << ctx.mmu.read32(cur + 0x2D0)
+                    << " r1=0x" << std::hex << ctx.gpr[1] << std::dec << "\n";
+        }
+      }
+      ctx.gpr[3] = 0;
+      ctx.lr = 0xFFFFFFFC;
+      ctx.pc = g_resched_addr;
+      return true;
+    }
+    ctx.ext_resched_pending = false;
     if (ctx.dispatch_saved_ctx) {
       uint32_t current_thread = ctx.mmu.read32(0x800000E4);
       if (current_thread != 0 && current_thread != ctx.dispatch_saved_ctx) {
@@ -1256,6 +1284,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
                   // that exit via rfi never undo an r1 shift.
                   ctx.lr = 0xFFFFFFFC;
                   ctx.pc = handler;
+                  ctx.ext_resched_pending = true;
                   longjmp(ctx.exception_jmp_buf, 1);
               }
 
