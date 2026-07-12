@@ -33,19 +33,18 @@ void ProcessGXFifo() {
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     if (g_hw_fifo.empty()) return;
 
-    static int dbg_count = 0;
-    if (dbg_count++ < 20) {
-        std::cout << "[GX FIFO] Drain " << g_hw_fifo.size() << " bytes. First 16: ";
-        for (size_t i = 0; i < std::min<size_t>(g_hw_fifo.size(), 16); i++) {
-            std::cout << std::hex << (int)g_hw_fifo[i] << " ";
-        }
-        std::cout << std::dec << "\n";
-    }
-
     std::vector<nwii::runtime::gx::GXCommand> commands;
     nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
 
-    g_hw_fifo.clear();
+    // Parse erases the fully-consumed prefix; a trailing incomplete command is
+    // kept for the next chunk (do NOT clear the whole buffer — that splits
+    // commands and permanently desyncs the stream). Safety valve: if the
+    // remainder grows past a sane bound the stream is corrupt (a bad length or
+    // a byte the parser can't advance past), so drop it to avoid unbounded
+    // growth rather than accumulating forever.
+    if (g_hw_fifo.size() > (4u << 20))
+        g_hw_fifo.clear();
+
     // Headless runs still parse (PE signals, GX state) but have no GL context.
     if (IsWindowReady())
         nwii::runtime::gx::Renderer::Render(commands);

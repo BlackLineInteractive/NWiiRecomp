@@ -13,13 +13,17 @@ struct VATSlot {
   VtxAttrMask posMask;
   VtxAttrType posType;
   uint8_t posShift;
+  bool posElements; // false = XY, true = XYZ
   VtxAttrMask nrmMask;
   VtxAttrType nrmType;
+  bool nrmElements; // false = NRM, true = NBT
   VtxAttrMask clrMask[2];
   VtxAttrType clrType[2];
+  bool clrElements[2]; // false = RGB, true = RGBA
   VtxAttrMask texMask[8];
   VtxAttrType texType[8];
   uint8_t texShift[8];
+  bool texElements[8]; // false = S, true = ST
 };
 
 struct TEVStage {
