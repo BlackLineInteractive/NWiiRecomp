@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
+#include <bit>
 
 // PPC750 integer-subset interpreter. Used as a dispatcher fallback for
 // code that does not exist in the DOL image: routines the game copies
@@ -246,7 +247,7 @@ bool interpret_one(CPUContext& ctx) {
         case 922: ctx.gpr[rA] = (int32_t)(int16_t)ctx.gpr[rD]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // extsh
         case 26: { // cntlzw
             uint32_t v = ctx.gpr[rD];
-            ctx.gpr[rA] = v ? __builtin_clz(v) : 32;
+            ctx.gpr[rA] = std::countl_zero(v);
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }

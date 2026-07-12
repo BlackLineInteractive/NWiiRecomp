@@ -7,6 +7,7 @@
 #include <map>
 #include <queue>
 #include <algorithm>
+#include <cstring>
 
 namespace nwii {
 namespace analyzer {

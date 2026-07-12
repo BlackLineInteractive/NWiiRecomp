@@ -1,5 +1,6 @@
 #include "runtime/cafe_os.h"
 #include "runtime/config.h"
+#include "common/endian.h"
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -36,7 +37,7 @@ static bool decompress_section(const uint8_t* src, uint32_t src_size,
 #ifdef HAVE_ZLIB
     uint32_t decompressed_size = 0;
     std::memcpy(&decompressed_size, src, 4); // first 4 bytes = uncompressed size (BE)
-    decompressed_size = __builtin_bswap32(decompressed_size);
+    decompressed_size = nwii::swap_endian(decompressed_size);
     out.resize(decompressed_size);
     uLongf dest_len = decompressed_size;
     if (uncompress(out.data(), &dest_len, src + 4, src_size - 4) != Z_OK)
@@ -82,9 +83,9 @@ bool load_rpx(CPUContext& ctx, const std::string& path) {
         return false;
     }
 
-    uint16_t shnum    = __builtin_bswap16(hdr.e_shnum);
-    uint16_t shentsize= __builtin_bswap16(hdr.e_shentsize);
-    uint32_t shoff    = __builtin_bswap32(hdr.e_shoff);
+    uint16_t shnum    = nwii::swap_endian(hdr.e_shnum);
+    uint16_t shentsize= nwii::swap_endian(hdr.e_shentsize);
+    uint32_t shoff    = nwii::swap_endian(hdr.e_shoff);
 
     if (shnum == 0 || shoff == 0) {
         std::cerr << "[Cafe OS] RPX has no sections" << std::endl;
@@ -102,12 +103,12 @@ bool load_rpx(CPUContext& ctx, const std::string& path) {
     std::vector<Elf32Shdr> shdrs(shnum);
     for (auto& s : shdrs) {
         f.read(reinterpret_cast<char*>(&s), sizeof(s));
-        s.sh_name   = __builtin_bswap32(s.sh_name);
-        s.sh_type   = __builtin_bswap32(s.sh_type);
-        s.sh_flags  = __builtin_bswap32(s.sh_flags);
-        s.sh_addr   = __builtin_bswap32(s.sh_addr);
-        s.sh_offset = __builtin_bswap32(s.sh_offset);
-        s.sh_size   = __builtin_bswap32(s.sh_size);
+        s.sh_name   = nwii::swap_endian(s.sh_name);
+        s.sh_type   = nwii::swap_endian(s.sh_type);
+        s.sh_flags  = nwii::swap_endian(s.sh_flags);
+        s.sh_addr   = nwii::swap_endian(s.sh_addr);
+        s.sh_offset = nwii::swap_endian(s.sh_offset);
+        s.sh_size   = nwii::swap_endian(s.sh_size);
     }
 
     // Load sections into MMU
