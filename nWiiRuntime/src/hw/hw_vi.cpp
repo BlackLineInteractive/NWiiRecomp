@@ -18,10 +18,13 @@ void vi_trigger_interrupt() {
         if (n++ < 40) std::cout << "[VItrig] #" << std::dec << n << "\n";
     }
     vi_vtr[0] |= 0x80000000;
-    // VI = PI_INTSR bit 8 = 0x00000100 (Dolphin ProcessorInterface INT_CAUSE_VI)
-    if (vi_dcr & 1) {
-        trigger_pi_interrupt(0x00000100);
-    }
+    // VI = PI_INTSR bit 8 = 0x00000100 (Dolphin ProcessorInterface INT_CAUSE_VI).
+    // Always assert: the caller already gates on the VI line being unmasked
+    // (pi_intmr & 0x100). The old `vi_dcr & 1` check keyed off the wrong
+    // register (0xCC002030, not the 0xCC002002 ENB bit) and stayed 0 for MP7,
+    // so VI never fired, the frame counter never advanced, and the main thread
+    // slept for retrace forever.
+    trigger_pi_interrupt(0x00000100);
 }
 
 void register_vi(MMIODispatcher& dispatcher) {{

@@ -1073,9 +1073,20 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // control jumps through a null pointer). Only assert VI when no handler is in
   // flight (dispatch_saved_ctx==0) and the line is not already pending — real
   // hardware keeps a single retrace asserted until the ISR acknowledges it.
-  if (ctx.inst_count % 500000 == 0 && (nwii::runtime::hw::pi_intmr & 0x100) &&
-      ctx.dispatch_saved_ctx == 0 && !ctx.in_callback &&
-      !(nwii::runtime::hw::pi_intsr & 0x100)) {
+  // Threshold (not exact-modulo) so it still fires inside a tight guest idle
+  // loop: the __OSReschedule idle spin is 3 instructions, and inst_count
+  // stepping past an exact multiple of 500000 skipped the `% == 0` check
+  // entirely — VI never fired during idle, the frame counter never advanced,
+  // and a thread sleeping for retrace (e.g. MP7's main) hung forever.
+  static uint64_t s_last_vi_inst = 0;
+  if (ctx.inst_count - s_last_vi_inst >= 500000 &&
+      (nwii::runtime::hw::pi_intmr & 0x100) && !ctx.in_callback &&
+      !(nwii::runtime::hw::pi_intsr & 0x100) &&
+      // dispatch_saved_ctx guards against a retrace storm mid-handler, but when
+      // the guest is idle (no current thread) it must still get retrace VIs to
+      // wake a sleeping thread — so bypass that guard while idle.
+      (ctx.dispatch_saved_ctx == 0 || ctx.mmu.read32(0x800000E4) == 0)) {
+      s_last_vi_inst = ctx.inst_count;
       nwii::runtime::hw::vi_trigger_interrupt();
   }
 
@@ -1225,7 +1236,14 @@ bool process_pending_callbacks(CPUContext &ctx) {
       bool use_new_path =
           (nwii::runtime::Config::get().game_profile.ext_interrupt_dispatch != 0);
 
-      if (use_new_path && (sched_disabled || handler_in_flight)) {
+      // Exception: when there is no current thread (__OSCurrentThread == 0) the
+      // guest is sitting in the __OSReschedule idle loop, which deliberately
+      // enables interrupts and spins until an ISR readies a thread. Deferring
+      // here would hang the idle loop forever (the interrupt that would wake a
+      // sleeper never fires), so always dispatch when idle.
+      bool idle = (ctx.mmu.read32(0x800000E4) == 0);
+
+      if (use_new_path && !idle && (sched_disabled || handler_in_flight)) {
           // Interrupt stays pending in pi_intsr; retry next backedge.
           if (std::getenv("NWII_SAMPLE")) {
               static uint64_t defer_count = 0;
