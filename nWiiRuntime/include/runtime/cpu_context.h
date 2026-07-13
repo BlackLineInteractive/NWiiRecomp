@@ -100,7 +100,11 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 8);
 
-    if (paddr == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
+    // The whole 0x0C008xxx page mirrors the write-gather pipe (Dolphin
+    // GATHER_PIPE): psq_st and misaligned burst stores land at +4/+8 etc.
+    // Matching only the exact base dropped every second element of paired
+    // stores and desynced the GX FIFO stream.
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
 
     uint8_t *ptr = get_ptr(addr);
@@ -123,7 +127,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 16);
 
-    if (paddr == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
     if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
 
     uint8_t *ptr = get_ptr(addr);
@@ -151,7 +155,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 32);
 
-    if (paddr == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write32(value); return; }
     if (is_hw_reg(paddr)) { HW_Reg_Write32(paddr, value); return; }
 
     uint8_t *ptr = get_ptr(addr);
@@ -167,7 +171,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, v, 32);
 
-    if (paddr == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {
@@ -183,7 +187,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~7u) == (g_watch_addr & 0x3FFFFFF8))
       watch_hit(addr, v >> 32, 64);
 
-    if (paddr == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {

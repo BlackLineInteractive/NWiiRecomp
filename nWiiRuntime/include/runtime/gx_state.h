@@ -10,6 +10,10 @@ enum class VtxAttrType { U8 = 0, S8 = 1, U16 = 2, S16 = 3, F32 = 4 };
 
 // Vertex Attribute Table (VAT)
 struct VATSlot {
+  // VCD_LO bits 0-8: per-vertex matrix indices (each one direct u8 when
+  // present). Missing them desyncs the whole FIFO stream.
+  bool posMatIdx;
+  bool texMatIdx[8];
   VtxAttrMask posMask;
   VtxAttrType posType;
   uint8_t posShift;

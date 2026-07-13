@@ -73,8 +73,14 @@ namespace {
         } else if (reg >= 0xB0 && reg <= 0xBC) {
             g_state.arrayStride[reg - 0xB0] = val & 0xFF;
         } else if (reg == 0x50) {
-            // VCD_LO (global): pos/nrm/col0/col1 presence + index mode.
+            // VCD_LO (global): matrix indices + pos/nrm/col0/col1 presence.
+            // Bit 0 = PosNrm matrix index, bits 1-8 = tex0-7 matrix indices —
+            // each adds one direct u8 per vertex and MUST be consumed or the
+            // whole stream desyncs.
             for (int i = 0; i < 8; i++) {
+                g_state.vat[i].posMatIdx  = (val >> 0) & 1;
+                for (int t = 0; t < 8; t++)
+                    g_state.vat[i].texMatIdx[t] = (val >> (1 + t)) & 1;
                 g_state.vat[i].posMask    = (VtxAttrMask)((val >> 9)  & 3);
                 g_state.vat[i].nrmMask    = (VtxAttrMask)((val >> 11) & 3);
                 g_state.vat[i].clrMask[0] = (VtxAttrMask)((val >> 13) & 3);
@@ -130,58 +136,69 @@ namespace {
         }
     }
 
-    // Reads one scalar attribute (Direct inline or Index into an array) and
-    // advances fifo_offset. On truncation it pushes fifo_offset past the end so
-    // the caller aborts and preserves the incomplete command for the next chunk.
-    float ReadAttribute(const std::vector<uint8_t>& fifo, size_t& fifo_offset, VtxAttrMask mask, VtxAttrType type,
-                        uint8_t shift, uint32_t array_idx, size_t fifo_size) {
-        if (mask == VtxAttrMask::None) return 0.0f;
+    inline int TypeSize(VtxAttrType type) {
+        switch (type) {
+            case VtxAttrType::U8: case VtxAttrType::S8: return 1;
+            case VtxAttrType::U16: case VtxAttrType::S16: return 2;
+            default: return 4; // F32
+        }
+    }
 
-        if (mask == VtxAttrMask::Direct) {
-            if (type == VtxAttrType::F32) {
-                if (fifo_offset + 4 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                uint32_t v = Read32(fifo, fifo_offset); fifo_offset += 4;
+    inline float DecodeScalar(const uint8_t* p, VtxAttrType type, uint8_t shift) {
+        switch (type) {
+            case VtxAttrType::U8:  return (float)p[0] / (float)(1 << shift);
+            case VtxAttrType::S8:  return (float)(int8_t)p[0] / (float)(1 << shift);
+            case VtxAttrType::U16: return (float)(uint16_t)((p[0] << 8) | p[1]) / (float)(1 << shift);
+            case VtxAttrType::S16: return (float)(int16_t)((p[0] << 8) | p[1]) / (float)(1 << shift);
+            default: {
+                uint32_t v = ((uint32_t)p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
                 float f; std::memcpy(&f, &v, 4); return f;
-            } else if (type == VtxAttrType::U8) {
-                if (fifo_offset + 1 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                uint8_t v = fifo[fifo_offset++];
-                return (float)v / (float)(1 << shift);
-            } else if (type == VtxAttrType::S8) {
-                if (fifo_offset + 1 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                int8_t v = (int8_t)fifo[fifo_offset++];
-                return (float)v / (float)(1 << shift);
-            } else if (type == VtxAttrType::U16) {
-                if (fifo_offset + 2 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                uint16_t v = (uint16_t)((fifo[fifo_offset] << 8) | fifo[fifo_offset+1]);
-                fifo_offset += 2;
-                return (float)v / (float)(1 << shift);
-            } else if (type == VtxAttrType::S16) {
-                if (fifo_offset + 2 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                int16_t v = (int16_t)((fifo[fifo_offset] << 8) | fifo[fifo_offset+1]);
-                fifo_offset += 2;
-                return (float)v / (float)(1 << shift);
-            }
-        } else {
-            uint32_t index = 0;
-            if (mask == VtxAttrMask::Index8) {
-                if (fifo_offset + 1 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                index = fifo[fifo_offset++];
-            } else if (mask == VtxAttrMask::Index16) {
-                if (fifo_offset + 2 > fifo_size) { fifo_offset = fifo_size + 1; return 0.0f; }
-                index = (fifo[fifo_offset] << 8) | fifo[fifo_offset+1];
-                fifo_offset += 2;
-            }
-
-            uint32_t data_addr = g_state.arrayBase[array_idx] + (index * g_state.arrayStride[array_idx]);
-
-            if (type == VtxAttrType::F32) {
-                return nwii::runtime::g_mmu->read_f32(data_addr);
-            } else if (type == VtxAttrType::S16) {
-                int16_t v = (int16_t)nwii::runtime::g_mmu->read16(data_addr);
-                return (float)v / (float)(1 << shift);
             }
         }
-        return 0.0f;
+    }
+
+    // Reads an entire multi-component attribute and advances fifo_offset by its
+    // real FIFO footprint: Direct consumes ncomp scalars inline; Index8/16
+    // consumes exactly ONE index (never one per component — that desyncs the
+    // stream) and fetches the components from the attribute array in guest RAM.
+    // Returns false when the FIFO is truncated mid-attribute.
+    bool ReadVectorAttr(const std::vector<uint8_t>& fifo, size_t& fifo_offset, size_t fifo_size,
+                        VtxAttrMask mask, VtxAttrType type, uint8_t shift,
+                        uint32_t array_idx, int ncomp, float* out) {
+        for (int i = 0; i < ncomp; i++) out[i] = 0.0f;
+        if (mask == VtxAttrMask::None) return true;
+
+        int sz = TypeSize(type);
+        if (mask == VtxAttrMask::Direct) {
+            if (fifo_offset + (size_t)sz * ncomp > fifo_size) return false;
+            for (int i = 0; i < ncomp; i++)
+                out[i] = DecodeScalar(&fifo[fifo_offset + (size_t)sz * i], type, shift);
+            fifo_offset += (size_t)sz * ncomp;
+            return true;
+        }
+
+        uint32_t index = 0;
+        if (mask == VtxAttrMask::Index8) {
+            if (fifo_offset + 1 > fifo_size) return false;
+            index = fifo[fifo_offset++];
+        } else { // Index16
+            if (fifo_offset + 2 > fifo_size) return false;
+            index = (fifo[fifo_offset] << 8) | fifo[fifo_offset + 1];
+            fifo_offset += 2;
+        }
+        if (!nwii::runtime::g_mmu) return true;
+        uint32_t base = g_state.arrayBase[array_idx] + index * g_state.arrayStride[array_idx];
+        for (int i = 0; i < ncomp; i++) {
+            uint32_t a = base + (uint32_t)sz * i;
+            switch (type) {
+                case VtxAttrType::U8:  out[i] = (float)nwii::runtime::g_mmu->read8(a) / (float)(1 << shift); break;
+                case VtxAttrType::S8:  out[i] = (float)(int8_t)nwii::runtime::g_mmu->read8(a) / (float)(1 << shift); break;
+                case VtxAttrType::U16: out[i] = (float)(uint16_t)nwii::runtime::g_mmu->read16(a) / (float)(1 << shift); break;
+                case VtxAttrType::S16: out[i] = (float)(int16_t)nwii::runtime::g_mmu->read16(a) / (float)(1 << shift); break;
+                default:               out[i] = nwii::runtime::g_mmu->read_f32(a); break;
+            }
+        }
+        return true;
     }
 
     // Byte count of a Direct color attribute, keyed by the GX color format
@@ -310,62 +327,81 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             for (int i = 0; i < vtx_count && parse_ok; i++) {
                 VertexData vtx;
 
+                // Matrix indices (direct u8 each) precede all attributes.
+                {
+                    int midx_bytes = vat.posMatIdx ? 1 : 0;
+                    for (int t = 0; t < 8; t++)
+                        if (vat.texMatIdx[t]) midx_bytes++;
+                    if (midx_bytes) {
+                        if (curr_offset + midx_bytes > fifo_size) { parse_ok = false; break; }
+                        curr_offset += midx_bytes;
+                    }
+                }
+
                 // Position: XY or XYZ per the VAT element flag.
                 vtx.has_pos = (vat.posMask != VtxAttrMask::None);
-                vtx.pos[0] = ReadAttribute(fifo, curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size);
-                vtx.pos[1] = ReadAttribute(fifo, curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size);
-                vtx.pos[2] = vat.posElements
-                    ? ReadAttribute(fifo, curr_offset, vat.posMask, vat.posType, vat.posShift, 0, fifo_size)
-                    : 0.0f;
-                if (curr_offset > fifo_size) { parse_ok = false; break; }
+                if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.posMask, vat.posType,
+                                    vat.posShift, 0, vat.posElements ? 3 : 2, vtx.pos)) {
+                    parse_ok = false; break;
+                }
 
                 if (vat.nrmMask != VtxAttrMask::None) {
                     vtx.has_norm = true;
-                    vtx.norm[0] = ReadAttribute(fifo, curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
-                    vtx.norm[1] = ReadAttribute(fifo, curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
-                    vtx.norm[2] = ReadAttribute(fifo, curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
-                    if (vat.nrmElements) {
-                        // NBT: also consume the binormal + tangent (6 more scalars).
-                        for (int k = 0; k < 6; k++)
-                            ReadAttribute(fifo, curr_offset, vat.nrmMask, vat.nrmType, 0, 1, fifo_size);
+                    // NBT carries binormal + tangent behind the normal (9
+                    // scalars inline, still ONE index when indexed).
+                    float nbt[9];
+                    if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.nrmMask, vat.nrmType,
+                                        0, 1, vat.nrmElements ? 9 : 3, nbt)) {
+                        parse_ok = false; break;
                     }
-                    if (curr_offset > fifo_size) { parse_ok = false; break; }
+                    vtx.norm[0] = nbt[0]; vtx.norm[1] = nbt[1]; vtx.norm[2] = nbt[2];
                 }
 
-                if (vat.clrMask[0] == VtxAttrMask::Direct) {
-                    int clrBytes = DirectColorBytes(vat.clrType[0]);
-                    if (curr_offset + clrBytes > fifo_size) { parse_ok = false; break; }
-                    vtx.has_color = true;
-                    if (clrBytes >= 3) {
-                        vtx.color[0] = fifo[curr_offset + 0] / 255.0f;
-                        vtx.color[1] = fifo[curr_offset + 1] / 255.0f;
-                        vtx.color[2] = fifo[curr_offset + 2] / 255.0f;
-                        vtx.color[3] = (clrBytes == 4) ? (fifo[curr_offset + 3] / 255.0f) : 1.0f;
-                    } else {
-                        // Packed 16-bit color (RGB565/RGBA4): approximate as white.
-                        vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
+                // Both color channels (CLR0 drives rendering, CLR1 is only
+                // consumed — skipping it desyncs the stream).
+                for (int ci = 0; ci < 2 && parse_ok; ci++) {
+                    if (vat.clrMask[ci] == VtxAttrMask::Direct) {
+                        int clrBytes = DirectColorBytes(vat.clrType[ci]);
+                        if (curr_offset + clrBytes > fifo_size) { parse_ok = false; break; }
+                        if (ci == 0) {
+                            vtx.has_color = true;
+                            if (clrBytes >= 3) {
+                                vtx.color[0] = fifo[curr_offset + 0] / 255.0f;
+                                vtx.color[1] = fifo[curr_offset + 1] / 255.0f;
+                                vtx.color[2] = fifo[curr_offset + 2] / 255.0f;
+                                vtx.color[3] = (clrBytes == 4) ? (fifo[curr_offset + 3] / 255.0f) : 1.0f;
+                            } else {
+                                // Packed 16-bit color (RGB565/RGBA4): approximate as white.
+                                vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
+                            }
+                        }
+                        curr_offset += clrBytes;
+                    } else if (vat.clrMask[ci] == VtxAttrMask::Index8) {
+                        if (curr_offset + 1 > fifo_size) { parse_ok = false; break; }
+                        curr_offset += 1;
+                        if (ci == 0) {
+                            vtx.has_color = true;
+                            vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
+                        }
+                    } else if (vat.clrMask[ci] == VtxAttrMask::Index16) {
+                        if (curr_offset + 2 > fifo_size) { parse_ok = false; break; }
+                        curr_offset += 2;
+                        if (ci == 0) {
+                            vtx.has_color = true;
+                            vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
+                        }
                     }
-                    curr_offset += clrBytes;
-                } else if (vat.clrMask[0] == VtxAttrMask::Index8) {
-                    if (curr_offset + 1 > fifo_size) { parse_ok = false; break; }
-                    curr_offset += 1;
-                    vtx.has_color = true;
-                    vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
-                } else if (vat.clrMask[0] == VtxAttrMask::Index16) {
-                    if (curr_offset + 2 > fifo_size) { parse_ok = false; break; }
-                    curr_offset += 2;
-                    vtx.has_color = true;
-                    vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
                 }
+                if (!parse_ok) break;
 
                 for (int t = 0; t < 8 && parse_ok; t++) {
                     if (vat.texMask[t] != VtxAttrMask::None) {
                         vtx.has_tex[t] = true;
-                        vtx.tex[t][0] = ReadAttribute(fifo, curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4 + t, fifo_size);
-                        vtx.tex[t][1] = vat.texElements[t]
-                            ? ReadAttribute(fifo, curr_offset, vat.texMask[t], vat.texType[t], vat.texShift[t], 4 + t, fifo_size)
-                            : 0.0f;
-                        if (curr_offset > fifo_size) { parse_ok = false; break; }
+                        if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.texMask[t],
+                                            vat.texType[t], vat.texShift[t], 4 + t,
+                                            vat.texElements[t] ? 2 : 1, vtx.tex[t])) {
+                            parse_ok = false; break;
+                        }
                     }
                 }
 

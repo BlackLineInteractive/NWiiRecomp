@@ -36,6 +36,27 @@ void ProcessGXFifo() {
     std::vector<nwii::runtime::gx::GXCommand> commands;
     nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
 
+    // Stall detector: a remainder that keeps its size across many parse ticks
+    // means the parser cannot advance (desync or bogus length field).
+    if (std::getenv("NWII_SAMPLE") && !g_hw_fifo.empty()) {
+        static size_t last_size = 0;
+        static int stuck_ticks = 0, dumps = 0;
+        if (g_hw_fifo.size() == last_size) {
+            if (++stuck_ticks == 60 && dumps < 8) {
+                dumps++;
+                stuck_ticks = 0;
+                std::cout << "[GX] stalled remainder " << std::dec
+                          << g_hw_fifo.size() << " bytes, head:" << std::hex;
+                for (size_t i = 0; i < g_hw_fifo.size() && i < 24; i++)
+                    std::cout << " " << (unsigned)g_hw_fifo[i];
+                std::cout << std::dec << "\n";
+            }
+        } else {
+            last_size = g_hw_fifo.size();
+            stuck_ticks = 0;
+        }
+    }
+
     // Parse erases the fully-consumed prefix; a trailing incomplete command is
     // kept for the next chunk (do NOT clear the whole buffer — that splits
     // commands and permanently desyncs the stream). Safety valve: if the
@@ -54,6 +75,17 @@ namespace nwii::runtime {
 
 // Single entry point for every captured command byte. Callers hold g_fifo_mutex.
 static inline void wgp_push(uint8_t b) {
+    // NWII_GXDUMP=path: tee the first 64KB of the raw WGP stream to a file
+    // for offline analysis of parser desyncs.
+    if (const char* path = std::getenv("NWII_GXDUMP")) {
+        static FILE* f = fopen(path, "wb");
+        static size_t n = 0;
+        if (f && n < 65536) {
+            fputc(b, f);
+            fflush(f);
+            ++n;
+        }
+    }
     g_hw_fifo.push_back(b);
 }
 

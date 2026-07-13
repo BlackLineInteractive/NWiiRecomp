@@ -926,12 +926,10 @@ bool process_pending_callbacks(CPUContext &ctx) {
 
   if ((ctx.inst_count % 20000000) == 0) {
       std::cout << "[Heartbeat] PC: 0x" << std::hex << ctx.pc << " LR: 0x" << ctx.lr
-                << " intmr=0x" << nwii::runtime::hw::pi_intmr
-                << " intsr=0x" << nwii::runtime::hw::pi_intsr
+                << " intmr=0x" << nwii::runtime::hw::pi_intmr.load()
+                << " intsr=0x" << nwii::runtime::hw::pi_intsr.load()
                 << " msr=0x" << ctx.msr
-                << " dec_h=0x" << ctx.mmu.read32(0x80003000 + 8 * 4)
-                << std::dec << "\n";
-      // TEMP: dump the OS exception handler table (0x80003000, 16 slots)
+                << " dec_h=0x" << ctx.mmu.read32(0x80003020) << "\n";
       {
           std::cout << "  [ExcTable]";
           for (int i = 0; i < 16; i++) {
@@ -1326,15 +1324,6 @@ bool process_pending_callbacks(CPUContext &ctx) {
               ctx.pc = s_dispatch_addr;
 
               if (std::getenv("NWII_SAMPLE")) {
-                  static int count = 0;
-                  if (count++ < 20)
-                      std::cout << "[HLE PI] JUMP __OSDispatchInterrupt pi_intsr=0x" << std::hex << nwii::runtime::hw::pi_intsr.load() << " pi_intmr=0x" << nwii::runtime::hw::pi_intmr.load() << std::dec << "\n";
-              }
-              if (std::getenv("NWII_SAMPLE")) {
-                  std::cout << "[HLE PI] JUMP __OSDispatchInterrupt r13=0x" << std::hex << ctx.gpr[13] << std::dec << "\n";
-              }
-
-              if (std::getenv("NWII_SAMPLE")) {
                   static uint32_t dc = 0;
                   if ((dc++ % 1000) == 0)
                       std::cout << "[HLE PI] -> __OSDispatchInterrupt #" << std::dec
@@ -1357,7 +1346,9 @@ bool process_pending_callbacks(CPUContext &ctx) {
               else if (active_ints & 0x00000004) { os_intr = 21; bit_to_clear = 0x00000004; } // DI
               else if (active_ints & 0x00000008) { os_intr = 20; bit_to_clear = 0x00000008; } // SI
               else if (active_ints & 0x00000010) { os_intr =  9; bit_to_clear = 0x00000010; } // EXI 0
-              else if (active_ints & 0x00000040) { os_intr =  7; bit_to_clear = 0x00000040; } // DSP
+              // PI cause bit 6 covers the whole DSP subsystem; the DSPCSR
+              // decides whether it is AID (5), ARAM (6) or mailbox (7).
+              else if (active_ints & 0x00000040) { os_intr = nwii::runtime::hw::dsp_pending_os_interrupt(); bit_to_clear = 0x00000040; } // DSP/ARAM/AID
               else if (active_ints & 0x00000020) { os_intr =  8; bit_to_clear = 0x00000020; } // AI streaming
               else if (active_ints & 0x00000400) { os_intr = 19; bit_to_clear = 0x00000400; } // PE_FINISH
               else if (active_ints & 0x00000200) { os_intr = 18; bit_to_clear = 0x00000200; } // PE_TOKEN

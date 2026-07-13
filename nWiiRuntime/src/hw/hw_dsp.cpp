@@ -18,6 +18,13 @@ static uint16_t dsp_mbox_dsp_lo = 0;
 static uint32_t ar_mmaddr = 0;
 static uint32_t ar_araddr = 0;
 static uint32_t ar_cnt = 0;
+// DSPCSR bit layout (Dolphin UDSPControl): RES=0x0001, PIINT=0x0002,
+// HALT=0x0004(HW)/0x0800(SDK view kept as before), and three interrupt
+// pairs where the mask sits directly left of the status bit:
+//   AID  (audio DMA done) status 0x0008 / mask 0x0010
+//   ARAM (ARAM DMA done)  status 0x0020 / mask 0x0040
+//   DSP  (mailbox)        status 0x0080 / mask 0x0100
+static constexpr uint16_t CSR_INT_BITS = 0x00A8; // AID|ARAM|DSP statuses
 static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
 static uint16_t ar_size = 0;    // 0xCC005012 AR_INFO/AR_SIZE
 static uint16_t ar_mode = 0;    // 0xCC005016 AR_MODE
@@ -25,6 +32,29 @@ static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 // Countdown to the deferred DSP-mail acknowledge (see the mail write
 // handler); models the milliseconds a real DSP spends on an audio frame.
 int g_dsp_mail_delay = 0;
+
+// PI cause bit 6 (0x40) follows the OR of (status & its mask) across the
+// three DSP subsystem sources — Dolphin's (csr >> 1) & csr trick.
+static void dsp_update_pi() {
+    if ((dsp_control >> 1) & dsp_control & CSR_INT_BITS)
+        trigger_pi_interrupt(0x40);
+    else
+        clear_pi_interrupt(0x40);
+}
+
+// Which __OSInterruptTable index the pending DSPCSR sub-cause maps to.
+// The guest __OSDispatchInterrupt fans PI cause bit 6 out into OS
+// interrupts 5 (DSP_AI), 6 (DSP_ARAM), 7 (DSP_DSP mailbox) by reading
+// DSPCSR; our leaf dispatch must do the same or an ARAM completion would
+// invoke __DSPHandler, which treats any stale mail as a task resume and
+// calls an unregistered callback (observed WILD JUMP to 0x81800000).
+int dsp_pending_os_interrupt() {
+    uint16_t pending = (dsp_control >> 1) & dsp_control & CSR_INT_BITS;
+    if (pending & 0x0080) return 7; // DSP mailbox
+    if (pending & 0x0020) return 6; // ARAM DMA
+    if (pending & 0x0008) return 5; // AID (audio DMA)
+    return 7;
+}
 
 // Called from the backedge callback pump: completes a pending mail ack.
 void dsp_tick() {
@@ -34,9 +64,8 @@ void dsp_tick() {
         // which is what AX init blocks on. (0xDCD10002 is the yield path.)
         dsp_mbox_dsp_hi = 0xDCD1;
         dsp_mbox_dsp_lo = 0x0000;
-        dsp_control |= 0x0008;
-        if (dsp_control & 0x0010)
-            trigger_pi_interrupt(0x40);
+        dsp_control |= 0x0080;
+        dsp_update_pi();
     }
 }
 
@@ -50,11 +79,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 uint16_t val = dsp_mbox_dsp_lo;
                 dsp_mbox_dsp_hi &= ~0x8000;
                 // Mail consumed: drop the mailbox interrupt status with it.
-                // Leaving 0x08 set let any later CSR write (mask bits) re-raise
+                // Leaving it set let any later CSR write (mask bits) re-raise
                 // PI 0x40 with an empty mailbox, parking __DSPHandler forever
                 // in its entry mail-poll with EE off.
-                dsp_control &= ~0x0008;
-                clear_pi_interrupt(0x40);
+                dsp_control &= ~0x0080;
+                dsp_update_pi();
                 if (std::getenv("NWII_DSPTRACE"))
                     std::cout << "[DSPm] mail read lo=0x" << std::hex << val
                               << " (hi was 0x" << (dsp_mbox_dsp_hi | 0x8000)
@@ -81,13 +110,13 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 // Once the game unmasks the DSP-mailbox interrupt it has a
                 // task registered and __DSPHandler's callback slots are live
                 // (the AX init loop spins on a flag that only the handler's
-                // 0xDCD10002 "resumed" branch sets). Acknowledge each CPU
-                // mail with that resume mail, but AFTER a delay: an instant
-                // ack made the audio task submit the next frame immediately,
-                // an unbounded ping-pong that starved the rest of the game.
-                // Before the mask is set (boot probes) stay silent: raising
-                // the interrupt with no task installed jumped to garbage.
-                if (dsp_control & 0x0010)
+                // "resumed" branch sets). Acknowledge each CPU mail with the
+                // resume mail, but AFTER a delay: an instant ack made the
+                // audio task submit the next frame immediately, an unbounded
+                // ping-pong that starved the rest of the game. Before the
+                // mask is set (boot probes) stay silent: raising the
+                // interrupt with no task installed jumped to garbage.
+                if (dsp_control & 0x0100)
                     g_dsp_mail_delay = 15000;
                 if (std::getenv("NWII_DSPTRACE"))
                     std::cout << "[DSPm] cpu mail write @" << std::hex
@@ -101,12 +130,13 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     std::cout << "[DSPm] csr write val=0x" << std::hex
                               << (val & 0xFFFF) << " csr=0x" << dsp_control
                               << std::dec << "\n";
-                if (!(val16 & 0x0008)) dsp_control &= ~0x0008;
-                if (!(val16 & 0x0020)) {
-                    dsp_control &= ~0x0020;
-                    clear_pi_interrupt(0x80); // Clear PI_INT_ARAM
-                }
-                if (!(val16 & 0x0080)) dsp_control &= ~0x0080;
+                // Interrupt statuses are write-1-to-clear; everything else
+                // (masks, halt, init flags) comes from the written value.
+                // RES (0x0001) self-clears and is never stored.
+                uint16_t kept_ints = dsp_control & CSR_INT_BITS & ~val16;
+                bool was_halted = (dsp_control & 0x0800) != 0;
+                bool is_halted = (val16 & 0x0800) != 0;
+                dsp_control = kept_ints | (val16 & ~(CSR_INT_BITS | 0x0001));
                 // DSP reset/boot: post the 0xDCD10000 "init done" mail so the
                 // game can POLL for it. We deliberately do NOT raise the DSP
                 // mail interrupt here: __DSPHandler would dispatch the current
@@ -114,27 +144,11 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 // uploads a real task (observed: NFS HP2 jumped to a garbage
                 // 0x81800000 callback). Mail-driven audio comes online once a
                 // task is registered; boot only needs the polled ack.
-                if (val16 & 0x0001) {
+                if ((val16 & 0x0001) || (was_halted && !is_halted)) {
                     dsp_mbox_dsp_hi = 0xDCD1;
                     dsp_mbox_dsp_lo = 0x0000;
                 }
-                bool was_halted = (dsp_control & 0x0800) != 0;
-                bool is_halted = (val16 & 0x0800) != 0;
-                dsp_control = (dsp_control & 0x00A8) | (val16 & ~0x00A9);
-                if (was_halted && !is_halted) {
-                    dsp_mbox_dsp_hi = 0xDCD1;
-                    dsp_mbox_dsp_lo = 0x0000;
-                }
-                // Only the DSP-mailbox interrupt (status 0x08 & mask 0x10)
-                // drives __DSPHandler. Do NOT raise it for ARAM-DMA completion
-                // (status 0x20 & mask 0x40): our ARAM DMA finishes synchronously
-                // and the SDK polls AR_DMA_CNT for it. Raising it invokes
-                // __DSPHandler spuriously, which consumes the fake 0xDCD10000
-                // boot mail as a DSP-task "resume" and calls an unregistered
-                // task callback (garbage 0x81800000) -> WILD JUMP.
-                bool pi_int = (dsp_control & 0x0008) && (dsp_control & 0x0010);
-                if (pi_int) trigger_pi_interrupt(0x40);
-                else clear_pi_interrupt(0x40);
+                dsp_update_pi();
             } else if (addr == 0xCC005012) {
                 ar_size = val & 0xFFFF;
             } else if (addr == 0xCC005016) {
@@ -156,33 +170,29 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
                     uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
                     uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
-                    
-                    if (mm <= 0x30AC && mm + count > 0x30AC) {
-                        std::cout << "[DSP DMA] Corrupting IPC Handler! dir=" << dir << " mm=0x" << std::hex << mm << " ar_a=0x" << ar_a << " count=0x" << count << std::dec << "\n";
-                    }
-
                     if (mm < mem1_size && ar_a < mem2_size) {
                         uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
                         if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, copy_count);
                         else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
                     }
                 }
+                // DMA completes synchronously; raise the ARAM-done status.
+                // With the mask enabled this asserts PI 0x40, which the leaf
+                // dispatch routes to OS interrupt 6 (__ARHandler / ARQ), not
+                // to __DSPHandler.
                 ar_cnt = 0;
                 dsp_control |= 0x0020;
-                if (dsp_control & 0x0040) {
-                    trigger_pi_interrupt(0x80); // PI_INT_ARAM is 0x80
-                }
+                dsp_update_pi();
             }
         }
     );
 }}
 
-} // namespace nwii::runtime::hw
-namespace nwii::runtime::hw {
 void dsp_trigger_interrupt() {
-    if (dsp_control & 0x0010) {
-        dsp_control |= 0x0008;
+    if (dsp_control & 0x0100) {
+        dsp_control |= 0x0080;
         trigger_pi_interrupt(0x40);
     }
 }
-}
+
+} // namespace nwii::runtime::hw

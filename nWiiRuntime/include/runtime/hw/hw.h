@@ -25,6 +25,9 @@ void vi_trigger_interrupt();
 void ipc_post_reply(uint32_t req_addr); // complete a deferred (IPC_NO_REPLY) request
 void ai_update();
 void dsp_trigger_interrupt();
+// Maps the pending DSPCSR sub-cause to its __OSInterruptTable index:
+// 5 = AID (audio DMA), 6 = ARAM DMA, 7 = DSP mailbox.
+int dsp_pending_os_interrupt();
 void di_tick();  // counts down g_di_interrupt_delay, raises the DI IRQ at zero
 void dsp_tick(); // counts down the deferred DSP-mail ack, raises PI 0x40
 void pe_signal_token(uint32_t token, bool raise_interrupt); // GX stream saw BP 0x47/0x48
