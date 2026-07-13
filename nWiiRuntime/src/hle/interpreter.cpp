@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iomanip>
 #include <bit>
+#include <cmath>
 
 // PPC750 integer-subset interpreter. Used as a dispatcher fallback for
 // code that does not exist in the DOL image: routines the game copies
@@ -373,6 +374,20 @@ bool interpret_one(CPUContext& ctx) {
             for (int i = 0; i < 32; i += 4) ctx.mmu.write32(ea + i, 0);
             break;
         }
+        // Indexed FP loads/stores (overlay code uses these heavily)
+        case 535: ctx.fpr[rD] = ctx.mmu.read_f32(ea_ra0(0) + ctx.gpr[rB]); break; // lfsx
+        case 567: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f32(ea); ctx.gpr[rA] = ea; break; } // lfsux
+        case 599: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(0) + ctx.gpr[rB]); break; // lfdx
+        case 631: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f64(ea); ctx.gpr[rA] = ea; break; } // lfdux
+        case 663: ctx.mmu.write_f32(ea_ra0(0) + ctx.gpr[rB], (float)ctx.fpr[rD]); break; // stfsx
+        case 695: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f32(ea, (float)ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } // stfsux
+        case 727: ctx.mmu.write_f64(ea_ra0(0) + ctx.gpr[rB], ctx.fpr[rD]); break; // stfdx
+        case 759: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f64(ea, ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } // stfdux
+        case 983: { // stfiwx: store the low 32 bits of the FPR's raw image
+            uint64_t bits; std::memcpy(&bits, &ctx.fpr[rD], 8);
+            ctx.mmu.write32(ea_ra0(0) + ctx.gpr[rB], (uint32_t)bits);
+            break;
+        }
         // Cache/sync: no-ops in HLE
         case 54: case 86: case 246: case 470: case 598: case 982: case 854:
             break;
@@ -432,6 +447,154 @@ bool interpret_one(CPUContext& ctx) {
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.mmu.write_f64(ea, ctx.fpr[rD]);
         ctx.gpr[rA] = ea;
+        break;
+    }
+    // Paired-single quantized load/store (D-form: 12-bit displacement,
+    // W bit 15, GQR index bits 12-14).
+    case 56: case 57: case 60: case 61: {
+        int32_t d = (int32_t)(insn << 20) >> 20; // sign-extend low 12 bits
+        uint32_t W = (insn >> 15) & 1;
+        uint32_t I = (insn >> 12) & 7;
+        uint32_t ea = (op == 57 || op == 61) ? ctx.gpr[rA] + d : ea_ra0(d);
+        if (op == 56 || op == 57) ctx.psq_load(rD, ea, W, I);
+        else                      ctx.psq_store(rD, ea, W, I);
+        if (op == 57 || op == 61) ctx.gpr[rA] = ea;
+        break;
+    }
+    case 59: { // single-precision FP arithmetic (A-form)
+        uint32_t xo5 = (insn >> 1) & 0x1F;
+        uint32_t fC = (insn >> 6) & 0x1F;
+        double a = ctx.fpr[rA], b = ctx.fpr[rB], c = ctx.fpr[fC];
+        switch (xo5) {
+        case 18: ctx.fpr[rD] = (float)(a / b); break;                  // fdivs
+        case 20: ctx.fpr[rD] = (float)(a - b); break;                  // fsubs
+        case 21: ctx.fpr[rD] = (float)(a + b); break;                  // fadds
+        case 22: ctx.fpr[rD] = (float)std::sqrt(b); break;             // fsqrts
+        case 24: ctx.fpr[rD] = (float)(1.0 / b); break;                // fres
+        case 25: ctx.fpr[rD] = (float)(a * c); break;                  // fmuls
+        case 28: ctx.fpr[rD] = (float)std::fma(a, c, -b); break;       // fmsubs
+        case 29: ctx.fpr[rD] = (float)std::fma(a, c, b); break;        // fmadds
+        case 30: ctx.fpr[rD] = (float)-std::fma(a, c, -b); break;      // fnmsubs
+        case 31: ctx.fpr[rD] = (float)-std::fma(a, c, b); break;       // fnmadds
+        default:
+            std::cerr << "[Interp] Unhandled op59 xo=" << xo5 << " at 0x"
+                      << std::hex << pc << std::dec << " (nop)\n";
+            break;
+        }
+        break;
+    }
+    case 63: { // double-precision FP arithmetic / moves / compares
+        uint32_t xo5 = (insn >> 1) & 0x1F;
+        uint32_t xo10 = (insn >> 1) & 0x3FF;
+        uint32_t fC = (insn >> 6) & 0x1F;
+        double a = ctx.fpr[rA], b = ctx.fpr[rB], c = ctx.fpr[fC];
+        // A-form arithmetic first (its xo is only 5 bits wide).
+        bool aform = true;
+        switch (xo5) {
+        case 18: ctx.fpr[rD] = a / b; break;                           // fdiv
+        case 20: ctx.fpr[rD] = a - b; break;                           // fsub
+        case 21: ctx.fpr[rD] = a + b; break;                           // fadd
+        case 22: ctx.fpr[rD] = std::sqrt(b); break;                    // fsqrt
+        case 25: ctx.fpr[rD] = a * c; break;                           // fmul
+        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(b); break;              // frsqrte
+        case 28: ctx.fpr[rD] = std::fma(a, c, -b); break;              // fmsub
+        case 29: ctx.fpr[rD] = std::fma(a, c, b); break;               // fmadd
+        case 30: ctx.fpr[rD] = -std::fma(a, c, -b); break;             // fnmsub
+        case 31: ctx.fpr[rD] = -std::fma(a, c, b); break;              // fnmadd
+        case 23: ctx.fpr[rD] = (a >= -0.0) ? c : b; break;             // fsel
+        default: aform = false; break;
+        }
+        if (aform) break;
+        switch (xo10) {
+        case 0: case 32: { // fcmpu / fcmpo
+            uint32_t crf = rD >> 2;
+            bool un = std::isnan(a) || std::isnan(b);
+            ctx.cr[crf].lt = !un && a < b;
+            ctx.cr[crf].gt = !un && a > b;
+            ctx.cr[crf].eq = !un && a == b;
+            ctx.cr[crf].so = un;
+            break;
+        }
+        case 12: ctx.fpr[rD] = (float)b; break;                        // frsp
+        case 14: { // fctiw: convert to int32, current rounding
+            uint64_t bits = (uint32_t)(int32_t)std::nearbyint(b);
+            std::memcpy(&ctx.fpr[rD], &bits, 8);
+            break;
+        }
+        case 15: { // fctiwz: convert to int32 toward zero
+            uint64_t bits = (uint32_t)(int32_t)b;
+            std::memcpy(&ctx.fpr[rD], &bits, 8);
+            break;
+        }
+        case 40:  ctx.fpr[rD] = -b; break;                             // fneg
+        case 72:  ctx.fpr[rD] = b; break;                              // fmr
+        case 136: ctx.fpr[rD] = -std::fabs(b); break;                  // fnabs
+        case 264: ctx.fpr[rD] = std::fabs(b); break;                   // fabs
+        case 38: case 70: case 134: case 711: break; // mtfsb1/mtfsb0/mtfsfi/mtfsf: FPSCR ignored
+        case 583: { uint64_t z = ctx.fpscr; std::memcpy(&ctx.fpr[rD], &z, 8); break; } // mffs
+        default:
+            std::cerr << "[Interp] Unhandled op63 xo=" << xo10 << " at 0x"
+                      << std::hex << pc << std::dec << " (nop)\n";
+            break;
+        }
+        break;
+    }
+    case 4: { // Gekko paired singles
+        uint32_t xo5 = (insn >> 1) & 0x1F;
+        uint32_t xo6 = (insn >> 1) & 0x3F;
+        uint32_t xo10 = (insn >> 1) & 0x3FF;
+        uint32_t fC = (insn >> 6) & 0x1F;
+        // Quantized indexed load/store use a 6-bit xo (W bit 10, GQR bits 7-9).
+        if (xo6 == 6 || xo6 == 7 || xo6 == 38 || xo6 == 39) {
+            uint32_t W = (insn >> 10) & 1;
+            uint32_t I = (insn >> 7) & 7;
+            uint32_t ea = (xo6 >= 38 ? ctx.gpr[rA] : (rA ? ctx.gpr[rA] : 0)) + ctx.gpr[rB];
+            if (xo6 == 6 || xo6 == 38) ctx.psq_load(rD, ea, W, I);
+            else                       ctx.psq_store(rD, ea, W, I);
+            if (xo6 >= 38) ctx.gpr[rA] = ea;
+            break;
+        }
+        bool aform = true;
+        switch (xo5) {
+        case 10: ctx.ps_sum0(rD, rA, fC, rB); break;
+        case 11: ctx.ps_sum1(rD, rA, fC, rB); break;
+        case 12: ctx.ps_muls0(rD, rA, fC); break;
+        case 13: ctx.ps_muls1(rD, rA, fC); break;
+        case 14: ctx.ps_madds0(rD, rA, fC, rB); break;
+        case 15: ctx.ps_madds1(rD, rA, fC, rB); break;
+        case 18: ctx.ps_div(rD, rA, rB); break;
+        case 20: ctx.ps_sub(rD, rA, rB); break;
+        case 21: ctx.ps_add(rD, rA, rB); break;
+        case 23: ctx.ps_sel(rD, rA, fC, rB); break;
+        case 24: ctx.fpr[rD] = 1.0 / ctx.fpr[rB]; ctx.ps1[rD] = 1.0 / ctx.ps1[rB]; break; // ps_res
+        case 25: ctx.ps_mul(rD, rA, fC); break;
+        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(ctx.fpr[rB]); ctx.ps1[rD] = 1.0 / std::sqrt(ctx.ps1[rB]); break; // ps_rsqrte
+        case 28: ctx.ps_msub(rD, rA, fC, rB); break;
+        case 29: ctx.ps_madd(rD, rA, fC, rB); break;
+        case 30: ctx.ps_nmsub(rD, rA, fC, rB); break;
+        case 31: ctx.ps_nmadd(rD, rA, fC, rB); break;
+        default: aform = false; break;
+        }
+        if (aform) break;
+        switch (xo10) {
+        case 0:   ctx.ps_cmpu0(rD >> 2, rA, rB); break;
+        case 32:  ctx.ps_cmpo0(rD >> 2, rA, rB); break;
+        case 64:  ctx.ps_cmpu1(rD >> 2, rA, rB); break;
+        case 96:  ctx.ps_cmpo1(rD >> 2, rA, rB); break;
+        case 40:  ctx.ps_neg(rD, rB); break;
+        case 72:  ctx.ps_mr(rD, rB); break;
+        case 136: ctx.ps_nabs(rD, rB); break;
+        case 264: ctx.ps_abs(rD, rB); break;
+        case 528: ctx.ps_merge00(rD, rA, rB); break;
+        case 560: ctx.ps_merge01(rD, rA, rB); break;
+        case 592: ctx.ps_merge10(rD, rA, rB); break;
+        case 624: ctx.ps_merge11(rD, rA, rB); break;
+        case 1014: break; // dcbz_l: locked-cache line zero, no-op in HLE
+        default:
+            std::cerr << "[Interp] Unhandled op4 xo=" << xo10 << " at 0x"
+                      << std::hex << pc << std::dec << " (nop)\n";
+            break;
+        }
         break;
     }
     default:

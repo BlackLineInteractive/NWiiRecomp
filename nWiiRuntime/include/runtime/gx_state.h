@@ -39,6 +39,7 @@ struct TEVStage {
 };
 
 struct TexStage {
+  uint32_t base_addr;
   uint32_t width;
   uint32_t height;
   uint8_t format;
@@ -67,7 +68,7 @@ struct GXState {
   uint32_t blendMode;
 
   // XF (Transform) State
-  float projection[6];
+  float projection[7];
   float posMatrices[256];
 };
 

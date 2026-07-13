@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <raylib.h>
+#include <rlgl.h>
 #include <thread>
 #include <vector>
 
@@ -433,17 +434,39 @@ int main(int argc, char **argv) {
     }
   } else {
     // Main Raylib/GPU Thread Loop
+    RenderTexture2D target = LoadRenderTexture(640, 480);
+    BeginTextureMode(target);
+    ClearBackground(BLANK); // Clear once at startup
+    EndTextureMode();
+    
     while (!WindowShouldClose() && ctx->is_running) {
       // Poll Inputs exactly once per frame
-      nwii::runtime::input::InputManager::get().update();
-
-      BeginDrawing();
-      ClearBackground(BLACK);
-
+      
+      BeginTextureMode(target);
       extern void ProcessGXFifo();
       ProcessGXFifo();
-
+      EndTextureMode();
+      
+      BeginDrawing();
+      ClearBackground(DARKBLUE);
+      rlDisableColorBlend();
+      DrawTexturePro(target.texture, 
+                     { 0, 0, (float)target.texture.width, -(float)target.texture.height }, 
+                     { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() }, 
+                     { 0, 0 }, 0.0f, WHITE);
+      rlEnableColorBlend();
       EndDrawing();
+
+      // NWII_SCREENSHOT=prefix: dump the framebuffer to <prefix>_<frame>.png
+      // every ~5s so a windowed run can be inspected without screen access.
+      if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
+        static int shot_frame = 0;
+        if ((++shot_frame % 300) == 0) {
+          std::string p = std::string(shot_pfx) + "_" +
+                          std::to_string(shot_frame) + ".png";
+          TakeScreenshot(p.c_str());
+        }
+      }
 
       // Trigger VBlank interrupt to drive the OS thread queue
       extern void ProcessGXFifo();

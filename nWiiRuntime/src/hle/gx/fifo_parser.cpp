@@ -48,12 +48,19 @@ namespace {
             g_state.tevStages[stage].colorScale = (val >> 20) & 0x3;
             g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
             g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
-        } else if (reg >= 0x80 && reg <= 0x8F) {
-            int idx = reg - 0x80;
+        } else if ((reg >= 0x88 && reg <= 0x8B) || (reg >= 0xA8 && reg <= 0xAB)) {
+            // TEX_IMAGE0 (0x88) .. TEX_IMAGE3 (0x8B) -> Texture Dimensions & Format
+            int idx = (reg >= 0x88 && reg <= 0x8B) ? (reg - 0x88) : (reg - 0xA8 + 4);
             if (idx < (int)g_state.texStages.size()) {
                 g_state.texStages[idx].width  = ((val >> 10) & 0x3FF) + 1;
                 g_state.texStages[idx].height = ((val >>  0) & 0x3FF) + 1;
                 g_state.texStages[idx].format = (val >> 20) & 0xF;
+            }
+        } else if ((reg >= 0x94 && reg <= 0x97) || (reg >= 0xB4 && reg <= 0xB7)) {
+            // TEX_IMAGE3 (0x94) .. TEX_IMAGE3_3 (0x97) -> Texture Base Address
+            int idx = (reg >= 0x94 && reg <= 0x97) ? (reg - 0x94) : (reg - 0xB4 + 4);
+            if (idx < (int)g_state.texStages.size()) {
+                g_state.texStages[idx].base_addr = (val & 0xFFFFFF) << 5;
             }
         } else if (reg == 0x40) {
             g_state.zMode.enable  = (val >> 0) & 1;
@@ -261,6 +268,11 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
         } else if (cmd == 0x20 || cmd == 0x28 || cmd == 0x30 || cmd == 0x38) {
             // LOAD_INDX A-D: 1 cmd + 4 payload
             if (offset + 5 > fifo_size) break;
+            uint32_t val = Read32(fifo, offset + 1);
+            static int indx_print = 0;
+            if (indx_print++ < 20) {
+                printf("LOAD_INDX: cmd=0x%02X, val=0x%08X\n", cmd, val);
+            }
             offset += 5;
         } else if (cmd == 0x61) {
             // BP register load: 1 cmd + 1 reg + 3 value
@@ -300,6 +312,25 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             GXCommand c;
             c.type = GXCommandType::XFRegister;
             c.length = length;
+            c.reg = (fifo[offset + 3] << 8) | fifo[offset + 4];
+            
+            static int xf_print_proj = 0;
+            static int xf_print_mtx = 0;
+            if (c.reg >= 0x1020 && c.reg <= 0x1027 && xf_print_proj++ < 5) {
+                printf("XF_REG_PROJ: len=%d, reg=0x%04X\n", length, c.reg);
+            }
+            if (c.length > 0 && xf_print_mtx++ < 5) {
+                printf("XF_REG_MTX: len=%d, reg=0x%04X\n", length, c.reg);
+            }
+            
+            // Read payload (length+1) * 4 bytes as floats
+            int num_floats = length + 1;
+            c.payload.resize(num_floats);
+            for (int i = 0; i < num_floats; ++i) {
+                uint32_t val = Read32(fifo, offset + 5 + (i * 4));
+                std::memcpy(&c.payload[i], &val, 4);
+            }
+            
             commands.push_back(c);
 
             offset += total_size;
@@ -329,13 +360,20 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
 
                 // Matrix indices (direct u8 each) precede all attributes.
                 {
-                    int midx_bytes = vat.posMatIdx ? 1 : 0;
-                    for (int t = 0; t < 8; t++)
-                        if (vat.texMatIdx[t]) midx_bytes++;
-                    if (midx_bytes) {
-                        if (curr_offset + midx_bytes > fifo_size) { parse_ok = false; break; }
-                        curr_offset += midx_bytes;
+                    int midx_offset = 0;
+                    if (vat.posMatIdx) {
+                        if (curr_offset + midx_offset + 1 > fifo_size) { parse_ok = false; break; }
+                        vtx.posMtxIdx = fifo[curr_offset + midx_offset];
+                        midx_offset++;
                     }
+                    for (int t = 0; t < 8; t++) {
+                        if (vat.texMatIdx[t]) {
+                            if (curr_offset + midx_offset + 1 > fifo_size) { parse_ok = false; break; }
+                            vtx.texMtxIdx[t] = fifo[curr_offset + midx_offset];
+                            midx_offset++;
+                        }
+                    }
+                    curr_offset += midx_offset;
                 }
 
                 // Position: XY or XYZ per the VAT element flag.

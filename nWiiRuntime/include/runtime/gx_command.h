@@ -22,13 +22,17 @@ struct VertexData {
     bool has_norm = false;
     bool has_color = false;
     bool has_tex[8] = {false};
+    
+    // Matrix Indices
+    uint8_t posMtxIdx = 0;
+    uint8_t texMtxIdx[8] = {0};
 };
 
 struct GXCommand {
     GXCommandType type;
     
     // For BP, CP registers
-    uint8_t reg;
+    uint16_t reg;
     uint32_t val;
     
     // For XF registers
@@ -37,6 +41,9 @@ struct GXCommand {
     // For Draw Primitive
     int gl_mode;
     std::vector<VertexData> vertices;
+    
+    // For payload data like XF matrices
+    std::vector<float> payload;
 };
 
 } // namespace nwii::runtime::gx

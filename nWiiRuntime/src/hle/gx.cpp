@@ -67,8 +67,9 @@ void ProcessGXFifo() {
         g_hw_fifo.clear();
 
     // Headless runs still parse (PE signals, GX state) but have no GL context.
-    if (IsWindowReady())
+    if (IsWindowReady()) {
         nwii::runtime::gx::Renderer::Render(commands);
+    }
 }
 
 namespace nwii::runtime {

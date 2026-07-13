@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a> 
+  <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a>
   <br><br>
   <a href="https://discord.gg/wp7zdxyqT">
     <img src="https://img.shields.io/badge/Discord-NWiiRecomp-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="NWiiRecomp Discord"/>
@@ -29,7 +29,7 @@
 NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) and Wii U (`.rpx`, `.rpl`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
 
 > **Note:** The recompiler and runtime are designed to be **universal**. We have tested the architecture on radically different games (e.g., *Need For Speed: Hot Pursuit 2*, *Mario Party 7*, and *Silent Hill: Shattered Memories*). The fact that these fundamentally different engines yield identical, stable hardware behavior and 0 crashes confirms the universality of the core emulator design.
-> 
+>
 > **Latest Update:** Both *Need For Speed* and *Mario Party 7* (GameCube) successfully boot, stream from DVD, and generate GX display lists!
 
 ---
@@ -108,6 +108,10 @@ NWiiRecomp/
 - Basic memory map view
 - **Settings & Config Integration**: Direct integration with `recomp_config.toml` to manage paths cleanly.
 - **Thematic Themes**: Includes "Nintendo" theme (GameCube Indigo / Wii aesthetic) for a polished user experience.
+
+---
+
+> **A Note on Development:** To ensure maximum code quality and preserve the integrity of the architecture, AI is used **exclusively** for generating commit message titles and translating code comments to English—nothing more. All core reverse-engineering, recompilation logic, and architectural design are entirely human-driven.
 
 ---
 
