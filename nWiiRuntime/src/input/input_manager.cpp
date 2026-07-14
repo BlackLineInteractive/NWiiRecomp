@@ -1,5 +1,4 @@
 #include "input/input_manager.h"
-#include <raylib.h>
 #include <iostream>
 #include <algorithm>
 
@@ -32,10 +31,7 @@ void InputManager::set_mode(InputMode mode) {
 void InputManager::update() {
     // Check for hotkeys to swap modes (kept for legacy/debugging if needed, 
     // but actual input mapping depends on the sources now)
-    if (IsKeyPressed(KEY_F1)) set_mode(InputMode::GamepadClassic);
-    if (IsKeyPressed(KEY_F2)) set_mode(InputMode::GamepadWiimote);
-    if (IsKeyPressed(KEY_F3)) set_mode(InputMode::MouseKeyboard);
-    if (IsKeyPressed(KEY_F4)) set_mode(InputMode::Remote);
+    // Removed legacy raylib hotkey polling
 
     // Reset state before polling
     for (int i = 0; i < 4; ++i) {

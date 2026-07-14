@@ -1,3 +1,4 @@
+#include "runtime/raylib_stub.h"
 #pragma once
 
 #include "runtime/cpu_context.h"

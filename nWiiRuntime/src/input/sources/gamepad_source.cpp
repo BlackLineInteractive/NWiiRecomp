@@ -1,38 +1,42 @@
 #include "gamepad_source.h"
 #include "runtime/config.h"
-#include <raylib.h>
+#include <SDL.h>
+#include <cmath>
 
 namespace nwii::runtime::input {
 
-// Modes (config [input] mode):
-//   2 = plain gamepad: buttons/sticks only, no pointer emulation
-//   3 = gamepad + pointer assist: right stick (or pad gyro when the
-//       driver exposes it as extra axes) nudges the IR pointer
-//   4 = full tilt: gyro/extra axes steer the pointer directly with
-//       gyro_sensitivity; falls back to right stick if no gyro
 void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
     auto& cfg = nwii::runtime::Config::get();
     int mode = cfg.input_mode;
     bool want_pointer = (mode == 3 || mode == 4);
 
     for (int i = 0; i < 4; ++i) {
-        if (!IsGamepadAvailable(i))
+        if (!SDL_IsGameController(i))
             continue;
+            
+        SDL_GameController* controller = SDL_GameControllerOpen(i);
+        if (!controller) continue;
+
         pads[i].err = 0;  // connected
         motes[i].err = 0; // connected
 
         // Pointer emulation from stick or gyro
         if (want_pointer) {
             float dx = 0.0f, dy = 0.0f;
-            int axes = GetGamepadAxisCount(i);
-            // Some drivers expose gyro/accelerometer as axes 6+; use them
-            // when present, otherwise the right stick.
-            if (axes > 6) {
-                dx = GetGamepadAxisMovement(i, 6) * cfg.gyro_sensitivity;
-                dy = GetGamepadAxisMovement(i, 7) * cfg.gyro_sensitivity;
+            
+            if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO)) {
+                SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE);
+                float data[3];
+                if (SDL_GameControllerGetSensorData(controller, SDL_SENSOR_GYRO, data, 3) == 0) {
+                    dx = data[0] * cfg.gyro_sensitivity;
+                    dy = data[1] * cfg.gyro_sensitivity;
+                }
             } else {
-                dx = GetGamepadAxisMovement(i, GAMEPAD_AXIS_RIGHT_X);
-                dy = GetGamepadAxisMovement(i, GAMEPAD_AXIS_RIGHT_Y);
+                int rx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX);
+                int ry = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY);
+                // Apply deadzone and scale
+                if (std::abs(rx) > 8000) dx = (rx / 32767.0f);
+                if (std::abs(ry) > 8000) dy = (ry / 32767.0f);
             }
             float speed = (mode == 4)
                 ? 0.10f * cfg.gyro_sensitivity
@@ -44,49 +48,52 @@ void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
             if (motes[i].ir_y < 0.0f) motes[i].ir_y = 0.0f;
             if (motes[i].ir_y > 1.0f) motes[i].ir_y = 1.0f;
 
-            // Rough accelerometer synthesis so games that read tilt get
-            // something consistent with the pointer motion
             motes[i].accel_x = dx;
             motes[i].accel_y = dy;
             motes[i].accel_z = 1.0f;
         }
 
-        // WPAD buttons (all gamepad modes)
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) motes[i].buttons |= 0x0800; // A
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) motes[i].buttons |= 0x0400; // B
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) motes[i].buttons |= 0x0002; // 1
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_UP)) motes[i].buttons |= 0x0001;   // 2
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_MIDDLE_RIGHT)) motes[i].buttons |= 0x0010; // Plus
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_MIDDLE_LEFT)) motes[i].buttons |= 0x1000;  // Minus
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_MIDDLE)) motes[i].buttons |= 0x0080;       // Home
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_UP)) motes[i].buttons |= 0x0008;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) motes[i].buttons |= 0x0004;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) motes[i].buttons |= 0x0001;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) motes[i].buttons |= 0x0002;
+        // WPAD buttons
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) motes[i].buttons |= 0x0800; // A
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) motes[i].buttons |= 0x0400; // B
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) motes[i].buttons |= 0x0002; // 1
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) motes[i].buttons |= 0x0001; // 2
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) motes[i].buttons |= 0x0010; // Plus
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_BACK)) motes[i].buttons |= 0x1000;  // Minus
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_GUIDE)) motes[i].buttons |= 0x0080; // Home
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) motes[i].buttons |= 0x0008;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) motes[i].buttons |= 0x0004;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) motes[i].buttons |= 0x0001;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) motes[i].buttons |= 0x0002;
 
-        // GC pad / Classic Controller mapping (all gamepad modes)
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) pads[i].buttons |= 0x0100; // A
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) pads[i].buttons |= 0x0200; // B
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_MIDDLE_RIGHT)) pads[i].buttons |= 0x1000;  // Start
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_LEFT)) pads[i].buttons |= 0x0400; // X
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_FACE_UP)) pads[i].buttons |= 0x0800; // Y
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_UP)) pads[i].buttons |= 0x0008;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) pads[i].buttons |= 0x0004;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) pads[i].buttons |= 0x0001;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) pads[i].buttons |= 0x0002;
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_LEFT_TRIGGER_1)) pads[i].buttons |= 0x0040;  // L
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) pads[i].buttons |= 0x0020; // R
-        if (IsGamepadButtonDown(i, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)) pads[i].buttons |= 0x0010; // Z
+        // GC pad
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) pads[i].buttons |= 0x0100; // A
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) pads[i].buttons |= 0x0200; // B
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) pads[i].buttons |= 0x1000;  // Start
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) pads[i].buttons |= 0x0400; // X
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) pads[i].buttons |= 0x0800; // Y
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) pads[i].buttons |= 0x0008;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) pads[i].buttons |= 0x0004;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) pads[i].buttons |= 0x0001;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) pads[i].buttons |= 0x0002;
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) pads[i].buttons |= 0x0040;  // L
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) pads[i].buttons |= 0x0020; // R
+        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16384) pads[i].buttons |= 0x0010; // Z
 
-        pads[i].stick_x = (int8_t)(GetGamepadAxisMovement(i, GAMEPAD_AXIS_LEFT_X) * 127.0f);
-        pads[i].stick_y = (int8_t)(-GetGamepadAxisMovement(i, GAMEPAD_AXIS_LEFT_Y) * 127.0f);
-        // In pointer modes the right stick belongs to the pointer
+        int lx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX);
+        int ly = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY);
+        if (std::abs(lx) > 8000) pads[i].stick_x = (int8_t)((lx / 32767.0f) * 127.0f);
+        if (std::abs(ly) > 8000) pads[i].stick_y = (int8_t)((-ly / 32767.0f) * 127.0f); // Invert Y
+        
         if (!want_pointer) {
-            pads[i].substick_x = (int8_t)(GetGamepadAxisMovement(i, GAMEPAD_AXIS_RIGHT_X) * 127.0f);
-            pads[i].substick_y = (int8_t)(-GetGamepadAxisMovement(i, GAMEPAD_AXIS_RIGHT_Y) * 127.0f);
+            int rx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX);
+            int ry = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY);
+            if (std::abs(rx) > 8000) pads[i].substick_x = (int8_t)((rx / 32767.0f) * 127.0f);
+            if (std::abs(ry) > 8000) pads[i].substick_y = (int8_t)((-ry / 32767.0f) * 127.0f);
         }
-        pads[i].trigger_l = (uint8_t)(GetGamepadAxisMovement(i, GAMEPAD_AXIS_LEFT_TRIGGER) * 255.0f);
-        pads[i].trigger_r = (uint8_t)(GetGamepadAxisMovement(i, GAMEPAD_AXIS_RIGHT_TRIGGER) * 255.0f);
+        
+        pads[i].trigger_l = (uint8_t)((SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0f) * 255.0f);
+        pads[i].trigger_r = (uint8_t)((SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0f) * 255.0f);
     }
 }
 

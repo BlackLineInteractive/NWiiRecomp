@@ -1,3 +1,4 @@
+#include "runtime/raylib_stub.h"
 #include "runtime/cpu_context.h"
 namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 
@@ -11,7 +12,7 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <vector>
 #include <mutex>
 
-#include <rlgl.h>
+
 
 using namespace nwii::runtime;
 using namespace nwii::runtime::gx;
