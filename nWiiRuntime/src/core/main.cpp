@@ -492,8 +492,13 @@ int main(int argc, char **argv) {
           printf("[GXTRACE] XFB addr=0x%08X (VI=0x%08X) w=%u h=%u stride=%u\n", xfb_addr, nwii::runtime::hw::g_vi_top_field_base, xw, xh, xstride);
       }
 
+      // Off by default: our EFB is the GL render target, so nothing ever
+      // writes the guest XFB — reading it back shows uninitialised RAM as
+      // YUV noise. Only meaningful once EFB copy-out is implemented (read
+      // the render target back and encode YUYV into guest RAM), or for a
+      // title that composes its XFB on the CPU. NWII_XFB=1 forces it on.
       if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
-          !std::getenv("NWII_NOXFB")) {
+          std::getenv("NWII_XFB")) {
         xfb_px.resize((size_t)xw * xh * 4);
         auto clamp8 = [](float v) -> unsigned char {
           return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);

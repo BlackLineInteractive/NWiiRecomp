@@ -9,48 +9,35 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     GeneratedShader shader;
     
     // VERTEX SHADER
+    // rlgl's immediate-mode batch binds vertex attributes by NAME
+    // (vertexPosition/vertexTexCoord/vertexNormal/vertexColor) and supplies
+    // exactly one of each. Using different names left every attribute
+    // unbound, so the draw read undefined vertex data — the "scattered
+    // pixels" symptom. The extra GX texcoords/colour1 have no source in this
+    // batch, so they alias the ones rlgl does provide until the renderer
+    // uploads its own vertex buffers.
     std::stringstream vs;
     vs << "#version 330 core\n";
-    vs << "layout (location = 0) in vec3 aPos;\n";
-    vs << "layout (location = 1) in vec2 aTex0;\n";
-    vs << "layout (location = 2) in vec3 aNormal;\n";
-    vs << "layout (location = 3) in vec4 aColor0;\n";
-    vs << "layout (location = 4) in vec4 aColor1;\n";
-    vs << "layout (location = 5) in vec2 aTex1;\n";
-    vs << "layout (location = 6) in vec2 aTex2;\n";
-    vs << "layout (location = 7) in vec2 aTex3;\n";
-    vs << "layout (location = 8) in vec2 aTex4;\n";
-    vs << "layout (location = 9) in vec2 aTex5;\n";
-    vs << "layout (location = 10) in vec2 aTex6;\n";
-    vs << "layout (location = 11) in vec2 aTex7;\n";
-    
+    vs << "in vec3 vertexPosition;\n";
+    vs << "in vec2 vertexTexCoord;\n";
+    vs << "in vec3 vertexNormal;\n";
+    vs << "in vec4 vertexColor;\n";
+
     vs << "out vec4 vColor0;\n";
     vs << "out vec4 vColor1;\n";
-    vs << "out vec2 vTex0;\n";
-    vs << "out vec2 vTex1;\n";
-    vs << "out vec2 vTex2;\n";
-    vs << "out vec2 vTex3;\n";
-    vs << "out vec2 vTex4;\n";
-    vs << "out vec2 vTex5;\n";
-    vs << "out vec2 vTex6;\n";
-    vs << "out vec2 vTex7;\n";
-    
+    for (int i = 0; i < 8; ++i)
+        vs << "out vec2 vTex" << i << ";\n";
+
     vs << "uniform mat4 uTexMtx[8];\n";
     vs << "uniform mat4 mvp;\n";
-    
+
     vs << "void main() {\n";
-    vs << "    gl_Position = mvp * vec4(aPos, 1.0);\n";
-    vs << "    vColor0 = aColor0;\n";
-    vs << "    vColor1 = aColor1;\n";
-    
-    vs << "    vTex0 = (uTexMtx[0] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex1 = (uTexMtx[1] * vec4(aTex1, 0.0, 1.0)).xy;\n";
-    vs << "    vTex2 = (uTexMtx[2] * vec4(aTex2, 0.0, 1.0)).xy;\n";
-    vs << "    vTex3 = (uTexMtx[3] * vec4(aTex3, 0.0, 1.0)).xy;\n";
-    vs << "    vTex4 = (uTexMtx[4] * vec4(aTex4, 0.0, 1.0)).xy;\n";
-    vs << "    vTex5 = (uTexMtx[5] * vec4(aTex5, 0.0, 1.0)).xy;\n";
-    vs << "    vTex6 = (uTexMtx[6] * vec4(aTex6, 0.0, 1.0)).xy;\n";
-    vs << "    vTex7 = (uTexMtx[7] * vec4(aTex7, 0.0, 1.0)).xy;\n";
+    vs << "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n";
+    vs << "    vColor0 = vertexColor;\n";
+    vs << "    vColor1 = vertexColor;\n";
+    for (int i = 0; i < 8; ++i)
+        vs << "    vTex" << i << " = (uTexMtx[" << i
+           << "] * vec4(vertexTexCoord, 0.0, 1.0)).xy;\n";
     vs << "}\n";
     shader.vertex_source = vs.str();
     
