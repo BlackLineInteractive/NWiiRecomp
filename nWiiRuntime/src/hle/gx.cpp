@@ -100,15 +100,16 @@ void ProcessGXFifo() {
     if (g_hw_fifo.size() > (4u << 20))
         g_hw_fifo.clear();
 
-    // Headless runs still parse (PE signals, GX state) but have no GL context.
-    if (true) {
+    // Headless runs still parse (PE signals, GX state drive the game) but
+    // have no window and no GL/Metal context — creating a renderer or
+    // issuing draws there is undefined and stalls the boot.
+    if (g_window) {
         if (!g_renderer) {
-        g_renderer = nwii::runtime::gx::IRenderer::Create();
-        g_renderer->Initialize(g_window);
-    }
-    if (g_renderer) {
-        g_renderer->Render(commands);
-    }
+            g_renderer = nwii::runtime::gx::IRenderer::Create();
+            g_renderer->Initialize(g_window);
+        }
+        if (g_renderer)
+            g_renderer->Render(commands);
     }
 }
 

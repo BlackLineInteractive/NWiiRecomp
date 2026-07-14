@@ -770,17 +770,31 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
     return false;
 
   out << "cmake_minimum_required(VERSION 3.20)\n";
-  out << "project(" << config_.project_name << " LANGUAGES CXX)\n\n";
+  // C must be enabled too: the runtime compiles glad.c (and SDL2's own C
+  // sources). With only CXX the .c build rule runs but emits no object and
+  // the archive step fails with a missing glad.c.o.
+  out << "project(" << config_.project_name << " LANGUAGES C CXX)\n\n";
   out << "set(CMAKE_POLICY_VERSION_MINIMUM 3.5)\n";
   out << "set(CMAKE_CXX_STANDARD 20)\n";
   out << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
+  // The exported project builds the same runtime sources as the top-level
+  // tree, so it must fetch the same dependencies (nWiiRuntime links
+  // SDL2-static + tomlplusplus). Keep this list in sync with the root
+  // CMakeLists or exports fail to find SDL.h / toml++/toml.hpp.
   out << "include(FetchContent)\n";
   out << "FetchContent_Declare(\n";
-  out << "    raylib\n";
-  out << "    URL "
-         "https://github.com/raysan5/raylib/archive/refs/tags/5.0.tar.gz\n";
+  out << "    tomlplusplus\n";
+  out << "    GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git\n";
+  out << "    GIT_TAG        v3.4.0\n";
   out << ")\n";
-  out << "FetchContent_MakeAvailable(raylib)\n\n";
+  out << "FetchContent_MakeAvailable(tomlplusplus)\n\n";
+  out << "FetchContent_Declare(\n";
+  out << "    SDL2\n";
+  out << "    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git\n";
+  out << "    GIT_TAG        release-2.28.5\n";
+  out << ")\n";
+  out << "set(SDL2_DISABLE_INSTALL ON CACHE BOOL \"\" FORCE)\n";
+  out << "FetchContent_MakeAvailable(SDL2)\n\n";
 
   out << "add_subdirectory(nWiiRuntime)\n\n";
 
@@ -794,8 +808,10 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
   out << "target_include_directories(" << config_.project_name
       << " PRIVATE nWiiRuntime/src nWiiRuntime/include)\n";
 
+  // nwiiruntime already exposes SDL2/tomlplusplus as PUBLIC, so linking it
+  // propagates their include dirs to the generated executable too.
   out << "target_link_libraries(" << config_.project_name
-      << " PRIVATE nwiiruntime raylib)\n";
+      << " PRIVATE nwiiruntime)\n";
 
   return true;
 }

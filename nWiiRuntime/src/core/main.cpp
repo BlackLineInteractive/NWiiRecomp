@@ -117,7 +117,11 @@ int main(int argc, char **argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 #ifdef __APPLE__
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FORWARD_COMPATIBLE, 1);
+    // macOS only exposes core profiles through a forward-compatible context.
+    // The flag is set via SDL_GL_CONTEXT_FLAGS; there is no standalone
+    // SDL_GL_CONTEXT_FORWARD_COMPATIBLE attribute.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS,
+                        SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
     bool use_gl = (nwii::runtime::Config::get().backend == nwii::runtime::Backend::OpenGL);
     uint32_t window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
