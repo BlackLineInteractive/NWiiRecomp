@@ -42,11 +42,14 @@ namespace {
         } else if (reg == 0x48) {
             nwii::runtime::hw::pe_signal_token(val & 0xFFFF, true);
         }
-        // NOTE: rendering state is still applied here, at parse time. Moving
-        // it to stream order in the renderer is the RIGHT fix for the
-        // "first frame clean, then scrambled" symptom, but doing only that
-        // blanked the screen entirely (180k lit pixels -> 0) — something else
-        // in the draw path depends on parse-time state. Revisit together.
+        // KNOWN BUG (see memory 24h/24j): applying rendering state here, at
+        // parse time, means every draw in a FIFO chunk sees the chunk's LAST
+        // texture/TEV state — that is why the font atlas gets painted over the
+        // background quad. Moving this into stream order in the renderer is
+        // the right fix, but TWO attempts at it blanked the screen entirely
+        // (180k lit pixels -> 0), with and without also moving the EFB clear,
+        // so the draw path depends on parse-time state in some further way
+        // that is not yet understood. Left as-is until that is found.
         ApplyBPRegisterImpl(reg, val);
     }
 
