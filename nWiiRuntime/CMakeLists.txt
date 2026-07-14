@@ -53,14 +53,17 @@ target_link_libraries(nwiiruntime PUBLIC SDL2-static tomlplusplus::tomlplusplus)
 if(APPLE)
     find_library(COCOA_LIBRARY Cocoa)
     find_library(METAL_LIBRARY Metal)
+    find_library(QUARTZCORE_LIBRARY QuartzCore)
     find_library(IOKIT_LIBRARY IOKit)
     find_library(COREVIDEO_LIBRARY CoreVideo)
     target_link_libraries(nwiiruntime PUBLIC 
         ${COCOA_LIBRARY} 
         ${METAL_LIBRARY} 
+        ${QUARTZCORE_LIBRARY}
         ${IOKIT_LIBRARY} 
         ${COREVIDEO_LIBRARY}
     )
+    target_sources(nwiiruntime PRIVATE src/hle/gx/renderer_metal.mm)
 endif()
 
 target_include_directories(nwiiruntime PUBLIC 

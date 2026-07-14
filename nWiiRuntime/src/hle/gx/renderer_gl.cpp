@@ -278,7 +278,8 @@ public:
     RendererGL() = default;
     ~RendererGL() override = default;
 
-    void Initialize() override {
+    void Initialize(void* window) override {
+        m_window = window;
     }
 
     void Render(const std::vector<GXCommand> &commands) override {
@@ -333,8 +334,14 @@ public:
     }
 }
 
+    void Present() override {
+        // We will move SDL_GL_SwapWindow here or do it in main.cpp if we cast to SDL_Window
     }
-};
+
+private:
+    void* m_window = nullptr;
+
+}; // class RendererGL
 
 std::unique_ptr<IRenderer> CreateRendererGL() {
     return std::make_unique<RendererGL>();

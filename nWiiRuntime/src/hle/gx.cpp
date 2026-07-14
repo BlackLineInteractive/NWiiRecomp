@@ -1,12 +1,6 @@
 
 #include "runtime/cpu_context.h"
 
-static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
-
-void GX_Init() {
-    g_renderer = nwii::runtime::gx::IRenderer::Create();
-    g_renderer->Initialize();
-}
 
 namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 
@@ -32,7 +26,7 @@ static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
 
 void GX_Init() {
     g_renderer = nwii::runtime::gx::IRenderer::Create();
-    g_renderer->Initialize();
+    if (g_renderer) g_renderer->Initialize();
 }
 
 namespace nwii::runtime {
@@ -114,12 +108,6 @@ void ProcessGXFifo() {
 }
 
 
-static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
-
-void GX_Init() {
-    g_renderer = nwii::runtime::gx::IRenderer::Create();
-    g_renderer->Initialize();
-}
 
 namespace nwii::runtime {
 
