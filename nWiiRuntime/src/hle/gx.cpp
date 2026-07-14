@@ -99,7 +99,7 @@ static inline void wgp_push(uint8_t b) {
     if (const char* path = std::getenv("NWII_GXDUMP")) {
         static FILE* f = fopen(path, "wb");
         static size_t n = 0;
-        if (f && n < 65536) {
+        if (f && n < 4000000) {
             fputc(b, f);
             fflush(f);
             ++n;

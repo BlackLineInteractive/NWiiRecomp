@@ -37,6 +37,9 @@ void vi_trigger_interrupt() {
     // One retrace: assert pre-retrace (DI0) and post-retrace (DI1) status.
     // DI2/DI3 stay clear — SDK retrace handlers treat them as special and
     // early-exit when they fire.
+    // NOTE: gating these on the per-register enable bit (28) was tried and
+    // made MP7 worse (6 frames -> 1), so the SDK is not arming them the way
+    // we track; revisit only with a trace of the guest's DI writes.
     vi_di[0] |= 0x80000000;
     vi_di[1] |= 0x80000000;
     // VI = PI_INTSR bit 8 = 0x00000100 (Dolphin ProcessorInterface

@@ -477,12 +477,20 @@ struct CPUContext {
     ps1[D] = ps1[A] / ps1[B];
   }
   inline void ps_sum0(uint32_t D, uint32_t A, uint32_t C, uint32_t B) {
-    fpr[D] = fpr[A] + fpr[B];
-    ps1[D] = ps1[C] + ps1[B];
+    // ps_sum0: D[0] = A[0] + B[1]; D[1] = C[1] (a copy, NOT an add).
+    // This is the cross-lane add MTXConcat is built on — getting either
+    // lane wrong corrupts every computed matrix.
+    double s = fpr[A] + ps1[B];
+    double t = ps1[C];
+    fpr[D] = (float)s;
+    ps1[D] = (float)t;
   }
   inline void ps_sum1(uint32_t D, uint32_t A, uint32_t C, uint32_t B) {
-    fpr[D] = fpr[A] + ps1[B];
-    ps1[D] = ps1[C] + ps1[B];
+    // ps_sum1: D[0] = C[0] (a copy); D[1] = A[0] + B[1].
+    double s = fpr[C];
+    double t = fpr[A] + ps1[B];
+    fpr[D] = (float)s;
+    ps1[D] = (float)t;
   }
   inline void ps_muls0(uint32_t D, uint32_t A, uint32_t C) {
     fpr[D] = fpr[A] * fpr[C];
