@@ -240,9 +240,42 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     }
     
     fs << "    FragColor = tevReg[0];\n";
-    
-    // Alpha test placeholder
-    fs << "    if (FragColor.a < 0.0) discard;\n";
+
+    // Alpha test (BP 0xF3): two comparisons against 8-bit references joined
+    // by a logic op. A failing pixel is discarded before blending — this is
+    // how games cut out fonts, foliage and UI edges. comp 7 (always) on both
+    // sides with an AND collapses to "no test", so emit nothing for it.
+    {
+        const auto& at = state.alphaTest;
+        auto cmp = [&](uint8_t comp, uint8_t ref) -> std::string {
+            char rb[32];
+            std::snprintf(rb, sizeof(rb), "%.6f", ref / 255.0f);
+            std::string r(rb);
+            switch (comp) {
+                case 0: return "false";
+                case 1: return "FragColor.a < " + r;
+                case 2: return "FragColor.a == " + r;
+                case 3: return "FragColor.a <= " + r;
+                case 4: return "FragColor.a > " + r;
+                case 5: return "FragColor.a != " + r;
+                case 6: return "FragColor.a >= " + r;
+                default: return "true";
+            }
+        };
+        bool disabled = (at.comp0 == 7 && at.comp1 == 7 && at.logic == 0);
+        if (!disabled) {
+            std::string a = cmp(at.comp0, at.ref0);
+            std::string b = cmp(at.comp1, at.ref1);
+            std::string test;
+            switch (at.logic) {
+                case 0: test = "(" + a + ") && (" + b + ")"; break;
+                case 1: test = "(" + a + ") || (" + b + ")"; break;
+                case 2: test = "((" + a + ") != (" + b + "))"; break;
+                default: test = "((" + a + ") == (" + b + "))"; break;
+            }
+            fs << "    if (!(" << test << ")) discard;\n";
+        }
+    }
     
     fs << "}\n";
     shader.fragment_source = fs.str();

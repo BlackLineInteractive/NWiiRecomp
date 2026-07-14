@@ -50,6 +50,15 @@ struct TexStage {
   uint8_t tlut_format;
 };
 
+// Alpha test (BP 0xF3): two comparisons against reference values, combined
+// by a logic op. Games use it for cutouts (fonts, foliage, UI edges) — a
+// pixel that fails is discarded before blending.
+struct AlphaTest {
+  uint8_t ref0, ref1;
+  uint8_t comp0, comp1; // CompareMode: 0=never 1=< 2=== 3=<= 4=> 5=!= 6=>= 7=always
+  uint8_t logic;        // 0=and 1=or 2=xor 3=xnor
+};
+
 struct ZMode {
   uint8_t enable;
   uint8_t func;
@@ -79,6 +88,7 @@ struct GXState {
   TEVStage tevStages[16];
   std::array<TexStage, 16> texStages;
   ZMode zMode;
+  AlphaTest alphaTest;
   uint32_t blendMode;
   // EFB copy-clear color (BP 0x4F = A<<8|R, 0x50 = G<<8|B): the real
   // background color of the frame.

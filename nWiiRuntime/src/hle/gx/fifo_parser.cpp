@@ -127,6 +127,14 @@ namespace {
             g_state.zMode.enable  = (val >> 0) & 1;
             g_state.zMode.func    = (val >> 1) & 7;
             g_state.zMode.update  = (val >> 4) & 1;
+        } else if (reg == 0xF3) {
+            // BPMEM_ALPHACOMPARE: ref0[0:7] ref1[8:15] comp0[16:18]
+            // comp1[19:21] logic[22:23].
+            g_state.alphaTest.ref0  = val & 0xFF;
+            g_state.alphaTest.ref1  = (val >> 8) & 0xFF;
+            g_state.alphaTest.comp0 = (val >> 16) & 0x7;
+            g_state.alphaTest.comp1 = (val >> 19) & 0x7;
+            g_state.alphaTest.logic = (val >> 22) & 0x3;
         } else if (reg == 0x4F) {
             g_state.clearAR = val & 0xFFFF; // copy-clear alpha<<8 | red
         } else if (reg == 0x50) {
