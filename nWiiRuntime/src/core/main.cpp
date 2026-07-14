@@ -119,13 +119,24 @@ int main(int argc, char **argv) {
 #ifdef __APPLE__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FORWARD_COMPATIBLE, 1);
 #endif
+    bool use_gl = (nwii::runtime::Config::get().backend == nwii::runtime::Backend::OpenGL);
+    uint32_t window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    if (use_gl) {
+        window_flags |= SDL_WINDOW_OPENGL;
+    } else {
+#ifdef SDL_WINDOW_METAL
+        window_flags |= SDL_WINDOW_METAL;
+#endif
+    }
     window = SDL_CreateWindow("NWiiRecomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               nwii::runtime::Config::get().window_width,
                               nwii::runtime::Config::get().window_height,
-                              SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-    gl_ctx = SDL_GL_CreateContext(window);
-    gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
-    SDL_GL_SetSwapInterval(1);
+                              window_flags);
+    if (use_gl) {
+      gl_ctx = SDL_GL_CreateContext(window);
+      gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
+      SDL_GL_SetSwapInterval(1);
+    }
     
     glGenFramebuffers(1, &efb_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
