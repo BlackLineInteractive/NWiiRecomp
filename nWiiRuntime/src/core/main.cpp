@@ -132,6 +132,11 @@ int main(int argc, char **argv) {
                               nwii::runtime::Config::get().window_width,
                               nwii::runtime::Config::get().window_height,
                               window_flags);
+    // Publish the window before any GX work: the renderer is created lazily
+    // on the first FIFO flush, and the Metal backend needs the real handle
+    // to attach its layer to.
+    extern void GX_SetWindow(void *);
+    GX_SetWindow(window);
     if (use_gl) {
       gl_ctx = SDL_GL_CreateContext(window);
       gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
