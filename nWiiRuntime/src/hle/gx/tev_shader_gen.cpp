@@ -32,10 +32,10 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     vs << "out vec2 vTex6;\n";
     vs << "out vec2 vTex7;\n";
     
-    vs << "uniform mat4 uMVP;\n";
+    vs << "uniform mat4 mvp;\n";
     
     vs << "void main() {\n";
-    vs << "    gl_Position = uMVP * vec4(aPos, 1.0);\n";
+    vs << "    gl_Position = mvp * vec4(aPos, 1.0);\n";
     vs << "    vColor0 = aColor0;\n";
     vs << "    vColor1 = aColor1;\n";
     vs << "    vTex0 = aTex0;\n";
@@ -99,6 +99,56 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
             fs << "    texColor = vec4(1.0);\n";
         }
         
+        uint32_t ksel_reg = state.bp[0xF6 + (i / 2)];
+        int kcsel = 0, kasel = 0;
+        if ((i % 2) == 0) {
+            kcsel = (ksel_reg >> 4) & 0x1F;
+            kasel = (ksel_reg >> 9) & 0x1F;
+        } else {
+            kcsel = (ksel_reg >> 14) & 0x1F;
+            kasel = (ksel_reg >> 19) & 0x1F;
+        }
+        
+        auto get_konst_color = [&](int kc) -> std::string {
+            if (kc <= 0x07) {
+                switch(kc) {
+                    case 0x00: return "vec3(1.0)";
+                    case 0x01: return "vec3(0.875)";
+                    case 0x02: return "vec3(0.25)";
+                    case 0x03: return "vec3(0.125)";
+                    default: return "vec3(0.0)";
+                }
+            } else if (kc >= 0x0C && kc <= 0x0F) {
+                return "uTevKColor[" + std::to_string(kc - 0x0C) + "].rgb";
+            } else if (kc >= 0x10 && kc <= 0x1F) {
+                int idx = (kc - 0x10) % 4;
+                int comp = (kc - 0x10) / 4;
+                const char* comps[] = {"r", "g", "b", "a"};
+                return "vec3(uTevKColor[" + std::to_string(idx) + "]." + comps[comp] + ")";
+            }
+            return "vec3(0.0)";
+        };
+
+        auto get_konst_alpha = [&](int ka) -> std::string {
+            if (ka <= 0x07) {
+                switch(ka) {
+                    case 0x00: return "1.0";
+                    case 0x01: return "0.875";
+                    case 0x02: return "0.25";
+                    case 0x03: return "0.125";
+                    default: return "0.0";
+                }
+            } else if (ka >= 0x10 && ka <= 0x1F) {
+                int idx = (ka - 0x10) % 4;
+                int comp = (ka - 0x10) / 4;
+                const char* comps[] = {"r", "g", "b", "a"};
+                return "uTevKColor[" + std::to_string(idx) + "]." + comps[comp];
+            }
+            return "0.0";
+        };
+        std::string kc_str = get_konst_color(kcsel);
+        std::string ka_str = get_konst_alpha(kasel);
+        
         fs << "    vec3 cIn[4];\n";
         auto map_color_input = [&](int in_idx, int arg) {
             switch(arg) {
@@ -108,13 +158,15 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 3: fs << "    cIn[" << in_idx << "] = vec3(tevReg[1].a);\n"; break;
                 case 4: fs << "    cIn[" << in_idx << "] = tevReg[2].rgb;\n"; break;
                 case 5: fs << "    cIn[" << in_idx << "] = vec3(tevReg[2].a);\n"; break;
+                case 6: fs << "    cIn[" << in_idx << "] = tevReg[3].rgb;\n"; break;
+                case 7: fs << "    cIn[" << in_idx << "] = vec3(tevReg[3].a);\n"; break;
                 case 8: fs << "    cIn[" << in_idx << "] = texColor.rgb;\n"; break;
                 case 9: fs << "    cIn[" << in_idx << "] = vec3(texColor.a);\n"; break;
                 case 10: fs << "    cIn[" << in_idx << "] = rasColor.rgb;\n"; break;
                 case 11: fs << "    cIn[" << in_idx << "] = vec3(rasColor.a);\n"; break;
                 case 12: fs << "    cIn[" << in_idx << "] = vec3(1.0);\n"; break;
                 case 13: fs << "    cIn[" << in_idx << "] = vec3(0.5);\n"; break;
-                case 14: fs << "    cIn[" << in_idx << "] = uTevKColor[0].rgb;\n"; break; // Konst
+                case 14: fs << "    cIn[" << in_idx << "] = " << kc_str << ";\n"; break; // Konst
                 case 15: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
                 default: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
             }
@@ -124,14 +176,26 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         map_color_input(2, stage.colorInC);
         map_color_input(3, stage.colorInD);
         
+        fs << "    vec3 cBias;\n";
+        if (stage.colorBias == 1) fs << "    cBias = vec3(0.5);\n";
+        else if (stage.colorBias == 2) fs << "    cBias = vec3(-0.5);\n";
+        else fs << "    cBias = vec3(0.0);\n";
+
         fs << "    vec3 cOut;\n";
-        if (stage.colorOp == 0) {
-            fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]);\n";
-        } else if (stage.colorOp == 1) {
-            fs << "    cOut = cIn[3] - mix(cIn[0], cIn[1], cIn[2]);\n";
+        if (stage.colorOp == 0) { // Add
+            fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
+        } else if (stage.colorOp == 1) { // Sub
+            fs << "    cOut = cIn[3] - mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
         } else {
-            fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]);\n";
+            fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
         }
+        
+        if (stage.colorScale == 1) fs << "    cOut *= 2.0;\n";
+        else if (stage.colorScale == 2) fs << "    cOut *= 4.0;\n";
+        else if (stage.colorScale == 3) fs << "    cOut *= 0.5;\n";
+
+        if (stage.colorClamp == 1) fs << "    cOut = clamp(cOut, 0.0, 1.0);\n";
+
         fs << "    tevReg[" << (int)stage.colorRegId << "].rgb = cOut;\n";
         
         fs << "    float aIn[4];\n";
@@ -140,9 +204,10 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 0: fs << "    aIn[" << in_idx << "] = tevReg[0].a;\n"; break;
                 case 1: fs << "    aIn[" << in_idx << "] = tevReg[1].a;\n"; break;
                 case 2: fs << "    aIn[" << in_idx << "] = tevReg[2].a;\n"; break;
+                case 3: fs << "    aIn[" << in_idx << "] = tevReg[3].a;\n"; break;
                 case 4: fs << "    aIn[" << in_idx << "] = texColor.a;\n"; break;
                 case 5: fs << "    aIn[" << in_idx << "] = rasColor.a;\n"; break;
-                case 6: fs << "    aIn[" << in_idx << "] = uTevKColor[0].a;\n"; break; // Konst
+                case 6: fs << "    aIn[" << in_idx << "] = " << ka_str << ";\n"; break; // Konst
                 case 7: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
                 default: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
             }
@@ -152,14 +217,26 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         map_alpha_input(2, stage.alphaInC);
         map_alpha_input(3, stage.alphaInD);
         
+        fs << "    float aBias;\n";
+        if (stage.alphaBias == 1) fs << "    aBias = 0.5;\n";
+        else if (stage.alphaBias == 2) fs << "    aBias = -0.5;\n";
+        else fs << "    aBias = 0.0;\n";
+
         fs << "    float aOut;\n";
-        if (stage.alphaOp == 0) {
-            fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]);\n";
-        } else if (stage.alphaOp == 1) {
-            fs << "    aOut = aIn[3] - mix(aIn[0], aIn[1], aIn[2]);\n";
+        if (stage.alphaOp == 0) { // Add
+            fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
+        } else if (stage.alphaOp == 1) { // Sub
+            fs << "    aOut = aIn[3] - mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
         } else {
-            fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]);\n";
+            fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
         }
+        
+        if (stage.alphaScale == 1) fs << "    aOut *= 2.0;\n";
+        else if (stage.alphaScale == 2) fs << "    aOut *= 4.0;\n";
+        else if (stage.alphaScale == 3) fs << "    aOut *= 0.5;\n";
+
+        if (stage.alphaClamp == 1) fs << "    aOut = clamp(aOut, 0.0, 1.0);\n";
+
         fs << "    tevReg[" << (int)stage.alphaRegId << "].a = aOut;\n";
     }
     
