@@ -45,17 +45,48 @@ namespace {
             g_state.numTexGens = (val & 0xF);
             g_state.numChans = ((val >> 4) & 0x7);
             g_state.numTevStages = ((val >> 10) & 0xF) + 1;
-        } else if (reg >= 0xC0 && reg <= 0xCF) {
-            int stage = reg - 0xC0;
-            g_state.tevStages[stage].colorInA = (val >> 12) & 0x1F;
-            g_state.tevStages[stage].colorInB = (val >> 8) & 0x1F;
-            g_state.tevStages[stage].colorInC = (val >> 4) & 0x1F;
-            g_state.tevStages[stage].colorInD = val & 0x1F;
-            g_state.tevStages[stage].colorOp = (val >> 18) & 0xF;
-            g_state.tevStages[stage].colorBias = (val >> 16) & 0x3;
-            g_state.tevStages[stage].colorScale = (val >> 20) & 0x3;
-            g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
-            g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
+        } else if (reg >= 0x28 && reg <= 0x2F) {
+            // TEV order (BPMEM_TREF): each register configures TWO stages —
+            // which texmap/texcoord feeds them and which rasterized color
+            // channel. Without this every stage sampled texmap 0.
+            int stage = (reg - 0x28) * 2;
+            for (int half = 0; half < 2; ++half) {
+                uint32_t f = val >> (half * 12);
+                auto& s = g_state.tevStages[stage + half];
+                bool enabled = (f >> 6) & 1;
+                s.texMap = enabled ? (uint8_t)(f & 0x7) : 0xFF;
+                s.texCoord = (f >> 3) & 0x7;
+                s.colorChan = (f >> 7) & 0x7;
+            }
+        } else if (reg >= 0xC0 && reg <= 0xDF) {
+            // TEV combiners: colour at 0xC0+2i, alpha at 0xC1+2i (16 stages).
+            // Layout per Dolphin BPMemory TevStageCombiner — the inputs are
+            // 4 bits (colour) / 3 bits (alpha), NOT 5, and clamp/dest sit at
+            // bits 19 and 22. Reading them one bit off fed the shader
+            // generator garbage for every stage.
+            int stage = (reg - 0xC0) / 2;
+            auto& s = g_state.tevStages[stage];
+            if (((reg - 0xC0) & 1) == 0) { // ColorCombiner
+                s.colorInD    = val & 0xF;
+                s.colorInC    = (val >> 4) & 0xF;
+                s.colorInB    = (val >> 8) & 0xF;
+                s.colorInA    = (val >> 12) & 0xF;
+                s.colorBias   = (val >> 16) & 0x3;
+                s.colorOp     = (val >> 18) & 0x1;
+                s.colorClamp  = (val >> 19) & 0x1;
+                s.colorScale  = (val >> 20) & 0x3;
+                s.colorRegId  = (val >> 22) & 0x3;
+            } else {                       // AlphaCombiner
+                s.alphaInD    = (val >> 4) & 0x7;
+                s.alphaInC    = (val >> 7) & 0x7;
+                s.alphaInB    = (val >> 10) & 0x7;
+                s.alphaInA    = (val >> 13) & 0x7;
+                s.alphaBias   = (val >> 16) & 0x3;
+                s.alphaOp     = (val >> 18) & 0x1;
+                s.alphaClamp  = (val >> 19) & 0x1;
+                s.alphaScale  = (val >> 20) & 0x3;
+                s.alphaRegId  = (val >> 22) & 0x3;
+            }
         } else if ((reg >= 0x88 && reg <= 0x8B) || (reg >= 0xA8 && reg <= 0xAB)) {
             // TX_SETIMAGE0, maps 0-3 / 4-7: width bits 0-9, height bits
             // 10-19, format bits 20-23 (Dolphin BPMemory TexImage0).

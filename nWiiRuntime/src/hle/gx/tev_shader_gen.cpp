@@ -1,5 +1,7 @@
 #include "runtime/gx/tev_shader_gen.h"
 #include <sstream>
+#include <cstdio>
+#include <string>
 
 namespace nwii::runtime::gx {
 
@@ -42,13 +44,13 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     vs << "    vColor1 = aColor1;\n";
     
     vs << "    vTex0 = (uTexMtx[0] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex1 = (uTexMtx[1] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex2 = (uTexMtx[2] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex3 = (uTexMtx[3] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex4 = (uTexMtx[4] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex5 = (uTexMtx[5] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex6 = (uTexMtx[6] * vec4(aTex0, 0.0, 1.0)).xy;\n";
-    vs << "    vTex7 = (uTexMtx[7] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex1 = (uTexMtx[1] * vec4(aTex1, 0.0, 1.0)).xy;\n";
+    vs << "    vTex2 = (uTexMtx[2] * vec4(aTex2, 0.0, 1.0)).xy;\n";
+    vs << "    vTex3 = (uTexMtx[3] * vec4(aTex3, 0.0, 1.0)).xy;\n";
+    vs << "    vTex4 = (uTexMtx[4] * vec4(aTex4, 0.0, 1.0)).xy;\n";
+    vs << "    vTex5 = (uTexMtx[5] * vec4(aTex5, 0.0, 1.0)).xy;\n";
+    vs << "    vTex6 = (uTexMtx[6] * vec4(aTex6, 0.0, 1.0)).xy;\n";
+    vs << "    vTex7 = (uTexMtx[7] * vec4(aTex7, 0.0, 1.0)).xy;\n";
     vs << "}\n";
     shader.vertex_source = vs.str();
     
@@ -114,13 +116,10 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         
         auto get_konst_color = [&](int kc) -> std::string {
             if (kc <= 0x07) {
-                switch(kc) {
-                    case 0x00: return "vec3(1.0)";
-                    case 0x01: return "vec3(0.875)";
-                    case 0x02: return "vec3(0.25)";
-                    case 0x03: return "vec3(0.125)";
-                    default: return "vec3(0.0)";
-                }
+                // KCSEL 0-7 are the constant fractions (8-k)/8: 1, 7/8 ... 1/8.
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "vec3(%.6f)", (8 - kc) / 8.0f);
+                return std::string(buf);
             } else if (kc >= 0x0C && kc <= 0x0F) {
                 return "uTevKColor[" + std::to_string(kc - 0x0C) + "].rgb";
             } else if (kc >= 0x10 && kc <= 0x1F) {
@@ -134,13 +133,10 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
 
         auto get_konst_alpha = [&](int ka) -> std::string {
             if (ka <= 0x07) {
-                switch(ka) {
-                    case 0x00: return "1.0";
-                    case 0x01: return "0.875";
-                    case 0x02: return "0.25";
-                    case 0x03: return "0.125";
-                    default: return "0.0";
-                }
+                // KASEL 0-7: same (8-k)/8 constant fractions as KCSEL.
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.6f", (8 - ka) / 8.0f);
+                return std::string(buf);
             } else if (ka >= 0x10 && ka <= 0x1F) {
                 int idx = (ka - 0x10) % 4;
                 int comp = (ka - 0x10) / 4;
