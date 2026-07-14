@@ -28,6 +28,8 @@
 
 NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) and Wii U (`.rpx`, `.rpl`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
 
+> **A Note on Our Approach:** Unlike some recompilation projects that rely heavily on Dolphin's VideoCommon or shader generation (where the recompiler is merely a PPC-to-C translator feeding the GX stream back into an existing emulator), NWiiRecomp features a fully **custom-built** rasterizer, shader generator, and HLE runtime from scratch. We are not simply reusing an existing emulator's pipeline; this is a fully standalone implementation.
+
 > **Note:** The recompiler and runtime are designed to be **universal**. We have tested the architecture on radically different games (e.g., *Need For Speed: Hot Pursuit 2*, *Mario Party 7*, and *Silent Hill: Shattered Memories*). The fact that these fundamentally different engines yield identical, stable hardware behavior and 0 crashes confirms the universality of the core emulator design.
 > 
 > **Latest Update:** Both *Need For Speed* and *Mario Party 7* (GameCube) successfully boot, stream from DVD, and generate GX display lists! The runtime now correctly parses 2D/3D geometry and decodes hardware texture formats (I4, I8, RGB565, CMPR) via Raylib!
