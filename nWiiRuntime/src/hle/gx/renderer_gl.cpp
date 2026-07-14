@@ -111,6 +111,13 @@ static void ApplyProjection(GLint uProj) {
         p[2] = 0; p[6] = 0; p[10] = 2.0f * sp[4]; p[14] = 2.0f * sp[5] + 1.0f;
         p[3] = 0; p[7] = 0; p[11] = 0; p[15] = 1.0f;
     }
+    if (std::getenv("NWII_VTXTRACE")) {
+        static int pn = 0;
+        if (pn++ < 2)
+            printf("[PROJ] type=%u set=%d raw=[%.5f %.2f %.5f %.2f %.2f %.2f]\n",
+                   g_state.projType, (int)g_state.projSet, sp[0], sp[1], sp[2],
+                   sp[3], sp[4], sp[5]);
+    }
     glUniformMatrix4fv(uProj, 1, GL_FALSE, p);
 }
 
@@ -147,6 +154,18 @@ static void EmitVertex(const VertexData &vtx) {
         bv.z = x * mm[mtx_base + 8] + y * mm[mtx_base + 9] + z * mm[mtx_base + 10] + mm[mtx_base + 11];
     } else {
         bv.x = x; bv.y = y; bv.z = z;
+    }
+    // NWII_FLATZ=1: force view-space z to 0. MP7's 2D splash quad transforms
+    // to z=-480, which is far outside the game's own ortho depth range
+    // (E=-0.1,F=-1 => visible z in [-10,0]) and gets clipped. If flattening z
+    // makes the quad appear, the modelview z row is what is wrong.
+    if (std::getenv("NWII_FLATZ")) bv.z = 0.0f;
+    if (std::getenv("NWII_VTXTRACE")) {
+        static int vn = 0;
+        if (vn++ < 8)
+            printf("[VTX] raw=(%.1f,%.1f,%.1f) mtxIdx=%d -> view=(%.2f,%.2f,%.2f)\n",
+                   vtx.pos[0], vtx.pos[1], vtx.pos[2], vtx.posMtxIdx,
+                   bv.x, bv.y, bv.z);
     }
     s_batch.push_back(bv);
 }

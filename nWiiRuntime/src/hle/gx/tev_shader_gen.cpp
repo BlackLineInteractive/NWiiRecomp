@@ -19,10 +19,13 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     // uploads its own vertex buffers.
     std::stringstream vs;
     vs << "#version 330 core\n";
-    vs << "in vec3 vertexPosition;\n";
-    vs << "in vec2 vertexTexCoord;\n";
-    vs << "in vec3 vertexNormal;\n";
-    vs << "in vec4 vertexColor;\n";
+    // Locations must match renderer_gl's glVertexAttribPointer calls exactly
+    // (0 = position, 1 = colour, 2 = texcoord). Without explicit layout
+    // qualifiers GL assigns them in declaration order, so colour/texcoord
+    // arrived in each other's slots and vertexColor got nothing at all.
+    vs << "layout(location = 0) in vec3 vertexPosition;\n";
+    vs << "layout(location = 1) in vec4 vertexColor;\n";
+    vs << "layout(location = 2) in vec2 vertexTexCoord;\n";
 
     vs << "out vec4 vColor0;\n";
     vs << "out vec4 vColor1;\n";
