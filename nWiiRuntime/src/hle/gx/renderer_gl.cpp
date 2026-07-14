@@ -84,6 +84,11 @@ static void FlushBatch() {
     glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
     glBufferData(GL_ARRAY_BUFFER, s_batch.size() * sizeof(BatchVertex), s_batch.data(), GL_STREAM_DRAW);
     
+    if (std::getenv("NWII_GXTRACE")) {
+        static int dn = 0;
+        if (dn++ < 5)
+            printf("[GXTRACE] flush #%d verts=%zu\n", dn, s_batch.size());
+    }
     glDrawArrays(GL_TRIANGLES, 0, s_batch.size());
     s_batch.clear();
 }
@@ -170,7 +175,11 @@ static void DrawPrimitive(const GXCommand &cmd) {
         }
         sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor");
         sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor");
-        sh.uProjMtx = glGetUniformLocation(sh.id, "uProjMtx");
+        // The generated vertex shader names this uniform "mvp" (see
+        // tev_shader_gen.cpp). Looking up "uProjMtx" returned -1, so the
+        // projection was never uploaded and gl_Position collapsed to 0 —
+        // every triangle degenerated to a point and nothing rasterised.
+        sh.uProjMtx = glGetUniformLocation(sh.id, "mvp");
         
         s_shader_cache[hash] = sh;
         s_active_shader = sh;

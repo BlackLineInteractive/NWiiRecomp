@@ -189,6 +189,15 @@ int main(int argc, char **argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, efb_tex, 0);
+    {
+      // An incomplete FBO silently swallows every draw and reads back black.
+      GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+      std::cout << "[GL] EFB FBO status: 0x" << std::hex << st << std::dec
+                << (st == GL_FRAMEBUFFER_COMPLETE ? " (complete)" : " (INCOMPLETE!)")
+                << std::endl;
+      // (A magenta test clear here proved the FBO -> readback -> window blit
+      // path is sound; removed now that it has served its purpose.)
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     glGenTextures(1, &xfb_tex);
@@ -629,7 +638,7 @@ int main(int argc, char **argv) {
         // ~5s so a windowed run can be inspected without screen access.
         if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
           static int shot_frame = 0;
-          if ((++shot_frame % 20) == 0) {
+          if ((++shot_frame % 300) == 0) {
             std::vector<unsigned char> px(640 * 480 * 4);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
             glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, px.data());

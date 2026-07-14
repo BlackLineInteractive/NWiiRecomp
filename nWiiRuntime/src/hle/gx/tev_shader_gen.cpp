@@ -1,5 +1,6 @@
 #include "runtime/gx/tev_shader_gen.h"
 #include <sstream>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 
@@ -227,6 +228,11 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     }
     
     fs << "    FragColor = tevReg[0];\n";
+    // NWII_FLATCOLOR=1: bypass the whole TEV result and emit solid red. If the
+    // screen turns red the raster/geometry path is fine and the bug is in TEV;
+    // if it stays black the pixels never reach the framebuffer at all.
+    if (std::getenv("NWII_FLATCOLOR"))
+        fs << "    FragColor = vec4(1.0, 0.0, 0.0, 1.0);\n";
 
     // Alpha test (BP 0xF3): two comparisons against 8-bit references joined
     // by a logic op. A failing pixel is discarded before blending — this is
@@ -249,7 +255,8 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 default: return "true";
             }
         };
-        bool disabled = (at.comp0 == 7 && at.comp1 == 7 && at.logic == 0);
+        bool disabled = (at.comp0 == 7 && at.comp1 == 7 && at.logic == 0) ||
+                        std::getenv("NWII_NOALPHATEST") != nullptr;
         if (!disabled) {
             std::string a = cmp(at.comp0, at.ref0);
             std::string b = cmp(at.comp1, at.ref1);
