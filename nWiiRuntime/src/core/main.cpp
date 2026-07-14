@@ -12,8 +12,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <raylib.h>
-#include <rlgl.h>
+#include <SDL.h>
+#include <glad/glad.h>
 #include <thread>
 #include <vector>
 
@@ -102,11 +102,53 @@ int main(int argc, char **argv) {
   bool headless = headless_env && headless_env[0] == '1';
 
   // Initialize graphics context FIRST in the main thread
+  SDL_Window* window = nullptr;
+  SDL_GLContext gl_ctx = nullptr;
+  SDL_AudioDeviceID audio_dev = 0;
+  GLuint efb_fbo = 0, efb_tex = 0;
+  GLuint xfb_tex = 0;
+
   if (!headless) {
-    InitWindow(nwii::runtime::Config::get().window_width,
-               nwii::runtime::Config::get().window_height, "NWiiRecomp");
-    SetTargetFPS(60);
-    InitAudioDevice();
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
+      std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+      return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FORWARD_COMPATIBLE, 1);
+#endif
+    window = SDL_CreateWindow("NWiiRecomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              nwii::runtime::Config::get().window_width,
+                              nwii::runtime::Config::get().window_height,
+                              SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+    gl_ctx = SDL_GL_CreateContext(window);
+    gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
+    SDL_GL_SetSwapInterval(1);
+    
+    glGenFramebuffers(1, &efb_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
+    glGenTextures(1, &efb_tex);
+    glBindTexture(GL_TEXTURE_2D, efb_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 640, 480, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, efb_tex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    glGenTextures(1, &xfb_tex);
+    glBindTexture(GL_TEXTURE_2D, xfb_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    SDL_AudioSpec want = {0}, have;
+    want.freq = 32000;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = 1024;
+    audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (audio_dev > 0) SDL_PauseAudioDevice(audio_dev, 0);
   }
 
   // Context allocation
@@ -451,58 +493,36 @@ int main(int argc, char **argv) {
       }
     }
   } else {
-    // Main Raylib/GPU Thread Loop. The guest frame renders into an
-    // EFB-sized offscreen target which is then scaled onto the window.
-    RenderTexture2D target = LoadRenderTexture(640, 480);
-    Texture2D xfb_tex = {0};
+    // Main SDL/GPU Thread Loop
     std::vector<unsigned char> xfb_px;
+    unsigned xfb_w = 0, xfb_h = 0;
+    bool quit = false;
 
-    // Console audio output: the Audio DMA (hw_dsp) decodes the game's
-    // mixed 32kHz stereo buffers into a ring; feed it to a raylib stream.
-    AudioStream gc_audio = {0};
-    if (IsAudioDeviceReady()) {
-      gc_audio = LoadAudioStream(32000, 16, 2);
-      PlayAudioStream(gc_audio);
-    }
+    while (!quit && ctx->is_running) {
+      if (!headless) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+          if (e.type == SDL_QUIT) quit = true;
+        }
+      }
 
-    while (!WindowShouldClose() && ctx->is_running) {
-      // Poll Inputs exactly once per frame
       nwii::runtime::input::InputManager::get().update();
 
-      BeginTextureMode(target);
-      // We no longer manually clear the target here every frame.
-      // EFB clear is handled by PE_COPY_EXECUTE.
+      if (!headless) {
+        glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
+        glViewport(0, 0, 640, 480);
+      }
 
-      // Present the XFB the game composed in RAM (GXCopyDisp, BP 0x52). It
-      // is the finished frame — YUYV 4:2:2, big-endian, `stride` bytes/row.
-      // Drawing it as the background shows real video/UI/2D output even when
-      // the GX rasterizer can't reproduce the 3D scene. NWII_NOXFB disables.
       extern void GX_GetXfb(uint32_t*, unsigned*, unsigned*, unsigned*);
       uint32_t xfb_addr; unsigned xw, xh, xstride;
       GX_GetXfb(&xfb_addr, &xw, &xh, &xstride);
-      
-      // Prioritize the actual Video Interface (VI) frame buffer base if set.
-      // Games playing FMVs via CPU will update this register without touching GX.
       if (nwii::runtime::hw::g_vi_top_field_base != 0) {
-          xfb_addr = nwii::runtime::hw::g_vi_top_field_base;
+        xfb_addr = nwii::runtime::hw::g_vi_top_field_base;
       }
 
-      static int xc = 0;
-      if (xc++ < 60) {
-          printf("[GXTRACE] XFB addr=0x%08X (VI=0x%08X) w=%u h=%u stride=%u\n", xfb_addr, nwii::runtime::hw::g_vi_top_field_base, xw, xh, xstride);
-      }
-
-      // Off by default: our EFB is the GL render target, so nothing ever
-      // writes the guest XFB — reading it back shows uninitialised RAM as
-      // YUV noise. Only meaningful once EFB copy-out is implemented (read
-      // the render target back and encode YUYV into guest RAM), or for a
-      // title that composes its XFB on the CPU. NWII_XFB=1 forces it on.
-      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
-          std::getenv("NWII_XFB")) {
+      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 && std::getenv("NWII_XFB") && !headless) {
         xfb_px.resize((size_t)xw * xh * 4);
-        auto clamp8 = [](float v) -> unsigned char {
-          return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);
-        };
+        auto clamp8 = [](float v) -> unsigned char { return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); };
         for (unsigned y = 0; y < xh; ++y) {
           uint32_t row = (xfb_addr | 0x80000000u) + (uint32_t)y * xstride;
           for (unsigned x = 0; x < xw; x += 2) {
@@ -522,58 +542,49 @@ int main(int argc, char **argv) {
             }
           }
         }
-        if (xfb_tex.id == 0 || (unsigned)xfb_tex.width != xw ||
-            (unsigned)xfb_tex.height != xh) {
-          if (xfb_tex.id) UnloadTexture(xfb_tex);
-          Image im = {xfb_px.data(), (int)xw, (int)xh, 1,
-                      PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
-          xfb_tex = LoadTextureFromImage(im);
+        glBindTexture(GL_TEXTURE_2D, xfb_tex);
+        if (xw != xfb_w || xh != xfb_h) {
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xw, xh, 0, GL_RGBA, GL_UNSIGNED_BYTE, xfb_px.data());
+          xfb_w = xw; xfb_h = xh;
         } else {
-          UpdateTexture(xfb_tex, xfb_px.data());
+          glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, xw, xh, GL_RGBA, GL_UNSIGNED_BYTE, xfb_px.data());
         }
       }
+
       extern void ProcessGXFifo();
       ProcessGXFifo();
-      EndTextureMode();
 
-      BeginDrawing();
-      ClearBackground(BLACK);
-      
-      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
-          !std::getenv("NWII_NOXFB")) {
-        DrawTexturePro(xfb_tex, {0, 0, (float)xw, (float)xh},
-                       {0, 0, (float)GetScreenWidth(), (float)GetScreenHeight()}, {0, 0}, 0.0f, WHITE);
+      if (!headless) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Very crude blit of EFB to screen to verify rendering
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, 640, 480, 0, 0, nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        
+        SDL_GL_SwapWindow(window);
       }
-      
-      rlEnableColorBlend();
-      // Draw EFB on top of XFB. Assuming the clear color has alpha=0 when transparent,
-      // it will overlay correctly.
-      DrawTexturePro(target.texture,
-                     { 0, 0, (float)target.texture.width, -(float)target.texture.height },
-                     { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() },
-                     { 0, 0 }, 0.0f, WHITE);
-      EndDrawing();
 
-      // NWII_SCREENSHOT=prefix: dump the framebuffer to <prefix>_<frame>.png
-      // every ~5s so a windowed run can be inspected without screen access.
-      if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
-        static int shot_frame = 0;
-        if ((++shot_frame % 300) == 0) {
-          std::string p = std::string(shot_pfx) + "_" +
-                          std::to_string(shot_frame) + ".png";
-          TakeScreenshot(p.c_str());
+      if (audio_dev > 0) {
+        if (SDL_GetQueuedAudioSize(audio_dev) < 1024 * 4 * 2) {
+          static int16_t abuf[1024 * 2];
+          nwii::runtime::hw::dsp_audio_pull(abuf, 1024);
+          SDL_QueueAudio(audio_dev, abuf, 1024 * 4);
         }
       }
-
-      // Feed the host audio stream from the Audio-DMA ring.
-      if (gc_audio.buffer && IsAudioStreamProcessed(gc_audio)) {
-        static int16_t abuf[1024 * 2];
-        nwii::runtime::hw::dsp_audio_pull(abuf, 1024);
-        UpdateAudioStream(gc_audio, abuf, 1024);
-      }
-
-      // Trigger VBlank interrupt to drive the OS thread queue
+      
       ctx->vblank_pending = true;
+      if (headless) std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+
+    if (!headless) {
+      if (audio_dev > 0) SDL_CloseAudioDevice(audio_dev);
+      SDL_GL_DeleteContext(gl_ctx);
+      SDL_DestroyWindow(window);
+      SDL_Quit();
     }
   }
 
@@ -583,8 +594,7 @@ int main(int argc, char **argv) {
   if (cpu_thread.joinable())
     cpu_thread.join();
 
-  if (!headless)
-    CloseWindow();
+
   nwii::runtime::shutdown();
   return 0;
 }

@@ -1,12 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
 include(FetchContent)
-FetchContent_Declare(
-    tomlplusplus
-    GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-    GIT_TAG        v3.4.0
-)
-FetchContent_MakeAvailable(tomlplusplus)
 add_library(nwiiruntime STATIC
     src/core/loader.cpp
     src/core/config.cpp
@@ -50,12 +44,27 @@ add_library(nwiiruntime STATIC
     src/hle/devices/usb_device.cpp
     src/hle/devices/es_device.cpp
     src/hle/interpreter.cpp
+    src/platform/glad/src/glad.c
 )
 
-target_link_libraries(nwiiruntime PUBLIC raylib tomlplusplus::tomlplusplus)
+target_link_libraries(nwiiruntime PUBLIC SDL2-static tomlplusplus::tomlplusplus)
+
+if(APPLE)
+    find_library(COCOA_LIBRARY Cocoa)
+    find_library(METAL_LIBRARY Metal)
+    find_library(IOKIT_LIBRARY IOKit)
+    find_library(COREVIDEO_LIBRARY CoreVideo)
+    target_link_libraries(nwiiruntime PUBLIC 
+        ${COCOA_LIBRARY} 
+        ${METAL_LIBRARY} 
+        ${IOKIT_LIBRARY} 
+        ${COREVIDEO_LIBRARY}
+    )
+endif()
 
 target_include_directories(nwiiruntime PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/glad/include
 )
 
 # add_executable(nwiiruntime_exe src/main.cpp)

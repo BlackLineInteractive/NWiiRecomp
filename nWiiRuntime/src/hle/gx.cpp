@@ -10,7 +10,7 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <cstdlib>
 #include <vector>
 #include <mutex>
-#include <raylib.h>
+
 #include <rlgl.h>
 
 using namespace nwii::runtime;

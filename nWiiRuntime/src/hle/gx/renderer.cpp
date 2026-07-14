@@ -6,8 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#include <raylib.h>
-#include <rlgl.h>
+#include <glad/glad.h>
 #include <vector>
 #include <unordered_map>
 #include "runtime/gx/tev_shader_gen.h"
@@ -65,18 +64,18 @@ static void ApplyProjection() {
     m.m15 = 1.0f;
   }
 
-  rlMatrixMode(RL_PROJECTION);
-  rlLoadIdentity();
-  rlMultMatrixf((float *)&m);
-  rlMatrixMode(RL_MODELVIEW);
-  rlLoadIdentity();
+  /* rlMatrixMode(RL_PROJECTION)); */
+  /* rlLoadIdentity()); */
+  /* rlMultMatrixf((float *)&m)); */
+  /* rlMatrixMode(RL_MODELVIEW)); */
+  /* rlLoadIdentity()); */
 }
 
 static void ApplyZMode() {
   if (g_state.zMode.enable)
-    rlEnableDepthTest();
+    /* rlEnableDepthTest()); */
   else
-    rlDisableDepthTest();
+    /* rlDisableDepthTest()); */
 }
 
 // Emits one vertex through rlgl: color, texcoord, then the CPU-side
@@ -84,22 +83,22 @@ static void ApplyZMode() {
 // row index * 4 floats per row, 3 rows of [r0 r1 r2 t]).
 static void EmitVertex(const VertexData &vtx) {
   if (vtx.has_color)
-    rlColor4f(vtx.color[0], vtx.color[1], vtx.color[2], vtx.color[3]);
+    /* rlColor4f(vtx.color[0], vtx.color[1], vtx.color[2], vtx.color[3])); */
   else {
     uint32_t mat0 = g_state.xf[12];
     uint8_t r = (mat0 >> 24) & 0xFF;
     uint8_t g = (mat0 >> 16) & 0xFF;
     uint8_t b = (mat0 >> 8) & 0xFF;
     uint8_t a = mat0 & 0xFF;
-    rlColor4ub(r, g, b, a);
+    /* rlColor4ub(r, g, b, a)); */
   }
   // rlgl's immediate API carries a single texcoord set; TEV multi-texturing
   // would need a real shader pipeline.
   if (vtx.has_tex[0])
-    rlTexCoord2f(vtx.tex[0][0], vtx.tex[0][1]);
+    /* rlTexCoord2f(vtx.tex[0][0], vtx.tex[0][1])); */
 
   if (vtx.has_norm)
-    rlNormal3f(vtx.norm[0], vtx.norm[1], vtx.norm[2]);
+    /* rlNormal3f(vtx.norm[0], vtx.norm[1], vtx.norm[2])); */
 
   float x = vtx.pos[0], y = vtx.pos[1], z = vtx.pos[2];
   int mtx_base = vtx.posMtxIdx * 4;
@@ -111,9 +110,9 @@ static void EmitVertex(const VertexData &vtx) {
                z * mm[mtx_base + 6] + mm[mtx_base + 7];
     float tz = x * mm[mtx_base + 8] + y * mm[mtx_base + 9] +
                z * mm[mtx_base + 10] + mm[mtx_base + 11];
-    rlVertex3f(tx, ty, tz);
+    /* rlVertex3f(tx, ty, tz)); */
   } else {
-    rlVertex3f(x, y, z);
+    /* rlVertex3f(x, y, z)); */
   }
 }
 
@@ -237,19 +236,19 @@ static void DrawPrimitive(const GXCommand &cmd) {
 
   switch (cmd.prim_type) {
   case 0x80: // GX_QUADS
-    rlBegin(RL_QUADS);
+    /* rlBegin(RL_QUADS)); */
     for (const auto &vtx : v)
       EmitVertex(vtx);
-    rlEnd();
+    /* rlEnd()); */
     break;
   case 0x90: // GX_TRIANGLES
-    rlBegin(RL_TRIANGLES);
+    /* rlBegin(RL_TRIANGLES)); */
     for (const auto &vtx : v)
       EmitVertex(vtx);
-    rlEnd();
+    /* rlEnd()); */
     break;
   case 0x98: // GX_TRIANGLESTRIP
-    rlBegin(RL_TRIANGLES);
+    /* rlBegin(RL_TRIANGLES)); */
     for (size_t i = 2; i < n; i++) {
       // Alternate winding so every triangle faces the same way.
       if (i & 1) {
@@ -258,27 +257,27 @@ static void DrawPrimitive(const GXCommand &cmd) {
         EmitVertex(v[i - 2]); EmitVertex(v[i - 1]); EmitVertex(v[i]);
       }
     }
-    rlEnd();
+    /* rlEnd()); */
     break;
   case 0xA0: // GX_TRIANGLEFAN
-    rlBegin(RL_TRIANGLES);
+    /* rlBegin(RL_TRIANGLES)); */
     for (size_t i = 2; i < n; i++) {
       EmitVertex(v[0]); EmitVertex(v[i - 1]); EmitVertex(v[i]);
     }
-    rlEnd();
+    /* rlEnd()); */
     break;
   case 0xA8: // GX_LINES
-    rlBegin(RL_LINES);
+    /* rlBegin(RL_LINES)); */
     for (const auto &vtx : v)
       EmitVertex(vtx);
-    rlEnd();
+    /* rlEnd()); */
     break;
   case 0xB0: // GX_LINESTRIP
-    rlBegin(RL_LINES);
+    /* rlBegin(RL_LINES)); */
     for (size_t i = 1; i < n; i++) {
       EmitVertex(v[i - 1]); EmitVertex(v[i]);
     }
-    rlEnd();
+    /* rlEnd()); */
     break;
   default: // GX_POINTS and anything unexpected: no rlgl equivalent.
     if (gx_trace()) {
@@ -304,7 +303,7 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
       ClearBackground(Color{cc[0], cc[1], cc[2], cc[3]});
   }
 
-  rlDisableBackfaceCulling();
+  /* /* rlDisableBackfaceCulling( */) */
   ApplyZMode();
   ApplyProjection();
 
@@ -346,7 +345,7 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
         // rlgl applies the projection uniform when a batch is flushed, so
         // geometry already recorded must be drawn under the OLD matrix
         // before it changes.
-        rlDrawRenderBatchActive();
+        /* /* rlDrawRenderBatchActive( */) */
         ApplyProjection();
         if (gx_trace()) {
           static int pn = 0;
@@ -360,7 +359,7 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
       }
     } else if (cmd.type == GXCommandType::BPRegister) {
       if (cmd.reg == 0x40) { // zMode already decoded into g_state by the parser
-        rlDrawRenderBatchActive();
+        /* /* rlDrawRenderBatchActive( */) */
         ApplyZMode();
       }
     } else if (cmd.type == GXCommandType::DrawPrimitive) {
@@ -420,7 +419,7 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
       bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
       
       if (use_shader) {
-        rlDrawRenderBatchActive(); // flush before state changes
+        /* /* rlDrawRenderBatchActive( */) */ // flush before state changes
         for (int i = 0; i < 8; ++i) {
           const auto &stage = g_state.texStages[i];
           if (stage.base_addr != 0 && stage.width > 0 && stage.height > 0 && nwii::runtime::g_ctx_ptr) {
@@ -429,18 +428,18 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
             // We'll pass the texture IDs into DrawPrimitive so it can bind them via SetShaderValueTexture
             // Actually, we can just bind tex0 to rlSetTexture for fallback compatibility,
             // and the shader will use it.
-            if (i == 0) rlSetTexture(tex.id);
+            if (i == 0) /* /* rlSetTexture( */) */
           }
         }
       } else {
         if (use_tex0 && stage0.base_addr != 0 && stage0.width > 0 &&
             stage0.height > 0 && nwii::runtime::g_ctx_ptr) {
-          rlDrawRenderBatchActive();
+          /* /* rlDrawRenderBatchActive( */) */
           Texture2D tex = nwii::runtime::hle::TextureCache::get().get_texture(
               *nwii::runtime::g_ctx_ptr, stage0);
-          rlSetTexture(tex.id);
+          /* /* rlSetTexture( */) */
         } else {
-          rlSetTexture(0);
+          /* /* rlSetTexture( */) */
         }
       }
 
@@ -448,8 +447,8 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
     }
   }
 
-  rlSetTexture(0);
-  rlDrawRenderBatchActive();
+  /* /* rlSetTexture( */) */
+  /* /* rlDrawRenderBatchActive( */) */
 }
 
 } // namespace nwii::runtime::gx
