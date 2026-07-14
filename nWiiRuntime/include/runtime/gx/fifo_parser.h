@@ -5,6 +5,8 @@
 
 namespace nwii::runtime::gx {
 
+void ApplyBPRegister(uint8_t reg, uint32_t val);
+
 class FifoParser {
 public:
     // Parses the hardware FIFO buffer and appends generated GXCommands to the queue.

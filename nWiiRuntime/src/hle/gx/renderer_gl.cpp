@@ -1,4 +1,5 @@
 #include "runtime/gx/renderer.h"
+#include "runtime/gx/fifo_parser.h"
 #include "runtime/cpu_context.h"
 #include "runtime/gx_state.h"
 #include "runtime/texture_cache_gl.h"

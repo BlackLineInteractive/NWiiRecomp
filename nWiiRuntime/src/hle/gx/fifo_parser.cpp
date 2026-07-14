@@ -28,8 +28,9 @@ namespace {
         return (fifo[offset] << 24) | (fifo[offset+1] << 16) | (fifo[offset+2] << 8) | fifo[offset+3];
     }
 
+    void ApplyBPRegisterImpl(uint8_t reg, uint32_t val);
+
     void ParseBP(uint8_t reg, uint32_t val) {
-        g_state.bp[reg] = val;
         // PE signals live in the BP stream: reg 0x45 val&0xF==2 is the
         // draw-done strobe (GXSetDrawDone), 0x47/0x48 carry the draw-sync
         // token (0x48 also raises the token interrupt). Signalling from the
@@ -41,6 +42,16 @@ namespace {
         } else if (reg == 0x48) {
             nwii::runtime::hw::pe_signal_token(val & 0xFFFF, true);
         }
+        // NOTE: rendering state is still applied here, at parse time. Moving
+        // it to stream order in the renderer is the RIGHT fix for the
+        // "first frame clean, then scrambled" symptom, but doing only that
+        // blanked the screen entirely (180k lit pixels -> 0) — something else
+        // in the draw path depends on parse-time state. Revisit together.
+        ApplyBPRegisterImpl(reg, val);
+    }
+
+    void ApplyBPRegisterImpl(uint8_t reg, uint32_t val) {
+        g_state.bp[reg] = val;
         if (reg == 0x00) {
             g_state.numTexGens = (val & 0xF);
             g_state.numChans = ((val >> 4) & 0x7);
@@ -406,6 +417,10 @@ namespace {
         return true;
     }
 }
+
+// Applies one BP register's rendering state. Called by the renderer as it
+// walks the command list, so each draw sees its own state.
+void ApplyBPRegister(uint8_t reg, uint32_t val) { ApplyBPRegisterImpl(reg, val); }
 
 static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::vector<GXCommand>& commands, int depth);
 
