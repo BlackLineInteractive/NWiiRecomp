@@ -67,16 +67,18 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     for (int i = 0; i < 8; ++i) {
         fs << "uniform sampler2D uTex" << i << ";\n";
     }
+    fs << "uniform vec4 uTevColor[4];\n";
+    fs << "uniform vec4 uTevKColor[4];\n";
     
     fs << "vec4 tevReg[4];\n"; // 0=prev, 1=reg0, 2=reg1, 3=reg2
     fs << "vec4 texColor;\n";
     fs << "vec4 rasColor;\n";
     
     fs << "void main() {\n";
-    fs << "    tevReg[0] = vec4(0.0);\n";
-    fs << "    tevReg[1] = vec4(0.0);\n";
-    fs << "    tevReg[2] = vec4(0.0);\n";
-    fs << "    tevReg[3] = vec4(1.0);\n"; // Konst
+    fs << "    tevReg[0] = uTevColor[0];\n";
+    fs << "    tevReg[1] = uTevColor[1];\n";
+    fs << "    tevReg[2] = uTevColor[2];\n";
+    fs << "    tevReg[3] = uTevColor[3];\n";
     
     uint8_t numTevs = state.numTevStages;
     if (numTevs == 0) numTevs = 1;
@@ -112,7 +114,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 11: fs << "    cIn[" << in_idx << "] = vec3(rasColor.a);\n"; break;
                 case 12: fs << "    cIn[" << in_idx << "] = vec3(1.0);\n"; break;
                 case 13: fs << "    cIn[" << in_idx << "] = vec3(0.5);\n"; break;
-                case 14: fs << "    cIn[" << in_idx << "] = tevReg[3].rgb;\n"; break; // Konst
+                case 14: fs << "    cIn[" << in_idx << "] = uTevKColor[0].rgb;\n"; break; // Konst
                 case 15: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
                 default: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
             }
@@ -140,7 +142,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 2: fs << "    aIn[" << in_idx << "] = tevReg[2].a;\n"; break;
                 case 4: fs << "    aIn[" << in_idx << "] = texColor.a;\n"; break;
                 case 5: fs << "    aIn[" << in_idx << "] = rasColor.a;\n"; break;
-                case 6: fs << "    aIn[" << in_idx << "] = tevReg[3].a;\n"; break; // Konst
+                case 6: fs << "    aIn[" << in_idx << "] = uTevKColor[0].a;\n"; break; // Konst
                 case 7: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
                 default: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
             }

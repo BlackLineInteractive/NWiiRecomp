@@ -144,15 +144,47 @@ static void DrawPrimitive(const GXCommand &cmd) {
         if (g_state.texStages[i].base_addr != 0) {
             int loc = GetShaderLocation(active_shader, TextFormat("uTex%d", i));
             if (loc >= 0) {
-                // rlgl handles active texture slots when rlSetUniformSampler is used
-                // but Raylib SetShaderValueTexture works at higher level. We use rlSetUniformSampler.
-                // Wait, rlgl immediate mode only supports 1 texture natively via rlSetTexture.
-                // To pass multiple, we must bind them to GL_TEXTURE1, 2, etc.
-                // For now, if we just bind tex0, it works via rlSetTexture below.
+                // For now, rlSetTexture handles the active texture slot 0 correctly for the first texture.
             }
         }
     }
-    // Bind uniforms: tevReg Konsts (placeholder, not fully mapped yet)
+    
+    // Bind uniforms: TEV Colors and Konst Colors
+    float kcolor[16] = {0};
+    float color[16] = {0};
+    
+    auto decode11 = [](uint32_t val, int shift) -> float {
+        int v = (val >> shift) & 0x7FF;
+        if (v & 0x400) v |= ~0x7FF; // sign extend 11-bit
+        return (float)v / 255.0f;
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        uint32_t ra = g_state.bp[0xE0 + i*2];
+        uint32_t bg = g_state.bp[0xE1 + i*2];
+        
+        if ((ra >> 23) & 1) { // Constant
+            kcolor[i*4 + 0] = decode11(ra, 0); // r
+            kcolor[i*4 + 3] = decode11(ra, 12); // a
+        } else {
+            color[i*4 + 0] = decode11(ra, 0);
+            color[i*4 + 3] = decode11(ra, 12);
+        }
+        
+        if ((bg >> 23) & 1) { // Constant
+            kcolor[i*4 + 2] = decode11(bg, 0); // b
+            kcolor[i*4 + 1] = decode11(bg, 12); // g
+        } else {
+            color[i*4 + 2] = decode11(bg, 0);
+            color[i*4 + 1] = decode11(bg, 12);
+        }
+    }
+    
+    int kloc = GetShaderLocation(active_shader, "uTevKColor");
+    if (kloc >= 0) SetShaderValueV(active_shader, kloc, kcolor, SHADER_UNIFORM_VEC4, 4);
+    
+    int cloc = GetShaderLocation(active_shader, "uTevColor");
+    if (cloc >= 0) SetShaderValueV(active_shader, cloc, color, SHADER_UNIFORM_VEC4, 4);
   }
 
   switch (cmd.prim_type) {
