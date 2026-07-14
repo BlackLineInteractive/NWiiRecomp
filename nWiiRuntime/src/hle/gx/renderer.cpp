@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <raylib.h>
 #include <rlgl.h>
 #include <vector>
@@ -46,7 +47,7 @@ static void ApplyProjection() {
     // No projection loaded yet: identity (nothing meaningful can be on
     // screen before the game's first GXSetProjection anyway).
     m.m0 = m.m5 = m.m10 = m.m15 = 1.0f;
-  } else if (p[6] == 0.0f) { // GX_PERSPECTIVE
+  } else if (g_state.projType == 0) { // GX_PERSPECTIVE
     m.m0 = p[0];
     m.m8 = p[1];
     m.m5 = p[2];
@@ -331,6 +332,11 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
           g_state.posMatrices[current_addr] = cmd.payload[i];
         } else if (current_addr >= 0x1020 && current_addr <= 0x1026) {
           g_state.projection[current_addr - 0x1020] = cmd.payload[i];
+          if (current_addr == 0x1026) {
+            // Projection type is a raw u32 enum in XF memory; recover the
+            // bits instead of interpreting them as a float.
+            std::memcpy(&g_state.projType, &cmd.payload[i], 4);
+          }
           touched_proj = true;
         }
       }

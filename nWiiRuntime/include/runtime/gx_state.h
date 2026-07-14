@@ -107,6 +107,10 @@ struct GXState {
 
   // XF (Transform) State
   float projection[7];
+  // XF 0x1026 is an INTEGER enum (0 = perspective, 1 = orthographic),
+  // not a float — reading it as one made a denormal that compares unequal
+  // to 0.0 (or flushes to zero), picking the wrong projection entirely.
+  uint32_t projType;
   bool projSet; // the game has loaded a projection at least once
   float posMatrices[256];
 
