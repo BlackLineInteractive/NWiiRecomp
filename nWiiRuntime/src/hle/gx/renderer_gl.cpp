@@ -320,6 +320,29 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
+    // NWII_CMDTRACE=1: dump the shape of one command list — are BP registers
+    // actually interleaved with the draws, or emitted in a separate run? The
+    // stream-order fix assumes interleaving; verify before changing anything.
+    if (std::getenv("NWII_CMDTRACE")) {
+        static int cn = 0;
+        bool has_draw = false;
+        for (const auto &c : commands)
+            if (c.type == GXCommandType::DrawPrimitive) { has_draw = true; break; }
+        if (has_draw && cn++ < 3) {
+            printf("[CMD] chunk %d: %zu commands: ", cn, commands.size());
+            int shown = 0;
+            for (const auto &c : commands) {
+                if (shown++ > 40) { printf("..."); break; }
+                switch (c.type) {
+                case GXCommandType::BPRegister: printf("B%02X ", c.reg); break;
+                case GXCommandType::CPRegister: printf("c%02X ", c.reg); break;
+                case GXCommandType::XFRegister: printf("x%03X ", c.reg); break;
+                case GXCommandType::DrawPrimitive: printf("[DRAW:%zu] ", c.vertices.size()); break;
+                }
+            }
+            printf("\n");
+        }
+    }
     for (const auto &cmd : commands) {
         if (cmd.type == GXCommandType::XFRegister) {
             int addr = cmd.reg;
