@@ -433,26 +433,34 @@ int main(int argc, char **argv) {
       }
     }
   } else {
-    // Main Raylib/GPU Thread Loop
+    // Main Raylib/GPU Thread Loop. The guest frame renders into an
+    // EFB-sized offscreen target which is then scaled onto the window.
     RenderTexture2D target = LoadRenderTexture(640, 480);
-    BeginTextureMode(target);
-    ClearBackground(BLANK); // Clear once at startup
-    EndTextureMode();
-    
+
     while (!WindowShouldClose() && ctx->is_running) {
       // Poll Inputs exactly once per frame
-      
+      nwii::runtime::input::InputManager::get().update();
+
       BeginTextureMode(target);
+      // Clear with the game's own EFB copy-clear color (BP 0x4F/0x50) —
+      // on hardware the EFB is cleared to this color on every copy-out.
+      extern void GX_GetClearColor(unsigned char rgba[4]);
+      unsigned char cc[4];
+      GX_GetClearColor(cc);
+      ClearBackground(Color{cc[0], cc[1], cc[2], 255});
+      // Drain and render the GX FIFO exactly once per frame, inside the
+      // render target: a second drain outside a drawing context consumed
+      // half the command stream and discarded its draws.
       extern void ProcessGXFifo();
       ProcessGXFifo();
       EndTextureMode();
-      
+
       BeginDrawing();
-      ClearBackground(DARKBLUE);
+      ClearBackground(BLACK);
       rlDisableColorBlend();
-      DrawTexturePro(target.texture, 
-                     { 0, 0, (float)target.texture.width, -(float)target.texture.height }, 
-                     { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() }, 
+      DrawTexturePro(target.texture,
+                     { 0, 0, (float)target.texture.width, -(float)target.texture.height },
+                     { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() },
                      { 0, 0 }, 0.0f, WHITE);
       rlEnableColorBlend();
       EndDrawing();
@@ -469,8 +477,6 @@ int main(int argc, char **argv) {
       }
 
       // Trigger VBlank interrupt to drive the OS thread queue
-      extern void ProcessGXFifo();
-      ProcessGXFifo();
       ctx->vblank_pending = true;
     }
   }

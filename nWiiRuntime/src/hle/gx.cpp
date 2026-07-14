@@ -28,6 +28,15 @@ std::vector<uint8_t> g_hw_fifo;
 // PE draw-done/token signals are detected inside FifoParser::Parse (it sees
 // display-list contents too), not by sniffing the raw byte stream here.
 
+// The game's EFB copy-clear color (BP 0x4F/0x50) — the true frame
+// background. Used by the frame loop instead of a hardcoded clear.
+void GX_GetClearColor(unsigned char rgba[4]) {
+    rgba[0] = (unsigned char)(g_state.clearAR & 0xFF);
+    rgba[1] = (unsigned char)(g_state.clearGB >> 8);
+    rgba[2] = (unsigned char)(g_state.clearGB & 0xFF);
+    rgba[3] = (unsigned char)(g_state.clearAR >> 8);
+}
+
 void ProcessGXFifo() {
 
     std::lock_guard<std::mutex> lock(g_fifo_mutex);

@@ -4,9 +4,12 @@
 #include <iostream>
 #include <cstring>
 #include <algorithm>
+#include <mutex>
+#include <vector>
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
+    extern uint64_t get_os_time(); // wall-clock microseconds
 }
 
 namespace nwii::runtime::hw {
@@ -33,6 +36,57 @@ static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 // handler); models the milliseconds a real DSP spends on an audio frame.
 int g_dsp_mail_delay = 0;
 
+// ---- Audio DMA (0xCC005030-0xCC00503A) ----
+// The final mixed output of the console: the game points this DMA at a
+// PCM buffer in main RAM (s16 big-endian, interleaved stereo, 32kHz) and
+// the hardware streams it to the DAC, raising the AID interrupt each time
+// a buffer finishes so the mixer refills it. We pace it with wall-clock
+// time and hand the samples to the host audio output through a ring.
+static uint32_t adma_addr = 0;      // source address in main RAM
+static uint16_t adma_control = 0;   // bit15 = enable, bits 0-14 = 32-byte blocks
+static uint64_t adma_next_us = 0;   // when the current buffer finishes
+static std::mutex adma_mutex;
+static std::vector<int16_t> adma_ring; // interleaved L,R host-endian
+
+// Pulls up to `frames` stereo frames for the host audio backend; pads
+// with silence when the game hasn't produced enough.
+size_t dsp_audio_pull(int16_t* out, size_t frames) {
+    std::lock_guard<std::mutex> lock(adma_mutex);
+    size_t have = adma_ring.size() / 2;
+    size_t n = have < frames ? have : frames;
+    std::memcpy(out, adma_ring.data(), n * 2 * sizeof(int16_t));
+    adma_ring.erase(adma_ring.begin(), adma_ring.begin() + n * 2);
+    if (n < frames)
+        std::memset(out + n * 2, 0, (frames - n) * 2 * sizeof(int16_t));
+    return n;
+}
+
+static void adma_tick() {
+    if (!(adma_control & 0x8000))
+        return;
+    uint64_t now = get_os_time();
+    if (now < adma_next_us)
+        return;
+    uint32_t blocks = adma_control & 0x7FFF;
+    uint32_t bytes = blocks * 32;
+    // 32kHz stereo s16 = 4 bytes per frame -> duration of this buffer.
+    adma_next_us = now + (uint64_t)(bytes / 4) * 1000000 / 32000;
+    if (g_mmu && bytes > 0) {
+        std::lock_guard<std::mutex> lock(adma_mutex);
+        // Cap the ring at ~1 second so a paused host doesn't grow it.
+        if (adma_ring.size() < 32000 * 2) {
+            uint32_t va = adma_addr | 0x80000000;
+            for (uint32_t i = 0; i + 3 < bytes; i += 4) {
+                adma_ring.push_back((int16_t)g_mmu->read16(va + i));
+                adma_ring.push_back((int16_t)g_mmu->read16(va + i + 2));
+            }
+        }
+    }
+    // Buffer consumed: AID interrupt tells the mixer to refill/flip.
+    dsp_control |= 0x0008;
+    dsp_update_pi();
+}
+
 // PI cause bit 6 (0x40) follows the OR of (status & its mask) across the
 // three DSP subsystem sources — Dolphin's (csr >> 1) & csr trick.
 static void dsp_update_pi() {
@@ -56,8 +110,10 @@ int dsp_pending_os_interrupt() {
     return 7;
 }
 
-// Called from the backedge callback pump: completes a pending mail ack.
+// Called from the backedge callback pump: completes a pending mail ack
+// and paces the audio DMA.
 void dsp_tick() {
+    adma_tick();
     if (g_dsp_mail_delay > 0 && --g_dsp_mail_delay == 0) {
         // 0xDCD10000 = task resumed/init done: __DSPHandler's branch for it
         // marks the task started and invokes the task's resume callback,
@@ -100,6 +156,18 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC005020) return ar_mmaddr;
             if (addr == 0xCC005024) return ar_araddr;
             if (addr == 0xCC005028) return ar_cnt;
+            if (addr == 0xCC005030) return adma_addr >> 16;
+            if (addr == 0xCC005032) return adma_addr & 0xFFFF;
+            if (addr == 0xCC005036) return adma_control;
+            if (addr == 0xCC00503A) {
+                // AUDIO_DMA_BLOCKS_LEFT: approximate from the time left in
+                // the current buffer (some SDKs poll it for sync).
+                if (!(adma_control & 0x8000)) return 0;
+                uint64_t now = get_os_time();
+                if (now >= adma_next_us) return 0;
+                uint64_t us_left = adma_next_us - now;
+                return (uint32_t)(us_left * 32000 / 1000000 * 4 / 32);
+            }
             return 0;
         },
         [](uint32_t addr, uint32_t val) {
@@ -155,6 +223,15 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 ar_mode = val & 0xFFFF;
             } else if (addr == 0xCC00501A) {
                 ar_refresh = val & 0xFFFF;
+            } else if (addr == 0xCC005030) {
+                adma_addr = (adma_addr & 0x0000FFFF) | ((val & 0xFFFF) << 16);
+            } else if (addr == 0xCC005032) {
+                adma_addr = (adma_addr & 0xFFFF0000) | (val & 0xFFFF);
+            } else if (addr == 0xCC005036) {
+                bool was_on = (adma_control & 0x8000) != 0;
+                adma_control = val & 0xFFFF;
+                if (!was_on && (adma_control & 0x8000))
+                    adma_next_us = get_os_time(); // first buffer starts now
             } else if (addr == 0xCC005020) {
                 ar_mmaddr = val;
             } else if (addr == 0xCC005024) {

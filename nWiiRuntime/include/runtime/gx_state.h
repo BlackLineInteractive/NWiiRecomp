@@ -43,6 +43,11 @@ struct TexStage {
   uint32_t width;
   uint32_t height;
   uint8_t format;
+  // TLUT binding for paletted formats (C4/C8/C14X2): byte offset into the
+  // TLUT bank (from BP SETTLUT) and palette entry format
+  // (0 = IA8, 1 = RGB565, 2 = RGB5A3).
+  uint32_t tlut_offset;
+  uint8_t tlut_format;
 };
 
 struct ZMode {
@@ -53,10 +58,14 @@ struct ZMode {
 
 // GX
 struct GXState {
-  // CP (Command Processor) State
+  // CP (Command Processor) State. The 16 vertex arrays are: pos, nrm,
+  // clr0, clr1, tex0-7, and the 4 indexed-XF arrays A-D (LOAD_INDX).
   VATSlot vat[8];
-  uint32_t arrayBase[13];
-  uint32_t arrayStride[13];
+  uint32_t arrayBase[16];
+  uint32_t arrayStride[16];
+  // Default position/normal matrix index (CP MATINDEX_A bits 0-5); used
+  // when the VCD carries no per-vertex matrix index byte.
+  uint8_t defPosMtxIdx;
 
   // BP (Bypass / TEV) State
   uint8_t numTevStages;
@@ -66,10 +75,22 @@ struct GXState {
   std::array<TexStage, 16> texStages;
   ZMode zMode;
   uint32_t blendMode;
+  // EFB copy-clear color (BP 0x4F = A<<8|R, 0x50 = G<<8|B): the real
+  // background color of the frame.
+  uint32_t clearAR;
+  uint32_t clearGB;
 
   // XF (Transform) State
   float projection[7];
+  bool projSet; // the game has loaded a projection at least once
   float posMatrices[256];
+
+  // TLUT bank (the high 512KB of TMEM on real hardware). BP LOADTLUT
+  // copies palette data here from main RAM; paletted texture decoding
+  // reads entries back out. Big-endian u16 entries, as loaded.
+  uint8_t tlutMem[0x80000];
+  // Latched by BP LOADTLUT0 (source RAM address), consumed by LOADTLUT1.
+  uint32_t tlutSrcAddr;
 };
 
 extern GXState g_state;

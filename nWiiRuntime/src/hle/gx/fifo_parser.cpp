@@ -2,7 +2,9 @@
 #include "runtime/gx_state.h"
 #include "runtime/cpu_context.h"
 #include "runtime/hw/hw.h"
+#include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
@@ -13,6 +15,11 @@ namespace nwii::runtime::gx {
 extern GXState g_state;
 
 namespace {
+    inline bool gx_trace() {
+        static bool t = std::getenv("NWII_GXTRACE") != nullptr;
+        return t;
+    }
+
     inline uint32_t Read24(const std::vector<uint8_t>& fifo, size_t offset) {
         return (fifo[offset] << 16) | (fifo[offset+1] << 8) | fifo[offset+2];
     }
@@ -49,23 +56,49 @@ namespace {
             g_state.tevStages[stage].colorClamp = (val >> 22) & 0x1;
             g_state.tevStages[stage].colorRegId = (val >> 23) & 0x3;
         } else if ((reg >= 0x88 && reg <= 0x8B) || (reg >= 0xA8 && reg <= 0xAB)) {
-            // TEX_IMAGE0 (0x88) .. TEX_IMAGE3 (0x8B) -> Texture Dimensions & Format
+            // TX_SETIMAGE0, maps 0-3 / 4-7: width bits 0-9, height bits
+            // 10-19, format bits 20-23 (Dolphin BPMemory TexImage0).
             int idx = (reg >= 0x88 && reg <= 0x8B) ? (reg - 0x88) : (reg - 0xA8 + 4);
             if (idx < (int)g_state.texStages.size()) {
-                g_state.texStages[idx].width  = ((val >> 10) & 0x3FF) + 1;
-                g_state.texStages[idx].height = ((val >>  0) & 0x3FF) + 1;
+                g_state.texStages[idx].width  = ((val >>  0) & 0x3FF) + 1;
+                g_state.texStages[idx].height = ((val >> 10) & 0x3FF) + 1;
                 g_state.texStages[idx].format = (val >> 20) & 0xF;
             }
         } else if ((reg >= 0x94 && reg <= 0x97) || (reg >= 0xB4 && reg <= 0xB7)) {
-            // TEX_IMAGE3 (0x94) .. TEX_IMAGE3_3 (0x97) -> Texture Base Address
+            // TX_SETIMAGE3, maps 0-3 / 4-7: physical image base >> 5.
             int idx = (reg >= 0x94 && reg <= 0x97) ? (reg - 0x94) : (reg - 0xB4 + 4);
             if (idx < (int)g_state.texStages.size()) {
                 g_state.texStages[idx].base_addr = (val & 0xFFFFFF) << 5;
+            }
+        } else if ((reg >= 0x98 && reg <= 0x9F) || (reg >= 0xB8 && reg <= 0xBF)) {
+            // TX_SETTLUT, maps 0-3 / 4-7: TLUT offset (bits 0-9, <<9) and
+            // palette entry format (bits 10-11).
+            int idx = (reg >= 0x98 && reg <= 0x9F) ? (reg - 0x98) : (reg - 0xB8 + 4);
+            if (idx < (int)g_state.texStages.size()) {
+                g_state.texStages[idx].tlut_offset = (val & 0x3FF) << 9;
+                g_state.texStages[idx].tlut_format = (val >> 10) & 0x3;
+            }
+        } else if (reg == 0x64) {
+            // LOADTLUT0: source address in main RAM (>> 5).
+            g_state.tlutSrcAddr = (val & 0xFFFFFF) << 5;
+        } else if (reg == 0x65) {
+            // LOADTLUT1: destination TLUT offset (bits 0-9, <<9) and count of
+            // 16-entry blocks (bits 10-20). Copy palette data RAM -> TLUT bank.
+            uint32_t dst = (val & 0x3FF) << 9;
+            uint32_t bytes = ((val >> 10) & 0x7FF) * 32;
+            if (nwii::runtime::g_mmu && dst + bytes <= sizeof(g_state.tlutMem)) {
+                for (uint32_t i = 0; i < bytes; i++)
+                    g_state.tlutMem[dst + i] =
+                        nwii::runtime::g_mmu->read8(g_state.tlutSrcAddr + i);
             }
         } else if (reg == 0x40) {
             g_state.zMode.enable  = (val >> 0) & 1;
             g_state.zMode.func    = (val >> 1) & 7;
             g_state.zMode.update  = (val >> 4) & 1;
+        } else if (reg == 0x4F) {
+            g_state.clearAR = val & 0xFFFF; // copy-clear alpha<<8 | red
+        } else if (reg == 0x50) {
+            g_state.clearGB = val & 0xFFFF; // copy-clear green<<8 | blue
         }
     }
 
@@ -75,10 +108,14 @@ namespace {
     // slots; the vertex attribute *formats* (VAT_A/B/C 0x70/0x80/0x90) are
     // per-slot. Bit layouts follow the GX SetVtxDesc/SetVtxAttrFmt encoding.
     void ParseCP(uint8_t reg, uint32_t val) {
-        if (reg >= 0xA0 && reg <= 0xAC) {
+        if (reg >= 0xA0 && reg <= 0xAF) {
             g_state.arrayBase[reg - 0xA0] = val & 0x3FFFFFFF;
-        } else if (reg >= 0xB0 && reg <= 0xBC) {
+        } else if (reg >= 0xB0 && reg <= 0xBF) {
             g_state.arrayStride[reg - 0xB0] = val & 0xFF;
+        } else if (reg == 0x30) {
+            // MATINDEX_A: default matrix indices when the VCD has no
+            // per-vertex index byte. Bits 0-5 = position/normal matrix.
+            g_state.defPosMtxIdx = val & 0x3F;
         } else if (reg == 0x50) {
             // VCD_LO (global): matrix indices + pos/nrm/col0/col1 presence.
             // Bit 0 = PosNrm matrix index, bits 1-8 = tex0-7 matrix indices —
@@ -208,14 +245,91 @@ namespace {
         return true;
     }
 
-    // Byte count of a Direct color attribute, keyed by the GX color format
-    // stored in clrType (GX_RGB565=0, RGB8=1, RGBX8=2, RGBA4=3, RGBA6=4, RGBA8=5).
-    int DirectColorBytes(VtxAttrType clrType) {
+    // Byte count of a color attribute in a vertex array or the FIFO, keyed
+    // by the GX color format stored in clrType (GX_RGB565=0, RGB8=1,
+    // RGBX8=2, RGBA4=3, RGBA6=4, RGBA8=5).
+    int ColorBytes(VtxAttrType clrType) {
         switch ((int)clrType) {
             case 0: case 3: return 2;
             case 1: case 4: return 3;
             default:        return 4; // 2, 5
         }
+    }
+
+    // Decodes one color value from raw big-endian bytes per the GX format.
+    void DecodeColor(const uint8_t* p, VtxAttrType clrType, float out[4]) {
+        switch ((int)clrType) {
+            case 0: { // RGB565
+                uint16_t c = (p[0] << 8) | p[1];
+                out[0] = ((c >> 11) & 0x1F) / 31.0f;
+                out[1] = ((c >> 5) & 0x3F) / 63.0f;
+                out[2] = (c & 0x1F) / 31.0f;
+                out[3] = 1.0f;
+                break;
+            }
+            case 1: // RGB8
+            case 2: // RGBX8 (X byte present but ignored)
+                out[0] = p[0] / 255.0f;
+                out[1] = p[1] / 255.0f;
+                out[2] = p[2] / 255.0f;
+                out[3] = 1.0f;
+                break;
+            case 3: { // RGBA4
+                uint16_t c = (p[0] << 8) | p[1];
+                out[0] = ((c >> 12) & 0xF) / 15.0f;
+                out[1] = ((c >> 8) & 0xF) / 15.0f;
+                out[2] = ((c >> 4) & 0xF) / 15.0f;
+                out[3] = (c & 0xF) / 15.0f;
+                break;
+            }
+            case 4: { // RGBA6 (24 bits packed)
+                uint32_t c = (p[0] << 16) | (p[1] << 8) | p[2];
+                out[0] = ((c >> 18) & 0x3F) / 63.0f;
+                out[1] = ((c >> 12) & 0x3F) / 63.0f;
+                out[2] = ((c >> 6) & 0x3F) / 63.0f;
+                out[3] = (c & 0x3F) / 63.0f;
+                break;
+            }
+            default: // RGBA8
+                out[0] = p[0] / 255.0f;
+                out[1] = p[1] / 255.0f;
+                out[2] = p[2] / 255.0f;
+                out[3] = p[3] / 255.0f;
+                break;
+        }
+    }
+
+    // Reads a color attribute (Direct from the FIFO, or Indexed from the
+    // color vertex array in guest RAM — array slots 2/3).
+    bool ReadColorAttr(const std::vector<uint8_t>& fifo, size_t& fifo_offset, size_t fifo_size,
+                       VtxAttrMask mask, VtxAttrType clrType, int chan, float out[4]) {
+        out[0] = out[1] = out[2] = out[3] = 1.0f;
+        if (mask == VtxAttrMask::None) return true;
+
+        int nbytes = ColorBytes(clrType);
+        if (mask == VtxAttrMask::Direct) {
+            if (fifo_offset + (size_t)nbytes > fifo_size) return false;
+            DecodeColor(&fifo[fifo_offset], clrType, out);
+            fifo_offset += nbytes;
+            return true;
+        }
+
+        uint32_t index = 0;
+        if (mask == VtxAttrMask::Index8) {
+            if (fifo_offset + 1 > fifo_size) return false;
+            index = fifo[fifo_offset++];
+        } else {
+            if (fifo_offset + 2 > fifo_size) return false;
+            index = (fifo[fifo_offset] << 8) | fifo[fifo_offset + 1];
+            fifo_offset += 2;
+        }
+        if (!nwii::runtime::g_mmu) return true;
+        uint32_t base = g_state.arrayBase[2 + chan] + index * g_state.arrayStride[2 + chan];
+        uint8_t raw[4] = {0};
+        for (int i = 0; i < nbytes; i++)
+            raw[i] = nwii::runtime::g_mmu->read8(base + i);
+        DecodeColor(raw, clrType, out);
+        return true;
     }
 }
 
@@ -266,12 +380,39 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             // INVL_VC: invalidate vertex cache, single byte
             offset++;
         } else if (cmd == 0x20 || cmd == 0x28 || cmd == 0x30 || cmd == 0x38) {
-            // LOAD_INDX A-D: 1 cmd + 4 payload
+            // LOAD_INDX A-D: indexed load into XF memory from CP array 12-15
+            // (position matrices, normal matrices, tex matrices, light data).
+            // Payload: index (bits 16-31), XF address (bits 0-11), count-1
+            // (bits 12-15). Emitted as an XFRegister command so it applies in
+            // stream order alongside direct XF loads.
             if (offset + 5 > fifo_size) break;
             uint32_t val = Read32(fifo, offset + 1);
-            static int indx_print = 0;
-            if (indx_print++ < 20) {
-                printf("LOAD_INDX: cmd=0x%02X, val=0x%08X\n", cmd, val);
+            int array = 12 + (cmd - 0x20) / 8;
+            uint32_t index = val >> 16;
+            uint32_t xf_addr = val & 0xFFF;
+            int num = ((val >> 12) & 0xF) + 1;
+            if (nwii::runtime::g_mmu) {
+                GXCommand c;
+                c.type = GXCommandType::XFRegister;
+                c.reg = xf_addr;
+                c.length = num - 1;
+                c.payload.resize(num);
+                uint32_t base = g_state.arrayBase[array] +
+                                index * g_state.arrayStride[array];
+                for (int i = 0; i < num; i++)
+                    c.payload[i] = nwii::runtime::g_mmu->read_f32(base + i * 4);
+                if (gx_trace()) {
+                    static int ln = 0;
+                    if (ln++ < 24) {
+                        printf("[GXTRACE] LOAD_INDX arr=%d idx=%u xf=0x%03X n=%d base=0x%X stride=%u [",
+                               array, index, xf_addr, num, base,
+                               g_state.arrayStride[array]);
+                        for (int i = 0; i < num && i < 8; i++)
+                            printf("%.3f ", c.payload[i]);
+                        printf("]\n");
+                    }
+                }
+                commands.push_back(c);
             }
             offset += 5;
         } else if (cmd == 0x61) {
@@ -313,16 +454,18 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             c.type = GXCommandType::XFRegister;
             c.length = length;
             c.reg = (fifo[offset + 3] << 8) | fifo[offset + 4];
-            
-            static int xf_print_proj = 0;
-            static int xf_print_mtx = 0;
-            if (c.reg >= 0x1020 && c.reg <= 0x1027 && xf_print_proj++ < 5) {
-                printf("XF_REG_PROJ: len=%d, reg=0x%04X\n", length, c.reg);
+
+            if (gx_trace() && c.reg >= 0x1020 && c.reg <= 0x1027) {
+                static int xf_print_proj = 0;
+                if (xf_print_proj++ < 5)
+                    printf("[GXTRACE] XF proj load: len=%d reg=0x%04X\n", length, c.reg);
             }
-            if (c.length > 0 && xf_print_mtx++ < 5) {
-                printf("XF_REG_MTX: len=%d, reg=0x%04X\n", length, c.reg);
+            if (gx_trace() && c.reg < 0x100) {
+                static int xf_print_mtx = 0;
+                if (xf_print_mtx++ < 24)
+                    printf("[GXTRACE] XF direct mtx: reg=0x%03X len=%d\n", c.reg, length + 1);
             }
-            
+
             // Read payload (length+1) * 4 bytes as floats
             int num_floats = length + 1;
             c.payload.resize(num_floats);
@@ -330,7 +473,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                 uint32_t val = Read32(fifo, offset + 5 + (i * 4));
                 std::memcpy(&c.payload[i], &val, 4);
             }
-            
+
             commands.push_back(c);
 
             offset += total_size;
@@ -340,25 +483,21 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
 
             uint16_t vtx_count = (fifo[offset + 1] << 8) | fifo[offset + 2];
             uint8_t vat_idx = cmd & 0x07;
-            uint8_t prim_type = cmd & 0xF8;
 
             VATSlot& vat = g_state.vat[vat_idx];
             size_t curr_offset = offset + 3;
 
             GXCommand c;
             c.type = GXCommandType::DrawPrimitive;
-
-            // Map GX primitives to raylib/rlgl modes (0x0004 = RL_TRIANGLES, 0x0007 = RL_QUADS).
-            c.gl_mode = 0x0004; // default RL_TRIANGLES
-            if      (prim_type == 0x90) c.gl_mode = 0x0004; // triangles
-            else if (prim_type == 0x98) c.gl_mode = 0x0004; // tristrip (unrolled)
-            else if (prim_type == 0x80) c.gl_mode = 0x0007; // quads
+            c.prim_type = cmd & 0xF8;
 
             bool parse_ok = true;
             for (int i = 0; i < vtx_count && parse_ok; i++) {
                 VertexData vtx;
 
                 // Matrix indices (direct u8 each) precede all attributes.
+                // Without a per-vertex index the CP default applies.
+                vtx.posMtxIdx = g_state.defPosMtxIdx;
                 {
                     int midx_offset = 0;
                     if (vat.posMatIdx) {
@@ -395,39 +534,19 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                     vtx.norm[0] = nbt[0]; vtx.norm[1] = nbt[1]; vtx.norm[2] = nbt[2];
                 }
 
-                // Both color channels (CLR0 drives rendering, CLR1 is only
-                // consumed — skipping it desyncs the stream).
+                // Both color channels are consumed to keep the stream in
+                // sync; CLR0 drives rendering.
                 for (int ci = 0; ci < 2 && parse_ok; ci++) {
-                    if (vat.clrMask[ci] == VtxAttrMask::Direct) {
-                        int clrBytes = DirectColorBytes(vat.clrType[ci]);
-                        if (curr_offset + clrBytes > fifo_size) { parse_ok = false; break; }
-                        if (ci == 0) {
-                            vtx.has_color = true;
-                            if (clrBytes >= 3) {
-                                vtx.color[0] = fifo[curr_offset + 0] / 255.0f;
-                                vtx.color[1] = fifo[curr_offset + 1] / 255.0f;
-                                vtx.color[2] = fifo[curr_offset + 2] / 255.0f;
-                                vtx.color[3] = (clrBytes == 4) ? (fifo[curr_offset + 3] / 255.0f) : 1.0f;
-                            } else {
-                                // Packed 16-bit color (RGB565/RGBA4): approximate as white.
-                                vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
-                            }
-                        }
-                        curr_offset += clrBytes;
-                    } else if (vat.clrMask[ci] == VtxAttrMask::Index8) {
-                        if (curr_offset + 1 > fifo_size) { parse_ok = false; break; }
-                        curr_offset += 1;
-                        if (ci == 0) {
-                            vtx.has_color = true;
-                            vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
-                        }
-                    } else if (vat.clrMask[ci] == VtxAttrMask::Index16) {
-                        if (curr_offset + 2 > fifo_size) { parse_ok = false; break; }
-                        curr_offset += 2;
-                        if (ci == 0) {
-                            vtx.has_color = true;
-                            vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
-                        }
+                    if (vat.clrMask[ci] == VtxAttrMask::None) continue;
+                    float col[4];
+                    if (!ReadColorAttr(fifo, curr_offset, fifo_size, vat.clrMask[ci],
+                                       vat.clrType[ci], ci, col)) {
+                        parse_ok = false; break;
+                    }
+                    if (ci == 0) {
+                        vtx.has_color = true;
+                        vtx.color[0] = col[0]; vtx.color[1] = col[1];
+                        vtx.color[2] = col[2]; vtx.color[3] = col[3];
                     }
                 }
                 if (!parse_ok) break;

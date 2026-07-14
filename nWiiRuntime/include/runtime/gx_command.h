@@ -38,8 +38,9 @@ struct GXCommand {
     // For XF registers
     uint16_t length;
     
-    // For Draw Primitive
-    int gl_mode;
+    // For Draw Primitive: raw GX primitive opcode (0x80 quads, 0x90 tris,
+    // 0x98 tristrip, 0xA0 trifan, 0xA8 lines, 0xB0 linestrip, 0xB8 points).
+    uint8_t prim_type;
     std::vector<VertexData> vertices;
     
     // For payload data like XF matrices
