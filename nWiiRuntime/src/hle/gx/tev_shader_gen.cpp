@@ -10,16 +10,17 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     std::stringstream vs;
     vs << "#version 330 core\n";
     vs << "layout (location = 0) in vec3 aPos;\n";
-    vs << "layout (location = 1) in vec4 aColor0;\n";
-    vs << "layout (location = 2) in vec4 aColor1;\n";
-    vs << "layout (location = 3) in vec2 aTex0;\n";
-    vs << "layout (location = 4) in vec2 aTex1;\n";
-    vs << "layout (location = 5) in vec2 aTex2;\n";
-    vs << "layout (location = 6) in vec2 aTex3;\n";
-    vs << "layout (location = 7) in vec2 aTex4;\n";
-    vs << "layout (location = 8) in vec2 aTex5;\n";
-    vs << "layout (location = 9) in vec2 aTex6;\n";
-    vs << "layout (location = 10) in vec2 aTex7;\n";
+    vs << "layout (location = 1) in vec2 aTex0;\n";
+    vs << "layout (location = 2) in vec3 aNormal;\n";
+    vs << "layout (location = 3) in vec4 aColor0;\n";
+    vs << "layout (location = 4) in vec4 aColor1;\n";
+    vs << "layout (location = 5) in vec2 aTex1;\n";
+    vs << "layout (location = 6) in vec2 aTex2;\n";
+    vs << "layout (location = 7) in vec2 aTex3;\n";
+    vs << "layout (location = 8) in vec2 aTex4;\n";
+    vs << "layout (location = 9) in vec2 aTex5;\n";
+    vs << "layout (location = 10) in vec2 aTex6;\n";
+    vs << "layout (location = 11) in vec2 aTex7;\n";
     
     vs << "out vec4 vColor0;\n";
     vs << "out vec4 vColor1;\n";
@@ -32,20 +33,22 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     vs << "out vec2 vTex6;\n";
     vs << "out vec2 vTex7;\n";
     
+    vs << "uniform mat4 uTexMtx[8];\n";
     vs << "uniform mat4 mvp;\n";
     
     vs << "void main() {\n";
     vs << "    gl_Position = mvp * vec4(aPos, 1.0);\n";
     vs << "    vColor0 = aColor0;\n";
     vs << "    vColor1 = aColor1;\n";
-    vs << "    vTex0 = aTex0;\n";
-    vs << "    vTex1 = aTex1;\n";
-    vs << "    vTex2 = aTex2;\n";
-    vs << "    vTex3 = aTex3;\n";
-    vs << "    vTex4 = aTex4;\n";
-    vs << "    vTex5 = aTex5;\n";
-    vs << "    vTex6 = aTex6;\n";
-    vs << "    vTex7 = aTex7;\n";
+    
+    vs << "    vTex0 = (uTexMtx[0] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex1 = (uTexMtx[1] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex2 = (uTexMtx[2] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex3 = (uTexMtx[3] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex4 = (uTexMtx[4] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex5 = (uTexMtx[5] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex6 = (uTexMtx[6] * vec4(aTex0, 0.0, 1.0)).xy;\n";
+    vs << "    vTex7 = (uTexMtx[7] * vec4(aTex0, 0.0, 1.0)).xy;\n";
     vs << "}\n";
     shader.vertex_source = vs.str();
     

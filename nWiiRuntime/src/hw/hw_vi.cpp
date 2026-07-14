@@ -9,6 +9,10 @@
 namespace nwii::runtime::hw {
 
 static uint32_t vi_dcr = 0;
+// VI Top and Bottom Field Base Left registers (0xCC00201C, 0xCC002024)
+uint32_t g_vi_top_field_base = 0;
+uint32_t g_vi_btm_field_base = 0;
+
 // Display interrupt registers DI0..DI3 at 0xCC002030/34/38/3C (32-bit each,
 // games access them as HI/LO halfwords). Bit31 = interrupt status (halfword
 // bit15 of HI), bit28 = enable. Layout per Dolphin VideoInterface.h:
@@ -59,6 +63,9 @@ void register_vi(MMIODispatcher& dispatcher) {{
             // PAL title's later VIConfigure(PAL) is seen as an illegal
             // NTSC->PAL switch and the SDK asserts+halts (vi.c).
             if (addr == 0xCC002002) return vi_dcr | 0x0001;
+            // VI Framebuffer addresses
+            if (addr == 0xCC00201C) return g_vi_top_field_base;
+            if (addr == 0xCC002024) return g_vi_btm_field_base;
             // DI0..DI3 HI halfwords (0x30/34/38/3C). A register READ must
             // never raise or re-arm an interrupt.
             if (addr >= 0xCC002030 && addr <= 0xCC00203C && ((addr - 0xCC002030) % 4 == 0)) {
@@ -73,6 +80,12 @@ void register_vi(MMIODispatcher& dispatcher) {{
         [](uint32_t addr, uint32_t val) {
             if (addr == 0xCC002002) {
                 vi_dcr = val;
+            }
+            else if (addr == 0xCC00201C) {
+                g_vi_top_field_base = val;
+            }
+            else if (addr == 0xCC002024) {
+                g_vi_btm_field_base = val;
             }
             else if (addr >= 0xCC002030 && addr <= 0xCC00203C && ((addr - 0xCC002030) % 4 == 0)) {
                 int idx = (addr - 0xCC002030) / 4;

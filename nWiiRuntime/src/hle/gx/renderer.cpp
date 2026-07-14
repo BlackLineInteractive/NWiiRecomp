@@ -26,6 +26,8 @@ extern MMU *g_mmu;
 extern CPUContext *g_ctx_ptr;
 }
 
+void GX_GetClearColor(unsigned char rgba[4]);
+
 namespace nwii::runtime::gx {
 
 static bool gx_trace() {
@@ -82,9 +84,14 @@ static void ApplyZMode() {
 static void EmitVertex(const VertexData &vtx) {
   if (vtx.has_color)
     rlColor4f(vtx.color[0], vtx.color[1], vtx.color[2], vtx.color[3]);
-  else
-    rlColor4ub(255, 255, 255, 255);
-
+  else {
+    uint32_t mat0 = g_state.xf[12];
+    uint8_t r = (mat0 >> 24) & 0xFF;
+    uint8_t g = (mat0 >> 16) & 0xFF;
+    uint8_t b = (mat0 >> 8) & 0xFF;
+    uint8_t a = mat0 & 0xFF;
+    rlColor4ub(r, g, b, a);
+  }
   // rlgl's immediate API carries a single texcoord set; TEV multi-texturing
   // would need a real shader pipeline.
   if (vtx.has_tex[0])
@@ -153,6 +160,44 @@ static void DrawPrimitive(const GXCommand &cmd) {
     float kcolor[16] = {0};
     float color[16] = {0};
     
+
+    // Bind uniforms: TexMtx
+    for (int i = 0; i < 8; i++) {
+        int loc = GetShaderLocation(active_shader, TextFormat("uTexMtx[%d]", i));
+        if (loc >= 0) {
+            uint32_t texgenInfo = g_state.xf[0x1040 + i];
+            uint32_t texgenType = (texgenInfo >> 4) & 7;
+            uint32_t sourceRow = (texgenInfo >> 7) & 0x1F;
+            
+            Matrix mat = {0};
+            if (texgenType == 0) { // Regular
+                if (sourceRow == 30) {
+                    mat.m0 = 1.0f; mat.m5 = 1.0f; mat.m10 = 1.0f; mat.m15 = 1.0f;
+                } else {
+                    int base = sourceRow * 4;
+                    mat.m0 = g_state.posMatrices[base + 0];
+                    mat.m4 = g_state.posMatrices[base + 1];
+                    mat.m8 = g_state.posMatrices[base + 2];
+                    mat.m12 = g_state.posMatrices[base + 3];
+                    
+                    mat.m1 = g_state.posMatrices[base + 4];
+                    mat.m5 = g_state.posMatrices[base + 5];
+                    mat.m9 = g_state.posMatrices[base + 6];
+                    mat.m13 = g_state.posMatrices[base + 7];
+                    
+                    mat.m2 = g_state.posMatrices[base + 8];
+                    mat.m6 = g_state.posMatrices[base + 9];
+                    mat.m10 = g_state.posMatrices[base + 10];
+                    mat.m14 = g_state.posMatrices[base + 11];
+                    
+                    mat.m15 = 1.0f;
+                }
+            } else {
+                mat.m0 = 1.0f; mat.m5 = 1.0f; mat.m10 = 1.0f; mat.m15 = 1.0f;
+            }
+            SetShaderValueMatrix(active_shader, loc, mat);
+        }
+    }
     auto decode11 = [](uint32_t val, int shift) -> float {
         int v = (val >> shift) & 0x7FF;
         if (v & 0x400) v |= ~0x7FF; // sign extend 11-bit
@@ -163,7 +208,7 @@ static void DrawPrimitive(const GXCommand &cmd) {
         uint32_t ra = g_state.bp[0xE0 + i*2];
         uint32_t bg = g_state.bp[0xE1 + i*2];
         
-        if ((ra >> 23) & 1) { // Constant
+        if (((ra >> 23) & 1) == 0) { // Constant
             kcolor[i*4 + 0] = decode11(ra, 0); // r
             kcolor[i*4 + 3] = decode11(ra, 12); // a
         } else {
@@ -171,7 +216,7 @@ static void DrawPrimitive(const GXCommand &cmd) {
             color[i*4 + 3] = decode11(ra, 12);
         }
         
-        if ((bg >> 23) & 1) { // Constant
+        if (((bg >> 23) & 1) == 0) { // Constant
             kcolor[i*4 + 2] = decode11(bg, 0); // b
             kcolor[i*4 + 1] = decode11(bg, 12); // g
         } else {
@@ -180,11 +225,13 @@ static void DrawPrimitive(const GXCommand &cmd) {
         }
     }
     
-    int kloc = GetShaderLocation(active_shader, "uTevKColor");
+    int kloc = GetShaderLocation(active_shader, "uTevKColor[0]");
+    if (kloc == -1) kloc = GetShaderLocation(active_shader, "uTevKColor");
     if (kloc >= 0) SetShaderValueV(active_shader, kloc, kcolor, SHADER_UNIFORM_VEC4, 4);
     
-    int cloc = GetShaderLocation(active_shader, "uTevColor");
-    if (cloc >= 0) SetShaderValueV(active_shader, cloc, color, SHADER_UNIFORM_VEC4, 4);
+    int cloc = GetShaderLocation(active_shader, "uTevColor[0]");
+    if (cloc == -1) cloc = GetShaderLocation(active_shader, "uTevColor");
+    if (cloc >= 0) SetShaderValueV(active_shader, cloc, color, SHADER_UNIFORM_VEC4, 3);
   }
 
   switch (cmd.prim_type) {
@@ -248,6 +295,14 @@ static void DrawPrimitive(const GXCommand &cmd) {
 }
 
 void Renderer::Render(const std::vector<GXCommand> &commands) {
+  if (g_state.pe_clear_pending) {
+      g_state.pe_clear_pending = false;
+      unsigned char cc[4];
+      ::GX_GetClearColor(cc);
+      // Alpha is usually 0 if transparent, allowing XFB to show through!
+      ClearBackground(Color{cc[0], cc[1], cc[2], cc[3]});
+  }
+
   rlDisableBackfaceCulling();
   ApplyZMode();
   ApplyProjection();
@@ -344,13 +399,14 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
           float ty = v0.pos[0]*mm[4] + v0.pos[1]*mm[5] + v0.pos[2]*mm[6] + mm[7];
           float tz = v0.pos[0]*mm[8] + v0.pos[1]*mm[9] + v0.pos[2]*mm[10] + mm[11];
           printf("[GXTRACE] draw prim=0x%02X n=%zu tex0=%d stage0{addr=0x%X %ux%u fmt=%d} "
-                 "v0=(%.1f,%.1f,%.1f)->(%.1f,%.1f,%.2f) mtx=%d hasC=%d col=(%.2f,%.2f,%.2f,%.2f) uv=(%.2f,%.2f) "
+                 "v0=(%.1f,%.1f,%.1f)->(%.1f,%.1f,%.2f) mtx=%d hasC=%d col=(%.2f,%.2f,%.2f,%.2f) mat0=0x%08X uv=(%.2f,%.2f) "
                  "row0=[%.3f %.3f %.3f %.1f] row2=[%.3f %.3f %.3f %.2f]\n",
                  cmd.prim_type, cmd.vertices.size(), (int)use_tex0,
                  stage0.base_addr, stage0.width, stage0.height, stage0.format,
                  v0.pos[0], v0.pos[1], v0.pos[2], tx, ty, tz, v0.posMtxIdx,
                  (int)v0.has_color,
                  v0.color[0], v0.color[1], v0.color[2], v0.color[3],
+                 (uint32_t)g_state.xf[12],
                  v0.tex[0][0], v0.tex[0][1],
                  mm[0], mm[1], mm[2], mm[3], mm[8], mm[9], mm[10], mm[11]);
         }

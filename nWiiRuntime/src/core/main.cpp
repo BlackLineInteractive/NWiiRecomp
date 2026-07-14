@@ -22,6 +22,10 @@
 #include "runtime/hw/hw.h"
 
 namespace nwii::runtime {
+    namespace hw { extern uint32_t g_vi_top_field_base; }
+}
+
+namespace nwii::runtime {
 uint32_t g_debug_pc = 0;
 MMU *g_mmu = nullptr;
 CPUContext *g_ctx_ptr = nullptr;
@@ -466,12 +470,8 @@ int main(int argc, char **argv) {
       nwii::runtime::input::InputManager::get().update();
 
       BeginTextureMode(target);
-      // Clear with the game's own EFB copy-clear color (BP 0x4F/0x50) —
-      // on hardware the EFB is cleared to this color on every copy-out.
-      extern void GX_GetClearColor(unsigned char rgba[4]);
-      unsigned char cc[4];
-      GX_GetClearColor(cc);
-      ClearBackground(Color{cc[0], cc[1], cc[2], 255});
+      // We no longer manually clear the target here every frame.
+      // EFB clear is handled by PE_COPY_EXECUTE.
 
       // Present the XFB the game composed in RAM (GXCopyDisp, BP 0x52). It
       // is the finished frame — YUYV 4:2:2, big-endian, `stride` bytes/row.
@@ -480,6 +480,18 @@ int main(int argc, char **argv) {
       extern void GX_GetXfb(uint32_t*, unsigned*, unsigned*, unsigned*);
       uint32_t xfb_addr; unsigned xw, xh, xstride;
       GX_GetXfb(&xfb_addr, &xw, &xh, &xstride);
+      
+      // Prioritize the actual Video Interface (VI) frame buffer base if set.
+      // Games playing FMVs via CPU will update this register without touching GX.
+      if (nwii::runtime::hw::g_vi_top_field_base != 0) {
+          xfb_addr = nwii::runtime::hw::g_vi_top_field_base;
+      }
+
+      static int xc = 0;
+      if (xc++ < 60) {
+          printf("[GXTRACE] XFB addr=0x%08X (VI=0x%08X) w=%u h=%u stride=%u\n", xfb_addr, nwii::runtime::hw::g_vi_top_field_base, xw, xh, xstride);
+      }
+
       if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
           !std::getenv("NWII_NOXFB")) {
         xfb_px.resize((size_t)xw * xh * 4);
@@ -514,25 +526,27 @@ int main(int argc, char **argv) {
         } else {
           UpdateTexture(xfb_tex, xfb_px.data());
         }
-        DrawTexturePro(xfb_tex, {0, 0, (float)xw, (float)xh},
-                       {0, 0, 640, 480}, {0, 0}, 0.0f, WHITE);
       }
-
-      // Drain and render the GX FIFO exactly once per frame, inside the
-      // render target: a second drain outside a drawing context consumed
-      // half the command stream and discarded its draws.
       extern void ProcessGXFifo();
       ProcessGXFifo();
       EndTextureMode();
 
       BeginDrawing();
       ClearBackground(BLACK);
-      rlDisableColorBlend();
+      
+      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
+          !std::getenv("NWII_NOXFB")) {
+        DrawTexturePro(xfb_tex, {0, 0, (float)xw, (float)xh},
+                       {0, 0, (float)GetScreenWidth(), (float)GetScreenHeight()}, {0, 0}, 0.0f, WHITE);
+      }
+      
+      rlEnableColorBlend();
+      // Draw EFB on top of XFB. Assuming the clear color has alpha=0 when transparent,
+      // it will overlay correctly.
       DrawTexturePro(target.texture,
                      { 0, 0, (float)target.texture.width, -(float)target.texture.height },
                      { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() },
                      { 0, 0 }, 0.0f, WHITE);
-      rlEnableColorBlend();
       EndDrawing();
 
       // NWII_SCREENSHOT=prefix: dump the framebuffer to <prefix>_<frame>.png

@@ -49,8 +49,6 @@ add_library(nwiiruntime STATIC
     src/hle/devices/stm_device.cpp
     src/hle/devices/usb_device.cpp
     src/hle/devices/es_device.cpp
-    src/hle/cafe/cafe_os.cpp
-    src/hle/cafe/latte_gpu.cpp
     src/hle/interpreter.cpp
 )
 

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Static recompilation and runtime toolkit for Nintendo GameCube, Wii, and Wii U executables.
+  Static recompilation and runtime toolkit for Nintendo GameCube and Wii executables.
 </p>
 
 <p align="center">
@@ -26,12 +26,14 @@
 
 ## What is this?
 
-NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) and Wii U (`.rpx`, `.rpl`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
+NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) executables into native C++ code. The output is a standalone executable that runs natively without instruction-level emulation. Hardware interactions are handled by a High-Level Emulation (HLE) runtime layer.
+
+> **Wii U Note:** Support for Wii U (`.rpx`, `.rpl`) and Cafe OS has been moved to our dedicated recompile repository! For Wii U, please visit: [nWiiURecomp](https://github.com/BlackLineInteractive/nWiiURecomp)
 
 > **A Note on Our Approach:** Unlike some recompilation projects that rely heavily on Dolphin's VideoCommon or shader generation (where the recompiler is merely a PPC-to-C translator feeding the GX stream back into an existing emulator), NWiiRecomp features a fully **custom-built** rasterizer, shader generator, and HLE runtime from scratch. We are not simply reusing an existing emulator's pipeline; this is a fully standalone implementation.
 
 > **Note:** The recompiler and runtime are designed to be **universal**. We have tested the architecture on radically different games (e.g., *Need For Speed: Hot Pursuit 2*, *Mario Party 7*, and *Silent Hill: Shattered Memories*). The fact that these fundamentally different engines yield identical, stable hardware behavior and 0 crashes confirms the universality of the core emulator design.
-> 
+>
 > **Latest Update:** Both *Need For Speed* and *Mario Party 7* (GameCube) successfully boot, stream from DVD, and generate GX display lists! The runtime now correctly parses 2D/3D geometry and decodes hardware texture formats (I4, I8, RGB565, CMPR) via Raylib!
 
 ---
@@ -97,7 +99,6 @@ NWiiRecomp/
 - **GX Graphics**: Structure tracking and WGPIPE ring-buffer parsing.
 - **Memory**: DOL loading and virtual memory mapping; GC and Wii low-memory
   layouts (arena, FST, BI2, console type) set up per platform.
-- **Wii U / Cafe OS**: Initial RPX loading, ELF parsing, and Latte GPU PM4 packet handling.
 - **Headless mode**: `NWII_HEADLESS=1` runs without a window for automated
   boot testing and log capture.
 

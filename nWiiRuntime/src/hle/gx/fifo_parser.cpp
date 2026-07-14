@@ -111,16 +111,26 @@ namespace {
         } else if (reg == 0x4D) { // display copy stride (>>5)
             g_state.efbCopyStride = (val & 0x3FF) << 5;
         } else if (reg == 0x52) { // PE_COPY_EXECUTE
+
+            if (gx_trace()) {
+                printf("[GXTRACE] BP 0x52 PE_COPY_EXECUTE val=0x%08X (bit14=%d bit11=%d)\n",
+                       val, (val & 0x4000) != 0, (val & 0x800) != 0);
+            }
             // Bit 14 (0x4000) = copy to XFB (vs a texture). On that copy the
             // game has finished a frame: latch the XFB for presentation and
             // signal draw-done.
             if (val & 0x4000) {
                 g_state.xfbAddr = g_state.efbCopyDest;
+
+            printf("[GXTRACE] g_state.xfbAddr set to 0x%08X (w=%d h=%d)\n", g_state.xfbAddr, g_state.efbW, g_state.efbH);
                 g_state.xfbW = g_state.efbW;
                 g_state.xfbH = g_state.efbH;
                 g_state.xfbStride = g_state.efbCopyStride
                                         ? g_state.efbCopyStride
                                         : (uint32_t)g_state.efbW * 2;
+            }
+            if (val & 0x800) {
+                g_state.pe_clear_pending = true;
             }
             nwii::runtime::hw::pe_signal_finish();
         }

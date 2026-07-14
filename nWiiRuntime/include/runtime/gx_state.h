@@ -93,6 +93,7 @@ struct GXState {
   uint32_t efbCopyStride; // BP 0x4D << 5, bytes per line
   uint32_t xfbAddr;
   uint16_t xfbW, xfbH, xfbStride;
+  bool pe_clear_pending;
 
   // XF (Transform) State
   float projection[7];
