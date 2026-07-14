@@ -113,9 +113,30 @@ int main(int argc, char **argv) {
       std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
       return 1;
     }
+    // macOS only offers a 3.2 core profile through NSOpenGLProfile (SDL maps
+    // any core request onto it), so ask for exactly that.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    // Spell the framebuffer out: SDL derives the pixel format's colour size
+    // from the current display mode, which is bogus when the process cannot
+    // see a display (locked/asleep screen) and the format then fails.
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    {
+      SDL_DisplayMode dm;
+      if (SDL_GetCurrentDisplayMode(0, &dm) == 0)
+        std::cout << "[GL] display 0: " << dm.w << "x" << dm.h << " fmt="
+                  << SDL_GetPixelFormatName(dm.format) << std::endl;
+      else
+        std::cerr << "[GL] no display mode: " << SDL_GetError()
+                  << " (screen locked or no display attached?)" << std::endl;
+    }
 #ifdef __APPLE__
     // macOS only exposes core profiles through a forward-compatible context.
     // The flag is set via SDL_GL_CONTEXT_FLAGS; there is no standalone
@@ -136,6 +157,10 @@ int main(int argc, char **argv) {
                               nwii::runtime::Config::get().window_width,
                               nwii::runtime::Config::get().window_height,
                               window_flags);
+    if (!window) {
+      std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
+      return 1;
+    }
     // Publish the window before any GX work: the renderer is created lazily
     // on the first FIFO flush, and the Metal backend needs the real handle
     // to attach its layer to.
@@ -143,7 +168,16 @@ int main(int argc, char **argv) {
     GX_SetWindow(window);
     if (use_gl) {
       gl_ctx = SDL_GL_CreateContext(window);
-      gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
+      if (!gl_ctx) {
+        std::cerr << "SDL_GL_CreateContext failed: " << SDL_GetError() << "\n";
+        return 1;
+      }
+      if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        std::cerr << "glad: failed to load GL functions\n";
+        return 1;
+      }
+      std::cout << "[GL] " << (const char *)glGetString(GL_RENDERER) << " | "
+                << (const char *)glGetString(GL_VERSION) << std::endl;
       SDL_GL_SetSwapInterval(1);
     }
     
@@ -576,15 +610,47 @@ int main(int argc, char **argv) {
 
       if (!headless) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height);
+        // The window is created with SDL_WINDOW_ALLOW_HIGHDPI, so on a Retina
+        // display the GL drawable is 2x the logical window size. Using the
+        // logical size here painted only the lower-left quarter of the screen.
+        int draw_w = 0, draw_h = 0;
+        SDL_GL_GetDrawableSize(window, &draw_w, &draw_h);
+        glViewport(0, 0, draw_w, draw_h);
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
 
         // Very crude blit of EFB to screen to verify rendering
         glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        glBlitFramebuffer(0, 0, 640, 480, 0, 0, nwii::runtime::Config::get().window_width, nwii::runtime::Config::get().window_height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBlitFramebuffer(0, 0, 640, 480, 0, 0, draw_w, draw_h,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
         
+        // NWII_SCREENSHOT=prefix: dump the EFB to <prefix>_<frame>.bmp every
+        // ~5s so a windowed run can be inspected without screen access.
+        if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
+          static int shot_frame = 0;
+          if ((++shot_frame % 20) == 0) {
+            std::vector<unsigned char> px(640 * 480 * 4);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+            glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            // glReadPixels origin is bottom-left; BMP wants top-down rows.
+            std::vector<unsigned char> flip(px.size());
+            for (int y = 0; y < 480; ++y)
+              std::memcpy(&flip[(size_t)y * 640 * 4],
+                          &px[(size_t)(479 - y) * 640 * 4], 640 * 4);
+            SDL_Surface *s = SDL_CreateRGBSurfaceFrom(
+                flip.data(), 640, 480, 32, 640 * 4, 0x000000FF, 0x0000FF00,
+                0x00FF0000, 0xFF000000);
+            if (s) {
+              std::string p = std::string(shot_pfx) + "_" +
+                              std::to_string(shot_frame) + ".bmp";
+              SDL_SaveBMP(s, p.c_str());
+              SDL_FreeSurface(s);
+            }
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+          }
+        }
+
         SDL_GL_SwapWindow(window);
       }
 

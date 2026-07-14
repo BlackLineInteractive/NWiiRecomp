@@ -795,6 +795,26 @@ bool Recompiler::generate_cmake_project(uint32_t entry_point) {
   out << ")\n";
   out << "set(SDL2_DISABLE_INSTALL ON CACHE BOOL \"\" FORCE)\n";
   out << "FetchContent_MakeAvailable(SDL2)\n\n";
+  // Same workaround as the root CMakeLists: SDL's Cocoa GL backend asks for
+  // NSOpenGLPFAAllowOfflineRenderers together with a pinned
+  // NSOpenGLPFAScreenMask, which no pixel format satisfies on dual-GPU Macs,
+  // so every SDL_GL_CreateContext fails. Each build tree fetches its own SDL
+  // copy, so the exported project has to patch it too.
+  out << "if(APPLE)\n";
+  out << "    set(_sdl_gl_src "
+         "\"${sdl2_SOURCE_DIR}/src/video/cocoa/SDL_cocoaopengl.m\")\n";
+  out << "    if(EXISTS \"${_sdl_gl_src}\")\n";
+  out << "        file(READ \"${_sdl_gl_src}\" _sdl_gl_txt)\n";
+  out << "        string(REPLACE \"attr[i++] = "
+         "NSOpenGLPFAAllowOfflineRenderers;\"\n";
+  out << "                       \"/* NWii: breaks pixel format on dual-GPU "
+         "Macs */\"\n";
+  out << "                       _sdl_gl_patched \"${_sdl_gl_txt}\")\n";
+  out << "        if(NOT _sdl_gl_txt STREQUAL _sdl_gl_patched)\n";
+  out << "            file(WRITE \"${_sdl_gl_src}\" \"${_sdl_gl_patched}\")\n";
+  out << "        endif()\n";
+  out << "    endif()\n";
+  out << "endif()\n\n";
 
   out << "add_subdirectory(nWiiRuntime)\n\n";
 
