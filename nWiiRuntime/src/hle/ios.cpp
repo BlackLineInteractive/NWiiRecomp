@@ -12,6 +12,7 @@
 #include <vector>
 #include <thread>
 #include "runtime/hw/hw.h"
+#include "runtime/event_scheduler.h"
 #include "runtime/os_thread.h"
 #include "runtime/virtual_disc.h"
 
@@ -1076,16 +1077,32 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // stepping past an exact multiple of 500000 skipped the `% == 0` check
   // entirely — VI never fired during idle, the frame counter never advanced,
   // and a thread sleeping for retrace (e.g. MP7's main) hung forever.
-  static uint64_t s_last_vi_inst = 0;
-  if (ctx.inst_count - s_last_vi_inst >= 500000 &&
-      (nwii::runtime::hw::pi_intmr & 0x100) && !ctx.in_callback &&
-      !(nwii::runtime::hw::pi_intsr & 0x100) &&
-      // dispatch_saved_ctx guards against a retrace storm mid-handler, but when
-      // the guest is idle (no current thread) it must still get retrace VIs to
-      // wake a sleeping thread — so bypass that guard while idle.
-      (ctx.dispatch_saved_ctx == 0 || ctx.mmu.read32(0x800000E4) == 0)) {
-      s_last_vi_inst = ctx.inst_count;
-      nwii::runtime::hw::vi_trigger_interrupt();
+  // VI retrace is now a recurring scheduler event (registered once below);
+  // advancing the scheduler here fires it — and every other scheduled
+  // hardware event (audio DMA, DI completion) — at the right tick.
+  {
+      static bool vi_registered = false;
+      if (!vi_registered) {
+          vi_registered = true;
+          // One field time in timebase ticks. In wall-clock mode this is a
+          // real ~60Hz retrace; in execution mode it is TB_freq/60 guest
+          // instructions, matching the old ~500k threshold.
+          uint64_t vi_period = ctx.tb_freq / 60;
+          if (vi_period == 0) vi_period = 500000;
+          nwii::runtime::EventScheduler::get().schedule_recurring(
+              vi_period, [](CPUContext& c, uint64_t) {
+                  // Same storm guard as before: assert a retrace only when no
+                  // handler is in flight (or the guest is idle) and the line is
+                  // not already pending — real hardware keeps one retrace
+                  // asserted until the ISR acknowledges it.
+                  if ((nwii::runtime::hw::pi_intmr & 0x100) && !c.in_callback &&
+                      !(nwii::runtime::hw::pi_intsr & 0x100) &&
+                      (c.dispatch_saved_ctx == 0 || c.mmu.read32(0x800000E4) == 0)) {
+                      nwii::runtime::hw::vi_trigger_interrupt();
+                  }
+              });
+      }
+      nwii::runtime::EventScheduler::get().advance(ctx, ctx.read_timebase());
   }
 
   // Fire DEC exception only on actual underflow (game arms via mtdec).
