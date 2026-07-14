@@ -437,6 +437,14 @@ int main(int argc, char **argv) {
     // EFB-sized offscreen target which is then scaled onto the window.
     RenderTexture2D target = LoadRenderTexture(640, 480);
 
+    // Console audio output: the Audio DMA (hw_dsp) decodes the game's
+    // mixed 32kHz stereo buffers into a ring; feed it to a raylib stream.
+    AudioStream gc_audio = {0};
+    if (IsAudioDeviceReady()) {
+      gc_audio = LoadAudioStream(32000, 16, 2);
+      PlayAudioStream(gc_audio);
+    }
+
     while (!WindowShouldClose() && ctx->is_running) {
       // Poll Inputs exactly once per frame
       nwii::runtime::input::InputManager::get().update();
@@ -474,6 +482,13 @@ int main(int argc, char **argv) {
                           std::to_string(shot_frame) + ".png";
           TakeScreenshot(p.c_str());
         }
+      }
+
+      // Feed the host audio stream from the Audio-DMA ring.
+      if (gc_audio.buffer && IsAudioStreamProcessed(gc_audio)) {
+        static int16_t abuf[1024 * 2];
+        nwii::runtime::hw::dsp_audio_pull(abuf, 1024);
+        UpdateAudioStream(gc_audio, abuf, 1024);
       }
 
       // Trigger VBlank interrupt to drive the OS thread queue

@@ -36,6 +36,8 @@ static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 // handler); models the milliseconds a real DSP spends on an audio frame.
 int g_dsp_mail_delay = 0;
 
+static void dsp_update_pi();
+
 // ---- Audio DMA (0xCC005030-0xCC00503A) ----
 // The final mixed output of the console: the game points this DMA at a
 // PCM buffer in main RAM (s16 big-endian, interleaved stereo, 32kHz) and

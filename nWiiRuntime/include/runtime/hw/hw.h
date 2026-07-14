@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/hw/mmio_dispatcher.h"
 #include <cstdint>
+#include <cstddef>
 #include <atomic>
 
 namespace nwii::runtime {
@@ -30,6 +31,9 @@ void dsp_trigger_interrupt();
 int dsp_pending_os_interrupt();
 void di_tick();  // counts down g_di_interrupt_delay, raises the DI IRQ at zero
 void dsp_tick(); // counts down the deferred DSP-mail ack, raises PI 0x40
+// Audio DMA output: pulls up to `frames` stereo s16 frames (32kHz) for the
+// host audio backend; pads with silence when the game is behind.
+size_t dsp_audio_pull(int16_t* out, size_t frames);
 void pe_signal_token(uint32_t token, bool raise_interrupt); // GX stream saw BP 0x47/0x48
 void pe_signal_finish();                                    // GX stream saw draw-done (BP 0x45)
 

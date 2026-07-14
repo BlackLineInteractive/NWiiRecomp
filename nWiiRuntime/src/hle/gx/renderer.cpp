@@ -236,6 +236,26 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
       }
 
       const auto &stage0 = g_state.texStages[0];
+      if (gx_trace() && use_tex0) {
+        static int qn = 0;
+        if (qn++ < 6) {
+          printf("[GXTRACE] texquad prim=0x%02X proj=[%.4f %.3f %.4f %.3f %.3f %.3f t=%.0f]\n",
+                 cmd.prim_type, g_state.projection[0], g_state.projection[1],
+                 g_state.projection[2], g_state.projection[3],
+                 g_state.projection[4], g_state.projection[5],
+                 g_state.projection[6]);
+          for (size_t vi = 0; vi < cmd.vertices.size() && vi < 4; vi++) {
+            const auto &vv = cmd.vertices[vi];
+            const float *m2 = &g_state.posMatrices[vv.posMtxIdx * 4];
+            float vx = vv.pos[0]*m2[0] + vv.pos[1]*m2[1] + vv.pos[2]*m2[2] + m2[3];
+            float vy = vv.pos[0]*m2[4] + vv.pos[1]*m2[5] + vv.pos[2]*m2[6] + m2[7];
+            float vz = vv.pos[0]*m2[8] + vv.pos[1]*m2[9] + vv.pos[2]*m2[10] + m2[11];
+            printf("  v%zu raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.2f) uv=(%.2f,%.2f)\n",
+                   vi, vv.pos[0], vv.pos[1], vv.pos[2], vx, vy, vz,
+                   vv.tex[0][0], vv.tex[0][1]);
+          }
+        }
+      }
       if (gx_trace()) {
         static int dn = 0;
         if (dn++ < 40) {
