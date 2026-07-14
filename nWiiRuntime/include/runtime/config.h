@@ -12,6 +12,11 @@ enum class Platform {
     WiiU
 };
 
+enum class Backend {
+    OpenGL,
+    Metal
+};
+
 // Per-game quirks loaded from assets/games/<game_id>.toml
 struct GameProfile {
     // Override callback stack top if the game uses 0x816F0000 for its own data.
@@ -52,6 +57,7 @@ public:
     void load_game_profile();
 
     Platform platform = Platform::Wii;
+    Backend backend = Backend::OpenGL;
     bool enable_vsync = true;
     int window_width = 640;
     int window_height = 480;

@@ -1,4 +1,4 @@
-#include "runtime/texture_cache.h"
+#include "runtime/texture_cache_gl.h"
 #include <iostream>
 
 // GX texture decoding, kept bit-exact with Dolphin's TextureDecoder:
@@ -19,7 +19,7 @@ TextureCache& TextureCache::get() {
 
 void TextureCache::clear() {
     for (auto& pair : cache) {
-        UnloadTexture(pair.second);
+        glDeleteTextures(1, &pair.second);
     }
     cache.clear();
 }
@@ -51,9 +51,7 @@ uint32_t texture_data_size(uint32_t width, uint32_t height, uint32_t format) {
     return wt * ht * tw * th * bpp / 8;
 }
 
-Texture2D TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
-    // Sampled content hash: textures are routinely re-rendered in place
-    // (fonts, video frames), so the address alone cannot identify content.
+GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
     uint32_t size = texture_data_size(stage.width, stage.height, stage.format);
     uint32_t stride = size > 32 * 4096 ? size / 4096 : 32;
     uint32_t hash = 2166136261u;
@@ -67,17 +65,16 @@ Texture2D TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) 
         return it->second;
     }
 
-    // Content changed or new texture: cap the cache so per-frame regenerated
-    // textures (video splash frames) cannot grow it without bound.
     if (cache.size() > 512)
         clear();
 
     Image img = decode_texture(ctx, stage);
-    Texture2D tex = LoadTextureFromImage(img);
-    // Textures are decoded with a single mip level; the default trilinear
-    // sampler would sample missing mips (black). Point matches GX_NEAR;
-    // bilinear would need GX_TF filter state, tracked later.
-    SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, stage.width, stage.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     UnloadImage(img);
 
     cache[key] = tex;

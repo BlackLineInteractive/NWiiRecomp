@@ -1,13 +1,18 @@
 #pragma once
 #include <vector>
+#include <memory>
 #include "runtime/gx_command.h"
 
 namespace nwii::runtime::gx {
 
-class Renderer {
+class IRenderer {
 public:
-    // Renders the list of commands using Raylib
-    static void Render(const std::vector<GXCommand>& commands);
+    virtual ~IRenderer() = default;
+    virtual void Initialize() = 0;
+    virtual void Render(const std::vector<GXCommand>& commands) = 0;
+    
+    // Creates the appropriate renderer (GL or Metal) based on Config::get().backend
+    static std::unique_ptr<IRenderer> Create();
 };
 
 } // namespace nwii::runtime::gx

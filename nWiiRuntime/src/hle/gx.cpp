@@ -1,5 +1,13 @@
-#include "runtime/raylib_stub.h"
+
 #include "runtime/cpu_context.h"
+
+static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
+
+void GX_Init() {
+    g_renderer = nwii::runtime::gx::IRenderer::Create();
+    g_renderer->Initialize();
+}
+
 namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 
 #include "runtime/gx/fifo_parser.h"
@@ -18,6 +26,14 @@ using namespace nwii::runtime;
 using namespace nwii::runtime::gx;
 
 GXState nwii::runtime::gx::g_state = {};
+
+
+static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
+
+void GX_Init() {
+    g_renderer = nwii::runtime::gx::IRenderer::Create();
+    g_renderer->Initialize();
+}
 
 namespace nwii::runtime {
     extern MMU* g_mmu; // Access to physical memory for Index Array
@@ -86,9 +102,23 @@ void ProcessGXFifo() {
         g_hw_fifo.clear();
 
     // Headless runs still parse (PE signals, GX state) but have no GL context.
-    if (IsWindowReady()) {
-        nwii::runtime::gx::Renderer::Render(commands);
+    if (true) {
+        if (!g_renderer) {
+        g_renderer = nwii::runtime::gx::IRenderer::Create();
+        g_renderer->Initialize();
     }
+    if (g_renderer) {
+        g_renderer->Render(commands);
+    }
+    }
+}
+
+
+static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
+
+void GX_Init() {
+    g_renderer = nwii::runtime::gx::IRenderer::Create();
+    g_renderer->Initialize();
 }
 
 namespace nwii::runtime {

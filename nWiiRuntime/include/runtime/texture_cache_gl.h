@@ -1,27 +1,43 @@
-#include "runtime/raylib_stub.h"
 #pragma once
 
+#include <glad/glad.h>
 #include "runtime/cpu_context.h"
 #include "runtime/gx_state.h"
 
 #include <unordered_map>
 #include <cstdint>
+#include <cstdlib>
+
+struct Color {
+    uint8_t r, g, b, a;
+};
+
+struct Image {
+    void *data;
+    int width;
+    int height;
+    int mipmaps;
+    int format;
+};
+
+inline Image GenImageColor(int width, int height, Color color) {
+    Image img;
+    img.width = width;
+    img.height = height;
+    img.data = malloc(width * height * sizeof(Color));
+    for (int i=0; i<width*height; i++) ((Color*)img.data)[i] = color;
+    return img;
+}
+inline void UnloadImage(Image img) { free(img.data); }
+
+#define BLANK Color{0,0,0,0}
+#define MAGENTA Color{255,0,255,255}
 
 namespace nwii::runtime::hle {
 
-// GX texture formats (TexImage0 format field).
 enum class TextureFormat {
-    I4 = 0,
-    I8 = 1,
-    IA4 = 2,
-    IA8 = 3,
-    RGB565 = 4,
-    RGB5A3 = 5,
-    RGBA8 = 6,
-    C4 = 8,
-    C8 = 9,
-    C14X2 = 10,
-    CMPR = 14
+    I4 = 0, I8 = 1, IA4 = 2, IA8 = 3, RGB565 = 4, RGB5A3 = 5,
+    RGBA8 = 6, C4 = 8, C8 = 9, C14X2 = 10, CMPR = 14
 };
 
 struct TextureKey {
@@ -59,17 +75,14 @@ class TextureCache {
 public:
     static TextureCache& get();
 
-    // Decode the texture a BP TexImage stage points at (or return the
-    // cached GPU texture). Handles paletted formats via the stage's TLUT
-    // binding. Content changes are caught by a sampled data hash.
-    Texture2D get_texture(CPUContext& ctx, const gx::TexStage& stage);
+    GLuint get_texture(CPUContext& ctx, const gx::TexStage& stage);
 
     void clear();
 
 private:
     TextureCache() = default;
 
-    std::unordered_map<TextureKey, Texture2D, TextureKeyHash> cache;
+    std::unordered_map<TextureKey, GLuint, TextureKeyHash> cache;
 
     Image decode_texture(CPUContext& ctx, const gx::TexStage& stage);
 
@@ -84,7 +97,6 @@ private:
     void decode_paletted(CPUContext& ctx, const gx::TexStage& stage, Color* out);
 };
 
-// Byte size of a texture image in guest RAM (tile-rounded dimensions).
 uint32_t texture_data_size(uint32_t width, uint32_t height, uint32_t format);
 
 } // namespace nwii::runtime::hle

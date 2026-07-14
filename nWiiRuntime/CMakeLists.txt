@@ -15,9 +15,10 @@ add_library(nwiiruntime STATIC
     src/hle/pad.cpp
     src/hle/dvd.cpp
     src/hle/gx/fifo_parser.cpp
-    src/hle/gx/renderer.cpp
+    src/hle/gx/renderer_gl.cpp
+    src/hle/gx/renderer_factory.cpp
     src/hle/gx/tev_shader_gen.cpp
-    src/hle/texture_cache.cpp
+    src/hle/texture_cache_gl.cpp
     src/hle/ax.cpp
     src/hle/ios.cpp
     src/hle/ios_kernel.cpp

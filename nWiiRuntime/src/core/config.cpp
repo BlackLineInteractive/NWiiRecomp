@@ -32,6 +32,17 @@ void Config::load(const std::string& filepath) {
         auto vsync = tbl["graphics"]["vsync"].value<bool>();
         if (vsync) enable_vsync = *vsync;
 
+        auto back = tbl["graphics"]["backend"].value<std::string>();
+        if (back) {
+            if (*back == "Metal" || *back == "metal") {
+                backend = Backend::Metal;
+                std::cout << "[Config] Backend set to Metal." << std::endl;
+            } else {
+                backend = Backend::OpenGL;
+                std::cout << "[Config] Backend set to OpenGL." << std::endl;
+            }
+        }
+
         auto w = tbl["graphics"]["window_width"].value<int>();
         if (w) window_width = *w;
 
