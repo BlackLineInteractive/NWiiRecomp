@@ -118,11 +118,20 @@ struct GXState {
       
       // BP registers
       add_u32(bp[0x00]); // NumTexGens, NumChans, NumTevs
+      add_u32(bp[0x40]); // ZMode
       add_u32(bp[0x41]); // Blend
+      add_u32(bp[0x42]); // Blend logic
+      add_u32(bp[0x43]); // Blend dest alpha
       add_u32(bp[0xF3]); // Alpha test
       for (int i = 0xC0; i <= 0xDF; ++i) add_u32(bp[i]); // TEV
       for (int i = 0x28; i <= 0x2F; ++i) add_u32(bp[i]); // TexCoord
       for (int i = 0xE9; i <= 0xEE; ++i) add_u32(bp[i]); // Fog
+      
+      // Tex formats
+      for (int i = 0; i < 8; ++i) {
+          add_u8(texStages[i].format);
+          add_u8(texStages[i].tlut_format);
+      }
       
       // CP registers
       add_u32(cp[0x50]); // VCD_LO

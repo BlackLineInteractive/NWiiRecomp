@@ -8,6 +8,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include <vector>
+#include <unordered_map>
 #include "runtime/gx/tev_shader_gen.h"
 
 // HLE GX renderer on top of raylib/rlgl.
@@ -108,6 +109,8 @@ static void EmitVertex(const VertexData &vtx) {
   }
 }
 
+static std::unordered_map<uint64_t, Shader> s_shader_cache;
+
 // Draws one GX primitive, unrolling strip/fan topologies (rlgl only
 // batches triangles, quads and lines).
 static void DrawPrimitive(const GXCommand &cmd) {
@@ -116,15 +119,40 @@ static void DrawPrimitive(const GXCommand &cmd) {
   if (n == 0)
     return;
 
-  if (gx_trace()) {
-    static int shader_dumps = 0;
-    if (shader_dumps < 1) {
-      auto shader = GenerateTEVShader(g_state, cmd.prim_type);
-      printf("[GXTRACE] ==== VERTEX SHADER ====\n%s\n[GXTRACE] ==== FRAGMENT SHADER ====\n%s\n", 
-             shader.vertex_source.c_str(), shader.fragment_source.c_str());
-      fflush(stdout);
-      shader_dumps++;
+  bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
+  Shader active_shader = {0};
+
+  if (use_shader) {
+    uint64_t hash = g_state.GetShaderHash(cmd.prim_type);
+    auto it = s_shader_cache.find(hash);
+    if (it != s_shader_cache.end()) {
+      active_shader = it->second;
+    } else {
+      auto src = GenerateTEVShader(g_state, cmd.prim_type);
+      active_shader = LoadShaderFromMemory(src.vertex_source.c_str(), src.fragment_source.c_str());
+      s_shader_cache[hash] = active_shader;
+      if (gx_trace()) {
+        printf("[GXTRACE] Compiled new shader! Hash: %llx\n", (unsigned long long)hash);
+      }
     }
+    
+    // Bind shader
+    BeginShaderMode(active_shader);
+    
+    // Bind uniforms: tex maps
+    for (int i = 0; i < 8; ++i) {
+        if (g_state.texStages[i].base_addr != 0) {
+            int loc = GetShaderLocation(active_shader, TextFormat("uTex%d", i));
+            if (loc >= 0) {
+                // rlgl handles active texture slots when rlSetUniformSampler is used
+                // but Raylib SetShaderValueTexture works at higher level. We use rlSetUniformSampler.
+                // Wait, rlgl immediate mode only supports 1 texture natively via rlSetTexture.
+                // To pass multiple, we must bind them to GL_TEXTURE1, 2, etc.
+                // For now, if we just bind tex0, it works via rlSetTexture below.
+            }
+        }
+    }
+    // Bind uniforms: tevReg Konsts (placeholder, not fully mapped yet)
   }
 
   switch (cmd.prim_type) {
@@ -180,6 +208,10 @@ static void DrawPrimitive(const GXCommand &cmd) {
                cmd.prim_type, n);
     }
     break;
+  }
+
+  if (use_shader && active_shader.id != 0) {
+    EndShaderMode();
   }
 }
 
@@ -291,16 +323,31 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
                  mm[0], mm[1], mm[2], mm[3], mm[8], mm[9], mm[10], mm[11]);
         }
       }
-      if (use_tex0 && stage0.base_addr != 0 && stage0.width > 0 &&
-          stage0.height > 0 && nwii::runtime::g_ctx_ptr) {
-        // Creating a GL texture mid-batch invalidates rlgl's bound-texture
-        // bookkeeping: flush what is recorded first.
-        rlDrawRenderBatchActive();
-        Texture2D tex = nwii::runtime::hle::TextureCache::get().get_texture(
-            *nwii::runtime::g_ctx_ptr, stage0);
-        rlSetTexture(tex.id);
+      bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
+      
+      if (use_shader) {
+        rlDrawRenderBatchActive(); // flush before state changes
+        for (int i = 0; i < 8; ++i) {
+          const auto &stage = g_state.texStages[i];
+          if (stage.base_addr != 0 && stage.width > 0 && stage.height > 0 && nwii::runtime::g_ctx_ptr) {
+            Texture2D tex = nwii::runtime::hle::TextureCache::get().get_texture(
+                *nwii::runtime::g_ctx_ptr, stage);
+            // We'll pass the texture IDs into DrawPrimitive so it can bind them via SetShaderValueTexture
+            // Actually, we can just bind tex0 to rlSetTexture for fallback compatibility,
+            // and the shader will use it.
+            if (i == 0) rlSetTexture(tex.id);
+          }
+        }
       } else {
-        rlSetTexture(0);
+        if (use_tex0 && stage0.base_addr != 0 && stage0.width > 0 &&
+            stage0.height > 0 && nwii::runtime::g_ctx_ptr) {
+          rlDrawRenderBatchActive();
+          Texture2D tex = nwii::runtime::hle::TextureCache::get().get_texture(
+              *nwii::runtime::g_ctx_ptr, stage0);
+          rlSetTexture(tex.id);
+        } else {
+          rlSetTexture(0);
+        }
       }
 
       DrawPrimitive(cmd);
