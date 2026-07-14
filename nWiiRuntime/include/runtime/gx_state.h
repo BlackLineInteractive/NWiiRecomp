@@ -58,6 +58,11 @@ struct ZMode {
 
 // GX
 struct GXState {
+  // Raw register files for shader cache hashing
+  uint32_t cp[256];
+  uint32_t xf[256];
+  uint32_t bp[256];
+
   // CP (Command Processor) State. The 16 vertex arrays are: pos, nrm,
   // clr0, clr1, tex0-7, and the 4 indexed-XF arrays A-D (LOAD_INDX).
   VATSlot vat[8];
@@ -79,6 +84,15 @@ struct GXState {
   // background color of the frame.
   uint32_t clearAR;
   uint32_t clearGB;
+  // EFB copy (GXCopyDisp) source rectangle + destination. When PE_COPY
+  // (BP 0x52) fires with the copy-to-XFB bit, the game has composed a
+  // frame into the XFB buffer in main RAM; xfb* latch the last one so the
+  // frame loop can present it (YUYV) regardless of the GX rasterizer.
+  uint16_t efbSrcX, efbSrcY, efbW, efbH;
+  uint32_t efbCopyDest;   // XFB/texture dest in RAM (BP 0x4B << 5)
+  uint32_t efbCopyStride; // BP 0x4D << 5, bytes per line
+  uint32_t xfbAddr;
+  uint16_t xfbW, xfbH, xfbStride;
 
   // XF (Transform) State
   float projection[7];
@@ -91,6 +105,34 @@ struct GXState {
   uint8_t tlutMem[0x80000];
   // Latched by BP LOADTLUT0 (source RAM address), consumed by LOADTLUT1.
   uint32_t tlutSrcAddr;
+
+  uint64_t GetShaderHash(uint8_t prim_type) const {
+      uint64_t hash = 14695981039346656037ull;
+      auto add_u8 = [&](uint8_t b) { hash = (hash ^ b) * 1099511628211ull; };
+      auto add_u32 = [&](uint32_t w) {
+          add_u8(w & 0xFF); add_u8((w >> 8) & 0xFF);
+          add_u8((w >> 16) & 0xFF); add_u8((w >> 24) & 0xFF);
+      };
+
+      add_u8(prim_type);
+      
+      // BP registers
+      add_u32(bp[0x00]); // NumTexGens, NumChans, NumTevs
+      add_u32(bp[0x41]); // Blend
+      add_u32(bp[0xF3]); // Alpha test
+      for (int i = 0xC0; i <= 0xDF; ++i) add_u32(bp[i]); // TEV
+      for (int i = 0x28; i <= 0x2F; ++i) add_u32(bp[i]); // TexCoord
+      for (int i = 0xE9; i <= 0xEE; ++i) add_u32(bp[i]); // Fog
+      
+      // CP registers
+      add_u32(cp[0x50]); // VCD_LO
+      add_u32(cp[0x60]); // VCD_HI
+      
+      // XF registers
+      add_u32(xf[0x103F - 0x1000]); // NumColors
+      
+      return hash;
+  }
 };
 
 extern GXState g_state;

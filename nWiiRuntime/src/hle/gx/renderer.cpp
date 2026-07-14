@@ -8,6 +8,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include <vector>
+#include "runtime/gx/tev_shader_gen.h"
 
 // HLE GX renderer on top of raylib/rlgl.
 //
@@ -115,6 +116,17 @@ static void DrawPrimitive(const GXCommand &cmd) {
   if (n == 0)
     return;
 
+  if (gx_trace()) {
+    static int shader_dumps = 0;
+    if (shader_dumps < 1) {
+      auto shader = GenerateTEVShader(g_state, cmd.prim_type);
+      printf("[GXTRACE] ==== VERTEX SHADER ====\n%s\n[GXTRACE] ==== FRAGMENT SHADER ====\n%s\n", 
+             shader.vertex_source.c_str(), shader.fragment_source.c_str());
+      fflush(stdout);
+      shader_dumps++;
+    }
+  }
+
   switch (cmd.prim_type) {
   case 0x80: // GX_QUADS
     rlBegin(RL_QUADS);
@@ -193,6 +205,9 @@ void Renderer::Render(const std::vector<GXCommand> &commands) {
       bool touched_proj = false;
       for (size_t i = 0; i < cmd.payload.size(); ++i) {
         int current_addr = addr + (int)i;
+        if (current_addr >= 0x1000 && current_addr < 0x1000 + 256) {
+          std::memcpy(&g_state.xf[current_addr - 0x1000], &cmd.payload[i], 4);
+        }
         if (current_addr >= 0x0000 && current_addr <= 0x00FF) {
           g_state.posMatrices[current_addr] = cmd.payload[i];
         } else if (current_addr >= 0x1020 && current_addr <= 0x1026) {

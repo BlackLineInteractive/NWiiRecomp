@@ -29,6 +29,7 @@ namespace {
     }
 
     void ParseBP(uint8_t reg, uint32_t val) {
+        g_state.bp[reg] = val;
         // PE signals live in the BP stream: reg 0x45 val&0xF==2 is the
         // draw-done strobe (GXSetDrawDone), 0x47/0x48 carry the draw-sync
         // token (0x48 also raises the token interrupt). Signalling from the
@@ -99,6 +100,29 @@ namespace {
             g_state.clearAR = val & 0xFFFF; // copy-clear alpha<<8 | red
         } else if (reg == 0x50) {
             g_state.clearGB = val & 0xFFFF; // copy-clear green<<8 | blue
+        } else if (reg == 0x49) { // EFB_ADDR_TOP: source x,y
+            g_state.efbSrcX = val & 0x3FF;
+            g_state.efbSrcY = (val >> 10) & 0x3FF;
+        } else if (reg == 0x4A) { // EFB_ADDR_BOTTOM: width-1, height-1
+            g_state.efbW = (val & 0x3FF) + 1;
+            g_state.efbH = ((val >> 10) & 0x3FF) + 1;
+        } else if (reg == 0x4B) { // EFB copy dest address (>>5)
+            g_state.efbCopyDest = (val & 0xFFFFFF) << 5;
+        } else if (reg == 0x4D) { // display copy stride (>>5)
+            g_state.efbCopyStride = (val & 0x3FF) << 5;
+        } else if (reg == 0x52) { // PE_COPY_EXECUTE
+            // Bit 14 (0x4000) = copy to XFB (vs a texture). On that copy the
+            // game has finished a frame: latch the XFB for presentation and
+            // signal draw-done.
+            if (val & 0x4000) {
+                g_state.xfbAddr = g_state.efbCopyDest;
+                g_state.xfbW = g_state.efbW;
+                g_state.xfbH = g_state.efbH;
+                g_state.xfbStride = g_state.efbCopyStride
+                                        ? g_state.efbCopyStride
+                                        : (uint32_t)g_state.efbW * 2;
+            }
+            nwii::runtime::hw::pe_signal_finish();
         }
     }
 
@@ -108,6 +132,7 @@ namespace {
     // slots; the vertex attribute *formats* (VAT_A/B/C 0x70/0x80/0x90) are
     // per-slot. Bit layouts follow the GX SetVtxDesc/SetVtxAttrFmt encoding.
     void ParseCP(uint8_t reg, uint32_t val) {
+        g_state.cp[reg] = val;
         if (reg >= 0xA0 && reg <= 0xAF) {
             g_state.arrayBase[reg - 0xA0] = val & 0x3FFFFFFF;
         } else if (reg >= 0xB0 && reg <= 0xBF) {

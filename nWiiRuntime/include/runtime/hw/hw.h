@@ -30,7 +30,6 @@ void dsp_trigger_interrupt();
 // 5 = AID (audio DMA), 6 = ARAM DMA, 7 = DSP mailbox.
 int dsp_pending_os_interrupt();
 void di_tick();  // counts down g_di_interrupt_delay, raises the DI IRQ at zero
-void dsp_tick(); // counts down the deferred DSP-mail ack, raises PI 0x40
 // Audio DMA output: pulls up to `frames` stereo s16 frames (32kHz) for the
 // host audio backend; pads with silence when the game is behind.
 size_t dsp_audio_pull(int16_t* out, size_t frames);

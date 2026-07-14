@@ -37,6 +37,15 @@ void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[3] = (unsigned char)(g_state.clearAR >> 8);
 }
 
+// Last XFB the game presented via GXCopyDisp (BP 0x52 copy-to-XFB). addr==0
+// means no frame has been copied out yet.
+void GX_GetXfb(uint32_t* addr, unsigned* w, unsigned* h, unsigned* stride) {
+    *addr   = g_state.xfbAddr;
+    *w      = g_state.xfbW;
+    *h      = g_state.xfbH;
+    *stride = g_state.xfbStride;
+}
+
 void ProcessGXFifo() {
 
     std::lock_guard<std::mutex> lock(g_fifo_mutex);

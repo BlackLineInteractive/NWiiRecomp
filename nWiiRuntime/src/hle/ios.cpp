@@ -1031,8 +1031,6 @@ bool process_pending_callbacks(CPUContext &ctx) {
   // Drive-command completion: di_execute() arms a short delay so the OS can
   // return from the TSTART write before the DI interrupt preempts it.
   nwii::runtime::hw::di_tick();
-  // Deferred DSP-mail acknowledge (models real DSP frame latency).
-  nwii::runtime::hw::dsp_tick();
 
   if (ctx.vblank_pending) {
       if (!ctx.in_callback && (ctx.msr & 0x8000)) {

@@ -450,6 +450,8 @@ int main(int argc, char **argv) {
     // Main Raylib/GPU Thread Loop. The guest frame renders into an
     // EFB-sized offscreen target which is then scaled onto the window.
     RenderTexture2D target = LoadRenderTexture(640, 480);
+    Texture2D xfb_tex = {0};
+    std::vector<unsigned char> xfb_px;
 
     // Console audio output: the Audio DMA (hw_dsp) decodes the game's
     // mixed 32kHz stereo buffers into a ring; feed it to a raylib stream.
@@ -470,6 +472,52 @@ int main(int argc, char **argv) {
       unsigned char cc[4];
       GX_GetClearColor(cc);
       ClearBackground(Color{cc[0], cc[1], cc[2], 255});
+
+      // Present the XFB the game composed in RAM (GXCopyDisp, BP 0x52). It
+      // is the finished frame — YUYV 4:2:2, big-endian, `stride` bytes/row.
+      // Drawing it as the background shows real video/UI/2D output even when
+      // the GX rasterizer can't reproduce the 3D scene. NWII_NOXFB disables.
+      extern void GX_GetXfb(uint32_t*, unsigned*, unsigned*, unsigned*);
+      uint32_t xfb_addr; unsigned xw, xh, xstride;
+      GX_GetXfb(&xfb_addr, &xw, &xh, &xstride);
+      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
+          !std::getenv("NWII_NOXFB")) {
+        xfb_px.resize((size_t)xw * xh * 4);
+        auto clamp8 = [](float v) -> unsigned char {
+          return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);
+        };
+        for (unsigned y = 0; y < xh; ++y) {
+          uint32_t row = (xfb_addr | 0x80000000u) + (uint32_t)y * xstride;
+          for (unsigned x = 0; x < xw; x += 2) {
+            uint8_t y0 = ctx->mmu.read8(row + x * 2 + 0);
+            uint8_t cb = ctx->mmu.read8(row + x * 2 + 1);
+            uint8_t y1 = ctx->mmu.read8(row + x * 2 + 2);
+            uint8_t cr = ctx->mmu.read8(row + x * 2 + 3);
+            float fcb = (float)cb - 128.0f, fcr = (float)cr - 128.0f;
+            for (int k = 0; k < 2; ++k) {
+              float yy = (float)(k ? y1 : y0);
+              size_t p = ((size_t)y * xw + x + k) * 4;
+              if (x + (unsigned)k >= xw) break;
+              xfb_px[p + 0] = clamp8(yy + 1.371f * fcr);
+              xfb_px[p + 1] = clamp8(yy - 0.336f * fcb - 0.698f * fcr);
+              xfb_px[p + 2] = clamp8(yy + 1.732f * fcb);
+              xfb_px[p + 3] = 255;
+            }
+          }
+        }
+        if (xfb_tex.id == 0 || (unsigned)xfb_tex.width != xw ||
+            (unsigned)xfb_tex.height != xh) {
+          if (xfb_tex.id) UnloadTexture(xfb_tex);
+          Image im = {xfb_px.data(), (int)xw, (int)xh, 1,
+                      PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+          xfb_tex = LoadTextureFromImage(im);
+        } else {
+          UpdateTexture(xfb_tex, xfb_px.data());
+        }
+        DrawTexturePro(xfb_tex, {0, 0, (float)xw, (float)xh},
+                       {0, 0, 640, 480}, {0, 0}, 0.0f, WHITE);
+      }
+
       // Drain and render the GX FIFO exactly once per frame, inside the
       // render target: a second drain outside a drawing context consumed
       // half the command stream and discarded its draws.

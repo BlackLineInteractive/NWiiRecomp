@@ -9,8 +9,11 @@
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
+    extern CPUContext *g_ctx_ptr;
     extern uint64_t get_os_time(); // wall-clock microseconds
 }
+
+#include "runtime/event_scheduler.h"
 
 namespace nwii::runtime::hw {
 
@@ -37,10 +40,6 @@ static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 // acking faster makes the game immediately prepare the next frame, and the
 // audio pump then eats nearly all guest CPU time (observed: ~500 mails/s
 // and 0.13 game-frames/s on MP7 with a backedge-tick countdown).
-static constexpr uint64_t DSP_FRAME_US = 5000;
-static uint64_t dsp_mail_due_us = 0;
-int g_dsp_mail_delay = 0; // kept for the header ABI; no longer the pacer
-
 static void dsp_update_pi();
 
 // ---- Audio DMA (0xCC005030-0xCC00503A) ----
@@ -51,7 +50,7 @@ static void dsp_update_pi();
 // time and hand the samples to the host audio output through a ring.
 static uint32_t adma_addr = 0;      // source address in main RAM
 static uint16_t adma_control = 0;   // bit15 = enable, bits 0-14 = 32-byte blocks
-static uint64_t adma_next_us = 0;   // when the current buffer finishes
+static uint64_t s_adma_event_id = 0;
 static std::mutex adma_mutex;
 static std::vector<int16_t> adma_ring; // interleaved L,R host-endian
 
@@ -68,16 +67,11 @@ size_t dsp_audio_pull(int16_t* out, size_t frames) {
     return n;
 }
 
-static void adma_tick() {
+static void adma_event_cb(CPUContext& ctx, uint64_t late) {
     if (!(adma_control & 0x8000))
-        return;
-    uint64_t now = get_os_time();
-    if (now < adma_next_us)
         return;
     uint32_t blocks = adma_control & 0x7FFF;
     uint32_t bytes = blocks * 32;
-    // 32kHz stereo s16 = 4 bytes per frame -> duration of this buffer.
-    adma_next_us = now + (uint64_t)(bytes / 4) * 1000000 / 32000;
     if (g_mmu && bytes > 0) {
         std::lock_guard<std::mutex> lock(adma_mutex);
         // Cap the ring at ~1 second so a paused host doesn't grow it.
@@ -117,21 +111,7 @@ int dsp_pending_os_interrupt() {
     return 7;
 }
 
-// Called from the backedge callback pump: completes a pending mail ack
-// and paces the audio DMA.
-void dsp_tick() {
-    adma_tick();
-    if (dsp_mail_due_us != 0 && get_os_time() >= dsp_mail_due_us) {
-        dsp_mail_due_us = 0;
-        // 0xDCD10000 = task resumed/init done: __DSPHandler's branch for it
-        // marks the task started and invokes the task's resume callback,
-        // which is what AX init blocks on. (0xDCD10002 is the yield path.)
-        dsp_mbox_dsp_hi = 0xDCD1;
-        dsp_mbox_dsp_lo = 0x0000;
-        dsp_control |= 0x0080;
-        dsp_update_pi();
-    }
-}
+
 
 
 void register_dsp(MMIODispatcher& dispatcher) {{
@@ -171,10 +151,7 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 // AUDIO_DMA_BLOCKS_LEFT: approximate from the time left in
                 // the current buffer (some SDKs poll it for sync).
                 if (!(adma_control & 0x8000)) return 0;
-                uint64_t now = get_os_time();
-                if (now >= adma_next_us) return 0;
-                uint64_t us_left = adma_next_us - now;
-                return (uint32_t)(us_left * 32000 / 1000000 * 4 / 32);
+                return 0; // Scheduler paces it perfectly, can return 0
             }
             return 0;
         },
@@ -195,12 +172,12 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 // Pace: one ack per real DSP audio frame (5ms wall-clock),
                 // measured from the previous ack so bursts don't accumulate.
                 if (dsp_control & 0x0100) {
-                    static uint64_t last_ack_us = 0;
-                    uint64_t now = get_os_time();
-                    uint64_t due = last_ack_us + DSP_FRAME_US;
-                    if (due < now) due = now;
-                    dsp_mail_due_us = due;
-                    last_ack_us = due;
+                    EventScheduler::get().schedule_after(g_ctx_ptr->tb_freq / 200, [](CPUContext& c, uint64_t){
+                        dsp_mbox_dsp_hi = 0xDCD1;
+                        dsp_mbox_dsp_lo = 0x0000;
+                        dsp_control |= 0x0080;
+                        dsp_update_pi();
+                    });
                 }
                 if (std::getenv("NWII_DSPTRACE"))
                     std::cout << "[DSPm] cpu mail write @" << std::hex
@@ -246,8 +223,17 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             } else if (addr == 0xCC005036) {
                 bool was_on = (adma_control & 0x8000) != 0;
                 adma_control = val & 0xFFFF;
-                if (!was_on && (adma_control & 0x8000))
-                    adma_next_us = get_os_time(); // first buffer starts now
+                if (!was_on && (adma_control & 0x8000)) {
+                    if (s_adma_event_id != 0) {
+                        EventScheduler::get().cancel(s_adma_event_id);
+                    }
+                    s_adma_event_id = EventScheduler::get().schedule_recurring(g_ctx_ptr->tb_freq / 200, adma_event_cb);
+                } else if (was_on && !(adma_control & 0x8000)) {
+                    if (s_adma_event_id != 0) {
+                        EventScheduler::get().cancel(s_adma_event_id);
+                        s_adma_event_id = 0;
+                    }
+                }
             } else if (addr == 0xCC005020) {
                 ar_mmaddr = val;
             } else if (addr == 0xCC005024) {

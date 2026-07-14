@@ -22,7 +22,7 @@ NO_GitHub/
 
 NWii-documentation/
 
-test_gx/
+docs/
 .*/
 !.github/
 
@@ -45,3 +45,4 @@ log.txt
 *.ini
 *.txt
 *.png
+*.log
