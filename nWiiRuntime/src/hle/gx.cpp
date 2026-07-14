@@ -23,10 +23,15 @@ GXState nwii::runtime::gx::g_state = {};
 
 
 static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
+// Native window handle, published by main.cpp once the window exists. The
+// GL backend only records it, but Metal needs it to attach its layer.
+static void* g_window = nullptr;
+
+void GX_SetWindow(void* window) { g_window = window; }
 
 void GX_Init() {
     g_renderer = nwii::runtime::gx::IRenderer::Create();
-    if (g_renderer) g_renderer->Initialize();
+    if (g_renderer) g_renderer->Initialize(g_window);
 }
 
 namespace nwii::runtime {
@@ -99,7 +104,7 @@ void ProcessGXFifo() {
     if (true) {
         if (!g_renderer) {
         g_renderer = nwii::runtime::gx::IRenderer::Create();
-        g_renderer->Initialize();
+        g_renderer->Initialize(g_window);
     }
     if (g_renderer) {
         g_renderer->Render(commands);
