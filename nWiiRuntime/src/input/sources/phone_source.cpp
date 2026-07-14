@@ -109,6 +109,14 @@ void PhoneSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
     motes[0].accel_x = m_accel_x;
     motes[0].accel_y = m_accel_y;
     motes[0].accel_z = m_accel_z;
+
+    // Mirror onto GC pad 0 so the phone drives GameCube titles too: the
+    // BTN mask passes through raw (the sender uses the GC PAD layout,
+    // e.g. START=0x1000, A=0x0100), the pointer maps to the main stick.
+    pads[0].err = 0;
+    pads[0].buttons |= (uint16_t)m_buttons;
+    pads[0].stick_x = (int8_t)((m_ir_x - 0.5f) * 254.0f);
+    pads[0].stick_y = (int8_t)((0.5f - m_ir_y) * 254.0f);
 }
 
 } // namespace nwii::runtime::input

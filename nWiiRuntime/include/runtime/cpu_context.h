@@ -315,12 +315,25 @@ struct CPUContext {
   std::chrono::steady_clock::time_point tb_start =
       std::chrono::steady_clock::now();
 
-  // Time base is modelled by inst_count (a monotonic proxy for guest
-  // cycles). A wall-clock TB unblocks timer-idle waits but breaks the
-  // boot's timebase-vs-loop calibration, so keep the guest-progress clock.
-  uint64_t read_timebase() const { return inst_count; }
+  // Time base. Default: inst_count (a monotonic proxy for guest cycles) —
+  // safe, but guest time then advances at the emulation speed, so
+  // timer-paced logic (frame limiters, intro sequencing) crawls.
+  // NWII_WALLTB=1 switches to the hardware model: the TB ticks at
+  // bus-clock/4 in real time regardless of how fast instructions retire.
+  uint64_t read_timebase() const {
+    static const bool wall = std::getenv("NWII_WALLTB") != nullptr;
+    if (wall) {
+      uint64_t us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - tb_start)
+                        .count();
+      // Split to avoid us*tb_freq overflowing 64 bits.
+      return us / 1000000 * tb_freq + us % 1000000 * tb_freq / 1000000;
+    }
+    return inst_count;
+  }
 
-  // Decrementer (SPR 22): counts down from its written value at the TB rate.
+  // Decrementer (SPR 22): counts down from its written value at the TB
+  // rate. Shares read_timebase() so DEC and TB can never diverge.
   uint64_t dec_value = 0xFFFFFFFF;
   uint64_t dec_written_tb = 0;
   bool dec_irq_pending = false;
@@ -335,19 +348,19 @@ struct CPUContext {
                   << " inst=" << inst_count << "\n";
     }
     dec_value = v;
-    dec_written_tb = inst_count;
+    dec_written_tb = read_timebase();
     dec_irq_pending = (v != 0xFFFFFFFF);
   }
 
   uint32_t read_dec() {
-    uint64_t elapsed = inst_count - dec_written_tb;
+    uint64_t elapsed = read_timebase() - dec_written_tb;
     if (elapsed >= dec_value)
       return 0;
     return (uint32_t)(dec_value - elapsed);
   }
 
   bool dec_expired() {
-    return dec_irq_pending && (inst_count - dec_written_tb) >= dec_value;
+    return dec_irq_pending && (read_timebase() - dec_written_tb) >= dec_value;
   }
 
   CPUContext() : gpr{0}, fpr{0.0}, ps1{0.0}, cr{}, pc(0), lr(0), ctr(0), xer(0), 

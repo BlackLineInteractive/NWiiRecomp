@@ -32,9 +32,14 @@ static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
 static uint16_t ar_size = 0;    // 0xCC005012 AR_INFO/AR_SIZE
 static uint16_t ar_mode = 0;    // 0xCC005016 AR_MODE
 static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
-// Countdown to the deferred DSP-mail acknowledge (see the mail write
-// handler); models the milliseconds a real DSP spends on an audio frame.
-int g_dsp_mail_delay = 0;
+// Wall-clock deadline for the deferred DSP-mail acknowledge (see the mail
+// write handler). A real DSP mixes one 5ms audio frame per command list;
+// acking faster makes the game immediately prepare the next frame, and the
+// audio pump then eats nearly all guest CPU time (observed: ~500 mails/s
+// and 0.13 game-frames/s on MP7 with a backedge-tick countdown).
+static constexpr uint64_t DSP_FRAME_US = 5000;
+static uint64_t dsp_mail_due_us = 0;
+int g_dsp_mail_delay = 0; // kept for the header ABI; no longer the pacer
 
 static void dsp_update_pi();
 
@@ -116,7 +121,8 @@ int dsp_pending_os_interrupt() {
 // and paces the audio DMA.
 void dsp_tick() {
     adma_tick();
-    if (g_dsp_mail_delay > 0 && --g_dsp_mail_delay == 0) {
+    if (dsp_mail_due_us != 0 && get_os_time() >= dsp_mail_due_us) {
+        dsp_mail_due_us = 0;
         // 0xDCD10000 = task resumed/init done: __DSPHandler's branch for it
         // marks the task started and invokes the task's resume callback,
         // which is what AX init blocks on. (0xDCD10002 is the yield path.)
@@ -186,8 +192,16 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 // ping-pong that starved the rest of the game. Before the
                 // mask is set (boot probes) stay silent: raising the
                 // interrupt with no task installed jumped to garbage.
-                if (dsp_control & 0x0100)
-                    g_dsp_mail_delay = 15000;
+                // Pace: one ack per real DSP audio frame (5ms wall-clock),
+                // measured from the previous ack so bursts don't accumulate.
+                if (dsp_control & 0x0100) {
+                    static uint64_t last_ack_us = 0;
+                    uint64_t now = get_os_time();
+                    uint64_t due = last_ack_us + DSP_FRAME_US;
+                    if (due < now) due = now;
+                    dsp_mail_due_us = due;
+                    last_ack_us = due;
+                }
                 if (std::getenv("NWII_DSPTRACE"))
                     std::cout << "[DSPm] cpu mail write @" << std::hex
                               << (addr & 0xFFFF) << " val=0x" << val

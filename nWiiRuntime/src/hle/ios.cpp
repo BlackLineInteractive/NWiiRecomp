@@ -912,7 +912,7 @@ bool process_pending_callbacks(CPUContext &ctx) {
       // the decrementer countdown from the moment we resume the interrupted
       // thread, so a short OSAlarm period (e.g. dec=114) can't re-expire
       // before that thread executes a single instruction and starve it.
-      ctx.dec_written_tb = ctx.inst_count;
+      ctx.dec_written_tb = ctx.read_timebase();
       static uint32_t restore_count = 0;
       restore_count++;
       if (ctx.pc == 0 || (restore_count % 64) == 1) {

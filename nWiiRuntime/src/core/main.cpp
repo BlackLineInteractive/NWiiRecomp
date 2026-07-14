@@ -348,6 +348,10 @@ int main(int argc, char **argv) {
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
 
+      // Window-less input still works for network sources (PhoneSource
+      // UDP); keyboard/gamepad sources read empty raylib state safely.
+      nwii::runtime::input::InputManager::get().update();
+
       extern void ProcessGXFifo();
       ProcessGXFifo();
       ctx->vblank_pending = true;
@@ -356,6 +360,16 @@ int main(int argc, char **argv) {
                   << ctx->lr << " msr=0x" << ctx->msr << " r3=0x" << ctx->gpr[3]
                   << " cb=" << (ctx->in_callback ? 1 : 0) << " inst=" << std::dec
                   << ctx->inst_count << "\n";
+        // NWII_PEEK=hexaddr[,words]: dump guest memory once per second.
+        if (const char *env = std::getenv("NWII_PEEK")) {
+          uint32_t pa = 0, pw = 8;
+          if (std::sscanf(env, "%x,%u", &pa, &pw) >= 1 && pa) {
+            std::cout << "[Peek] " << std::hex << pa << ":";
+            for (uint32_t i = 0; i < pw && i < 32; i++)
+              std::cout << " " << ctx->mmu.read32(pa + i * 4);
+            std::cout << std::dec << "\n";
+          }
+        }
         // Run-queue bitmap + reschedule flag (SDA offsets from the SDK
         // scheduler): shows whether the OS ever reaches its EE=1 idle spin
         // (bitmap==0) or keeps churning ready threads.
