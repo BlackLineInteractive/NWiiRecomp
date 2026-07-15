@@ -4,7 +4,7 @@ This document showcases the development progress, tools, and runtime execution o
 
 ---
 
-## 🎮 Mario Party 7 — In-Game Rendering (2025)
+## 🎮 Mario Party 7 — In-Game Rendering
 
 The first Wii game to successfully boot, stream from DVD, parse GX display lists, decode hardware textures, and render to screen — running **natively** via static recompilation, with **zero instruction-level emulation**.
 
