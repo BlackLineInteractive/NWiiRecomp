@@ -37,6 +37,10 @@ std::vector<uint8_t> g_hw_fifo;
 // Commands of a frame the game has not finished submitting yet.
 static std::vector<nwii::runtime::gx::GXCommand> s_carry;
 
+// Run-to-run diagnostics: which stage a run got to (see the [STAT] line).
+uint64_t g_stat_frames = 0;
+uint64_t g_stat_draws = 0;
+
 void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[0] = (unsigned char)(g_state.clearAR & 0xFF);
     rgba[1] = (unsigned char)(g_state.clearGB >> 8);
@@ -104,6 +108,11 @@ void ProcessGXFifo() {
     std::vector<nwii::runtime::gx::GXCommand> frame(
         s_carry.begin(), s_carry.begin() + last_frame_end + 1);
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
+
+    ++g_stat_frames;
+    for (const auto &c : frame)
+        if (c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive)
+            ++g_stat_draws;
 
     if (g_window) {
         if (!g_renderer) {

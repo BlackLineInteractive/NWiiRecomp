@@ -58,6 +58,25 @@ GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
     for (uint32_t off = 0; off + 4 <= size; off += stride)
         hash = (hash ^ ctx.mmu.read32(stage.base_addr + off)) * 16777619u;
 
+    // For paletted formats the TLUT decides every colour, so it belongs in the
+    // hash exactly like the texel data (Dolphin XORs a TLUT hash into its
+    // full_hash whenever the format has a palette). Keying only on tlut_offset
+    // meant a texture decoded before the game uploaded its palette resolved to
+    // black and stayed cached that way for the rest of the run — the palette
+    // arriving later could not change the key.
+    uint32_t palette_entries = 0;
+    if (stage.format == 8)        // C4
+        palette_entries = 16;
+    else if (stage.format == 9)   // C8
+        palette_entries = 256;
+    else if (stage.format == 10)  // C14X2
+        palette_entries = 16384;
+    for (uint32_t i = 0; i < palette_entries * 2; ++i) {
+        uint32_t idx = stage.tlut_offset + i;
+        uint8_t b = idx < sizeof(gx::g_state.tlutMem) ? gx::g_state.tlutMem[idx] : 0;
+        hash = (hash ^ b) * 16777619u;
+    }
+
     TextureKey key = {stage.base_addr, stage.width, stage.height,
                       stage.format, stage.tlut_offset, stage.tlut_format, hash};
     auto it = cache.find(key);

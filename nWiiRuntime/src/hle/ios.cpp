@@ -1252,11 +1252,18 @@ bool process_pending_callbacks(CPUContext &ctx) {
       // Exception: when there is no current thread (__OSCurrentThread == 0) the
       // guest is sitting in the __OSReschedule idle loop, which deliberately
       // enables interrupts and spins until an ISR readies a thread. Deferring
-      // here would hang the idle loop forever (the interrupt that would wake a
-      // sleeper never fires), so always dispatch when idle.
+      // there would hang the idle loop forever (the interrupt that would wake a
+      // sleeper never fires), so the scheduler lock is ignored when idle.
       bool idle = (ctx.mmu.read32(0x800000E4) == 0);
 
-      if (use_new_path && !idle && (sched_disabled || handler_in_flight)) {
+      // handler_in_flight is NOT subject to that exception. Re-entering dispatch
+      // while a handler is still in flight makes hle_save_context_to_guest
+      // overwrite dispatch_saved_ctx, losing the first handler's context and
+      // rfi-ing to a corrupted srr0. The idle loop runs with
+      // __OSCurrentThread == 0 for the whole handler, so the old condition let
+      // exactly that happen whenever a second interrupt landed inside the
+      // handler's EE window — a pure timing race.
+      if (use_new_path && (handler_in_flight || (!idle && sched_disabled))) {
           // Interrupt stays pending in pi_intsr; retry next backedge.
           if (std::getenv("NWII_SAMPLE")) {
               static uint64_t defer_count = 0;

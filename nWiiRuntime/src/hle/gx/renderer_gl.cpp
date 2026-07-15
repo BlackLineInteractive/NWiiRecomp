@@ -35,6 +35,9 @@ struct GLShader {
     GLint uProjMtx;
 };
 static std::unordered_map<uint64_t, GLShader> s_shader_cache;
+// Reported in the [STAT] line: see the note at the GetShaderHash call site.
+uint64_t g_stat_hash0 = 0;
+uint64_t g_stat_shaders = 0;
 
 struct BatchVertex {
     float x, y, z;
@@ -189,12 +192,63 @@ static void DrawPrimitive(const GXCommand &cmd) {
     const size_t n = v.size();
     if (n == 0) return;
 
+    // NWII_DRAWLOG=1: one line per draw for the first N draws, so a good and a
+    // bad run can be diffed directly. Every aggregate (shader hash, TEV regs,
+    // projection, viewport) is identical between them, so the divergence has to
+    // be per-draw.
+    if (std::getenv("NWII_DRAWLOG")) {
+        static int dn = 0;
+        if (dn < 40) {
+            // Everything else about a draw matches between a good and a bad
+            // run, so print exactly what feeds the hash.
+            printf("[DRAW %02d] prim=0x%02X verts=%zu hash=%llx tex0=%dx%d fmt=%d map=%d "
+                   "| bp00=%06X F3=%06X C0=%06X C1=%06X C2=%06X C3=%06X 28=%06X cp50=%08X\n",
+                   dn, cmd.prim_type, n,
+                   (unsigned long long)g_state.GetShaderHash(cmd.prim_type),
+                   g_state.texStages[0].width, g_state.texStages[0].height,
+                   g_state.texStages[0].format, (int)g_state.tevStages[0].texMap,
+                   g_state.bp[0x00], g_state.bp[0xF3], g_state.bp[0xC0],
+                   g_state.bp[0xC1], g_state.bp[0xC2], g_state.bp[0xC3],
+                   g_state.bp[0x28], g_state.cp[0x50]);
+            // The palette is what colours a C8 texture, and it is copied out of
+            // guest RAM once, at render time. Print it: a zeroed TLUT means we
+            // captured it before the game's DMA landed, and nothing re-captures.
+            uint32_t th = 2166136261u, nz = 0;
+            uint32_t off = g_state.texStages[0].tlut_offset;
+            for (uint32_t i = 0; i < 512 && off + i < sizeof(g_state.tlutMem); ++i) {
+                uint8_t b = g_state.tlutMem[off + i];
+                th = (th ^ b) * 16777619u;
+                if (b) ++nz;
+            }
+            // The texel data itself: the last input to a draw never compared
+            // between a good and a bad run.
+            uint32_t dh = 2166136261u, dnz = 0;
+            uint32_t base = g_state.texStages[0].base_addr;
+            if (g_ctx_ptr) {
+                for (uint32_t i = 0; i < 2048; ++i) {
+                    uint8_t b = g_ctx_ptr->mmu.read8(base + i);
+                    dh = (dh ^ b) * 16777619u;
+                    if (b) ++dnz;
+                }
+            }
+            printf("          tlut off=%u hash=%08X nonzero=%u/512 src=%08X | "
+                   "texdata base=%08X hash=%08X nonzero=%u/2048\n",
+                   off, th, nz, g_state.tlutSrcAddr, base, dh, dnz);
+            ++dn;
+        }
+    }
+
     FlushBatch();
 
     bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
     if (!use_shader) return;
 
     uint64_t hash = g_state.GetShaderHash(cmd.prim_type);
+    // Diagnostics: a shader compiled from the wrong state is cached for the
+    // whole run, so the FIRST hash decides how the run looks. Reported in [STAT].
+    if (!g_stat_hash0)
+        g_stat_hash0 = hash;
+    g_stat_shaders = (uint64_t)s_shader_cache.size();
     auto it = s_shader_cache.find(hash);
     if (it != s_shader_cache.end()) {
         s_active_shader = it->second;
@@ -410,5 +464,13 @@ private:
 std::unique_ptr<IRenderer> CreateRendererGL() {
     return std::make_unique<RendererGL>();
 }
+
+} // namespace nwii::runtime::gx
+
+// Accessors for the [STAT] diagnostics line in main.cpp.
+uint64_t nwii_stat_hash0() { return nwii::runtime::gx::g_stat_hash0; }
+uint64_t nwii_stat_shaders() { return nwii::runtime::gx::g_stat_shaders; }
+
+namespace nwii::runtime::gx {
 
 } // namespace nwii::runtime::gx

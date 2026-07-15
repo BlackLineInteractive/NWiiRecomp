@@ -2,6 +2,7 @@
 #include "runtime/gx_state.h"
 #include "runtime/cpu_context.h"
 #include "runtime/hw/hw.h"
+#include "runtime/config.h"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -42,11 +43,16 @@ namespace {
         } else if (reg == 0x48) {
             nwii::runtime::hw::pe_signal_token(val & 0xFFFF, true);
         }
-        // Seed the raw register file now: GetShaderHash() reads bp[] and must
-        // see the whole chunk's registers even for the chunk's first draw.
-        // The DECODED state is applied by the renderer in stream order
-        // (ApplyBPRegister) so each draw uses the state current for it.
-        g_state.bp[reg] = val;
+        // Seeding the raw register file here is a look-ahead over whatever the
+        // CPU thread has pushed so far, and GetShaderHash() reads bp[] — so a
+        // draw's shader hash depends on thread timing, and a shader compiled
+        // from the wrong state is cached for the rest of the run. Dolphin's
+        // equivalent pass (LoadBPRegPreprocess) never touches bpmem; the
+        // register file is written in stream order by ApplyBPRegister at render
+        // time. NWII_NOSEED=1 takes the Dolphin behaviour.
+        static const bool no_seed = std::getenv("NWII_NOSEED") != nullptr;
+        if (!no_seed)
+            g_state.bp[reg] = val;
     }
 
     void ApplyBPRegisterImpl(uint8_t reg, uint32_t val) {
@@ -121,8 +127,16 @@ namespace {
                 g_state.texStages[idx].tlut_format = (val >> 10) & 0x3;
             }
         } else if (reg == 0x64) {
-            // LOADTLUT0: source address in main RAM (>> 5).
-            g_state.tlutSrcAddr = (val & 0xFFFFFF) << 5;
+            // LOADTLUT0: source address in main RAM (>> 5). The GameCube
+            // ignores the upper address bits and some games set them anyway
+            // (Dolphin names Wind Waker and Double Dash; MP7 does it too, which
+            // sent us reading a palette of zeros from 0x047E4FA0 instead of the
+            // real one at 0x007E4FA0). Wii honours the full address.
+            uint32_t addr = (val & 0xFFFFFF) << 5;
+            if (nwii::runtime::Config::get().platform ==
+                nwii::runtime::Platform::GameCube)
+                addr &= 0x01FFFFFF;
+            g_state.tlutSrcAddr = addr;
         } else if (reg == 0x65) {
             // LOADTLUT1: destination TLUT offset (bits 0-9, <<9) and count of
             // 16-entry blocks (bits 10-20). Copy palette data RAM -> TLUT bank.

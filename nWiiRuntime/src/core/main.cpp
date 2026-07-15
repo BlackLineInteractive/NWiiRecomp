@@ -626,6 +626,56 @@ int main(int argc, char **argv) {
       extern void ProcessGXFifo();
       ProcessGXFifo();
 
+      // One line per ~5s saying how far this run got. A good and a bad run
+      // differ in exactly one of these numbers, which pins the diverging stage:
+      // frames=0 -> guest never completed a frame (CPU/interrupt side);
+      // draws=0 -> frames but no geometry; nonblack=0 -> geometry drawn black.
+      if (!headless) {
+        static auto t0 = std::chrono::steady_clock::now();
+        static int stat_n = 0;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() >=
+            5) {
+          t0 = now;
+          extern uint64_t g_stat_frames, g_stat_draws;
+          extern uint64_t nwii_stat_hash0(), nwii_stat_shaders();
+          std::vector<unsigned char> p(640 * 480 * 4);
+          glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+          glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, p.data());
+          glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+          size_t nonblack = 0;
+          for (size_t i = 0; i < p.size(); i += 4)
+            if (p[i] | p[i + 1] | p[i + 2])
+              ++nonblack;
+          std::cout << "[STAT] " << ++stat_n * 5 << "s frames=" << std::dec
+                    << g_stat_frames << " draws=" << g_stat_draws
+                    << " efb_nonblack=" << nonblack << "/307200"
+                    << " shaders=" << nwii_stat_shaders() << " hash0=0x"
+                    << std::hex << nwii_stat_hash0();
+          // TEV colour registers: uniforms, so they are NOT in the shader hash.
+          // The H&S shader resolves to uTevColor[1] and discards on alpha 0.
+          std::cout << " E0..E7=";
+          for (int i = 0xE0; i <= 0xE7; ++i)
+            std::cout << nwii::runtime::gx::g_state.bp[i] << ",";
+          // Projection and viewport reach the shader as uniforms / GL state, so
+          // neither is in the shader hash: they can differ while hash0 does not.
+          // A projection with a zero x/y scale collapses every vertex.
+          std::cout << std::dec << " projType="
+                    << nwii::runtime::gx::g_state.projType
+                    << " projSet=" << (int)nwii::runtime::gx::g_state.projSet
+                    << " proj=";
+          for (int i = 0; i < 6; ++i)
+            std::cout << nwii::runtime::gx::g_state.projection[i] << ",";
+          std::cout << " vp=";
+          for (int i = 0x1A; i <= 0x1F; ++i) {
+            float v;
+            std::memcpy(&v, &nwii::runtime::gx::g_state.xf[i], 4);
+            std::cout << v << ",";
+          }
+          std::cout << std::endl;
+        }
+      }
+
       if (!headless && nwii::runtime::gx::g_state.frame_ready) {
         nwii::runtime::gx::g_state.frame_ready = false;
 
