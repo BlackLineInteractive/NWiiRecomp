@@ -6,14 +6,14 @@
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
 #include "runtime/virtual_disc.h"
+#include <SDL.h>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
-#include <SDL.h>
 #include <glad/glad.h>
+#include <iostream>
 #include <thread>
 #include <vector>
 
@@ -21,8 +21,10 @@
 #include "runtime/hw/hw.h"
 
 namespace nwii::runtime {
-    namespace hw { extern uint32_t g_vi_top_field_base; }
+namespace hw {
+extern uint32_t g_vi_top_field_base;
 }
+} // namespace nwii::runtime
 
 namespace nwii::runtime {
 uint32_t g_debug_pc = 0;
@@ -42,7 +44,8 @@ extern "C" void run_game(nwii::runtime::CPUContext &ctx);
 // CPU Execution Thread
 void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
   nwii::runtime::g_ctx_ptr = ctx;
-  std::cout << "[Thread] CPU Core started. pc=" << std::hex << ctx->pc << " is_running=" << ctx->is_running << std::endl;
+  std::cout << "[Thread] CPU Core started. pc=" << std::hex << ctx->pc
+            << " is_running=" << ctx->is_running << std::endl;
   std::flush(std::cout);
   run_game(*ctx);
   std::cout << "[Thread] CPU Core exited. Final PC: 0x" << std::hex << ctx->pc
@@ -64,12 +67,13 @@ int main(int argc, char **argv) {
   // Register input sources per configured mode ([input] mode in TOML)
   {
     using namespace nwii::runtime::input;
-    auto& im = InputManager::get();
+    auto &im = InputManager::get();
     int mode = nwii::runtime::Config::get().input_mode;
     switch (mode) {
     case 1: // real Wiimote over Bluetooth: not implemented yet
       std::cout << "[Input] Mode 1 (Bluetooth Wiimote) not implemented, "
-                   "falling back to keyboard+mouse" << std::endl;
+                   "falling back to keyboard+mouse"
+                << std::endl;
       im.add_source(std::make_unique<MouseKeyboardSource>());
       break;
     case 2: // gamepad as Classic/GC controller
@@ -101,15 +105,15 @@ int main(int argc, char **argv) {
   bool headless = headless_env && headless_env[0] == '1';
 
   // Initialize graphics context FIRST in the main thread
-  SDL_Window* window = nullptr;
+  SDL_Window *window = nullptr;
   SDL_GLContext gl_ctx = nullptr;
   SDL_AudioDeviceID audio_dev = 0;
   GLuint efb_fbo = 0, efb_tex = 0;
   GLuint xfb_tex = 0;
-  GLuint snap_fbo = 0, snap_tex = 0; // last-good frame snapshot, immune to EFB clear
 
   if (!headless) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) <
+        0) {
       std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
       return 1;
     }
@@ -117,7 +121,8 @@ int main(int argc, char **argv) {
     // any core request onto it), so ask for exactly that.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                        SDL_GL_CONTEXT_PROFILE_CORE);
     // Spell the framebuffer out: SDL derives the pixel format's colour size
     // from the current display mode, which is bogus when the process cannot
     // see a display (locked/asleep screen) and the format then fails.
@@ -131,8 +136,8 @@ int main(int argc, char **argv) {
     {
       SDL_DisplayMode dm;
       if (SDL_GetCurrentDisplayMode(0, &dm) == 0)
-        std::cout << "[GL] display 0: " << dm.w << "x" << dm.h << " fmt="
-                  << SDL_GetPixelFormatName(dm.format) << std::endl;
+        std::cout << "[GL] display 0: " << dm.w << "x" << dm.h
+                  << " fmt=" << SDL_GetPixelFormatName(dm.format) << std::endl;
       else
         std::cerr << "[GL] no display mode: " << SDL_GetError()
                   << " (screen locked or no display attached?)" << std::endl;
@@ -144,19 +149,21 @@ int main(int argc, char **argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS,
                         SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
-    bool use_gl = (nwii::runtime::Config::get().backend == nwii::runtime::Backend::OpenGL);
-    uint32_t window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    bool use_gl = (nwii::runtime::Config::get().backend ==
+                   nwii::runtime::Backend::OpenGL);
+    uint32_t window_flags =
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (use_gl) {
-        window_flags |= SDL_WINDOW_OPENGL;
+      window_flags |= SDL_WINDOW_OPENGL;
     } else {
 #ifdef SDL_WINDOW_METAL
-        window_flags |= SDL_WINDOW_METAL;
+      window_flags |= SDL_WINDOW_METAL;
 #endif
     }
-    window = SDL_CreateWindow("NWiiRecomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                              nwii::runtime::Config::get().window_width,
-                              nwii::runtime::Config::get().window_height,
-                              window_flags);
+    window = SDL_CreateWindow(
+        "NWiiRecomp", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        nwii::runtime::Config::get().window_width,
+        nwii::runtime::Config::get().window_height, window_flags);
     if (!window) {
       std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
       return 1;
@@ -180,20 +187,23 @@ int main(int argc, char **argv) {
                 << (const char *)glGetString(GL_VERSION) << std::endl;
       SDL_GL_SetSwapInterval(1);
     }
-    
+
     glGenFramebuffers(1, &efb_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
     glGenTextures(1, &efb_tex);
     glBindTexture(GL_TEXTURE_2D, efb_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 640, 480, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 640, 480, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, efb_tex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           efb_tex, 0);
     {
       // An incomplete FBO silently swallows every draw and reads back black.
       GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
       std::cout << "[GL] EFB FBO status: 0x" << std::hex << st << std::dec
-                << (st == GL_FRAMEBUFFER_COMPLETE ? " (complete)" : " (INCOMPLETE!)")
+                << (st == GL_FRAMEBUFFER_COMPLETE ? " (complete)"
+                                                  : " (INCOMPLETE!)")
                 << std::endl;
       // (A magenta test clear here proved the FBO -> readback -> window blit
       // path is sound; removed now that it has served its purpose.)
@@ -205,25 +215,14 @@ int main(int argc, char **argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    // Snapshot FBO: copy of EFB taken right after XFB copy, before EFB clear.
-    // The main display loop reads from this, so it never sees a cleared EFB.
-    glGenFramebuffers(1, &snap_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, snap_fbo);
-    glGenTextures(1, &snap_tex);
-    glBindTexture(GL_TEXTURE_2D, snap_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 640, 480, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, snap_tex, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
     SDL_AudioSpec want = {0}, have;
     want.freq = 32000;
     want.format = AUDIO_S16SYS;
     want.channels = 2;
     want.samples = 1024;
     audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
-    if (audio_dev > 0) SDL_PauseAudioDevice(audio_dev, 0);
+    if (audio_dev > 0)
+      SDL_PauseAudioDevice(audio_dev, 0);
   }
 
   // Context allocation
@@ -251,10 +250,13 @@ int main(int argc, char **argv) {
   // Second pass: Load Data and Text sections (overwriting BSS if overlapping)
   for (const auto &sec : exe.sections) {
     if (!sec.is_bss) {
-      std::cout << "[Loader] Loading section at 0x" << std::hex << sec.address << " size 0x" << sec.size << std::dec << std::endl;
+      std::cout << "[Loader] Loading section at 0x" << std::hex << sec.address
+                << " size 0x" << sec.size << std::dec << std::endl;
       for (size_t i = 0; i < sec.size; ++i) {
         if ((sec.address + i) == 0x80003448) {
-            std::cout << "[Loader] Found 0x80003448 inside section! val=" << std::hex << (uint32_t)sec.data[i] << std::dec << std::endl;
+          std::cout << "[Loader] Found 0x80003448 inside section! val="
+                    << std::hex << (uint32_t)sec.data[i] << std::dec
+                    << std::endl;
         }
         ctx->mmu.write8(sec.address + i, sec.data[i]);
       }
@@ -293,15 +295,16 @@ int main(int argc, char **argv) {
       } else if (have_hi && (insn & 0xFFFF0000) == 0x60210000) { // ori r1,r1,lo
         stack_top = hi | (insn & 0xFFFF);
         break;
-      } else if (have_hi && (insn & 0xFFFF0000) == 0x38210000) { // addi r1,r1,lo
+      } else if (have_hi &&
+                 (insn & 0xFFFF0000) == 0x38210000) { // addi r1,r1,lo
         stack_top = hi + (int16_t)(insn & 0xFFFF);
         break;
       }
     }
     if (stack_top >= arena_lo && stack_top < 0x81800000) {
       std::cout << "[Loader] crt stack top 0x" << std::hex << stack_top
-                << " above section end 0x" << arena_lo
-                << ", raising ArenaLo" << std::dec << std::endl;
+                << " above section end 0x" << arena_lo << ", raising ArenaLo"
+                << std::dec << std::endl;
       // +0x100 guard: __OSInitAudioSystem stashes DSP boot code in the
       // 128 bytes right below ArenaLo, which must not be live stack
       arena_lo = (stack_top + 0x100 + 31) & ~31u;
@@ -341,7 +344,8 @@ int main(int argc, char **argv) {
   uint32_t mem1_size = 24 * 1024 * 1024; // 24MB MEM1
   uint32_t mem2_size = 64 * 1024 * 1024; // 64MB MEM2
 
-  ctx->mmu.write32(0x80000020, is_gc ? 0x0D15EA5E : console_type); // GC boot magic
+  ctx->mmu.write32(0x80000020,
+                   is_gc ? 0x0D15EA5E : console_type); // GC boot magic
   // 0x24: __OSSimulatedMemSize (MEM1)
   ctx->mmu.write32(0x80000024, mem1_size);
   // 0x28: __OSPhysMemSize (MEM1)
@@ -435,10 +439,10 @@ int main(int argc, char **argv) {
     const std::string &gid = nwii::runtime::Config::get().game_id;
     char region = gid.size() >= 4 ? gid[3] : 'E';
     // PAL/50Hz regions per the Nintendo disc region letters.
-    bool pal = (region == 'P' || region == 'D' || region == 'F' ||
-                region == 'I' || region == 'S' || region == 'H' ||
-                region == 'U' || region == 'X' || region == 'Y' ||
-                region == 'Z');
+    bool pal =
+        (region == 'P' || region == 'D' || region == 'F' || region == 'I' ||
+         region == 'S' || region == 'H' || region == 'U' || region == 'X' ||
+         region == 'Y' || region == 'Z');
     poke_global(0x800000CC, pal ? 1u : 0u);
   }
 
@@ -479,8 +483,8 @@ int main(int argc, char **argv) {
       if (std::getenv("NWII_SAMPLE") && (++tick % 60) == 0) {
         std::cout << "[Sample] pc=0x" << std::hex << ctx->pc << " lr=0x"
                   << ctx->lr << " msr=0x" << ctx->msr << " r3=0x" << ctx->gpr[3]
-                  << " cb=" << (ctx->in_callback ? 1 : 0) << " inst=" << std::dec
-                  << ctx->inst_count << "\n";
+                  << " cb=" << (ctx->in_callback ? 1 : 0)
+                  << " inst=" << std::dec << ctx->inst_count << "\n";
         // NWII_PEEK=hexaddr[,words]: dump guest memory once per second.
         if (const char *env = std::getenv("NWII_PEEK")) {
           uint32_t pa = 0, pw = 8;
@@ -518,16 +522,17 @@ int main(int argc, char **argv) {
                     << " pend29b6=" << (int)ctx->mmu.read8(r13 - 0x29b6)
                     << " b29b5=" << (int)ctx->mmu.read8(r13 - 0x29b5)
                     << " b4808=" << (int)ctx->mmu.read8(r13 - 0x4808)
-                    << " ef=0x" << std::hex << ef
-                    << " efB0=0x" << (ef ? ctx->mmu.read32(ef + 0xb0) : 0)
-                    << " efB4=0x" << (ef ? ctx->mmu.read32(ef + 0xb4) : 0)
-                    << " efB8=" << std::dec << (ef ? (int)ctx->mmu.read8(ef + 0xb8) : -1)
+                    << " ef=0x" << std::hex << ef << " efB0=0x"
+                    << (ef ? ctx->mmu.read32(ef + 0xb0) : 0) << " efB4=0x"
+                    << (ef ? ctx->mmu.read32(ef + 0xb4) : 0)
+                    << " efB8=" << std::dec
+                    << (ef ? (int)ctx->mmu.read8(ef + 0xb8) : -1)
                     << " efBE=" << (ef ? (int)ctx->mmu.read8(ef + 0xbe) : -1)
                     << " ef9C=" << (ef ? (int)ctx->mmu.read32(ef + 0x9c) : -1)
                     << " ddflag=" << (int)ctx->mmu.read8(r13 - 0x2368)
                     << std::hex << " tok=0x" << ctx->mmu.read16(r13 - 0x29b8)
-                    << " pe_sr=0x" << nwii::runtime::hw::g_pe_sr
-                    << std::dec << "\n";
+                    << " pe_sr=0x" << nwii::runtime::hw::g_pe_sr << std::dec
+                    << "\n";
           // Which HW block the game's own retrace-ish handler polls: hwp is
           // the register base it reads +8/+0xC from, shp a shadow struct,
           // sdkPre/wrapPre the SDK and wrapper pre-retrace callback slots.
@@ -546,16 +551,21 @@ int main(int argc, char **argv) {
           uint32_t th = ctx->mmu.read32(0x800000DC);
           int guard = 0;
           while (th >= 0x80000000u && th < 0x81800000u && guard++ < 16) {
-          uint32_t q = 0x803540e0;
-          std::cout << "Queue " << std::hex << q << ": msgArray=" << ctx->mmu.read32(q+16) << " count=" << ctx->mmu.read32(q+20) << " first=" << ctx->mmu.read32(q+24) << " used=" << ctx->mmu.read32(q+28) << "\n";
+            uint32_t q = 0x803540e0;
+            std::cout << "Queue " << std::hex << q
+                      << ": msgArray=" << ctx->mmu.read32(q + 16)
+                      << " count=" << ctx->mmu.read32(q + 20)
+                      << " first=" << ctx->mmu.read32(q + 24)
+                      << " used=" << ctx->mmu.read32(q + 28) << "\n";
 
             uint16_t state = ctx->mmu.read16(th + 0x2C8);
             uint32_t prio = ctx->mmu.read32(th + 0x2D0);
             uint32_t wq = ctx->mmu.read32(th + 0x2DC);
             uint32_t srr0 = ctx->mmu.read32(th + 0x198);
-            std::cout << "  [Thr] 0x" << std::hex << th << (th == cur ? "*" : " ")
-                      << " st=" << std::dec << state << " pr=" << prio
-                      << " wq=0x" << std::hex << wq << " srr0=0x" << srr0;
+            std::cout << "  [Thr] 0x" << std::hex << th
+                      << (th == cur ? "*" : " ") << " st=" << std::dec << state
+                      << " pr=" << prio << " wq=0x" << std::hex << wq
+                      << " srr0=0x" << srr0;
             if (wq >= 0x80000000u && wq < 0x81800000u) {
               std::cout << " wq[-2..5]:";
               for (int i = -2; i < 6; ++i)
@@ -577,7 +587,8 @@ int main(int argc, char **argv) {
       if (!headless) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-          if (e.type == SDL_QUIT) quit = true;
+          if (e.type == SDL_QUIT)
+            quit = true;
         }
       }
 
@@ -588,16 +599,20 @@ int main(int argc, char **argv) {
         glViewport(0, 0, 640, 480);
       }
 
-      extern void GX_GetXfb(uint32_t*, unsigned*, unsigned*, unsigned*);
-      uint32_t xfb_addr; unsigned xw, xh, xstride;
+      extern void GX_GetXfb(uint32_t *, unsigned *, unsigned *, unsigned *);
+      uint32_t xfb_addr;
+      unsigned xw, xh, xstride;
       GX_GetXfb(&xfb_addr, &xw, &xh, &xstride);
       if (nwii::runtime::hw::g_vi_top_field_base != 0) {
         xfb_addr = nwii::runtime::hw::g_vi_top_field_base;
       }
 
-      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 && std::getenv("NWII_XFB") && !headless) {
+      if (xfb_addr && xw && xh && xw <= 720 && xh <= 576 &&
+          std::getenv("NWII_XFB") && !headless) {
         xfb_px.resize((size_t)xw * xh * 4);
-        auto clamp8 = [](float v) -> unsigned char { return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); };
+        auto clamp8 = [](float v) -> unsigned char {
+          return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v);
+        };
         for (unsigned y = 0; y < xh; ++y) {
           uint32_t row = (xfb_addr | 0x80000000u) + (uint32_t)y * xstride;
           for (unsigned x = 0; x < xw; x += 2) {
@@ -609,7 +624,8 @@ int main(int argc, char **argv) {
             for (int k = 0; k < 2; ++k) {
               float yy = (float)(k ? y1 : y0);
               size_t p = ((size_t)y * xw + x + k) * 4;
-              if (x + (unsigned)k >= xw) break;
+              if (x + (unsigned)k >= xw)
+                break;
               xfb_px[p + 0] = clamp8(yy + 1.371f * fcr);
               xfb_px[p + 1] = clamp8(yy - 0.336f * fcb - 0.698f * fcr);
               xfb_px[p + 2] = clamp8(yy + 1.732f * fcb);
@@ -619,40 +635,39 @@ int main(int argc, char **argv) {
         }
         glBindTexture(GL_TEXTURE_2D, xfb_tex);
         if (xw != xfb_w || xh != xfb_h) {
-          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xw, xh, 0, GL_RGBA, GL_UNSIGNED_BYTE, xfb_px.data());
-          xfb_w = xw; xfb_h = xh;
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xw, xh, 0, GL_RGBA,
+                       GL_UNSIGNED_BYTE, xfb_px.data());
+          xfb_w = xw;
+          xfb_h = xh;
         } else {
-          glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, xw, xh, GL_RGBA, GL_UNSIGNED_BYTE, xfb_px.data());
+          glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, xw, xh, GL_RGBA,
+                          GL_UNSIGNED_BYTE, xfb_px.data());
         }
       }
 
       extern void ProcessGXFifo();
       ProcessGXFifo();
 
-      // Snapshot the EFB immediately after rendering — before the next
-      // ProcessGXFifo call clears it for the next frame.
       if (!headless && nwii::runtime::gx::g_state.frame_ready) {
         nwii::runtime::gx::g_state.frame_ready = false;
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, snap_fbo);
-        glBlitFramebuffer(0, 0, 640, 480, 0, 0, 640, 480, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-        // Present the snapshot to screen.
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         int draw_w = 0, draw_h = 0;
         SDL_GL_GetDrawableSize(window, &draw_w, &draw_h);
         glViewport(0, 0, draw_w, draw_h);
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, snap_fbo);
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        glBlitFramebuffer(0, 0, 640, 480, 0, 0, draw_w, draw_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBlitFramebuffer(0, 0, 640, 480, 0, 0, draw_w, draw_h,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
         if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
           static int shot_frame = 0;
           if ((++shot_frame % 300) == 0) {
             std::vector<unsigned char> px(640 * 480 * 4);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, snap_fbo);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
             glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
             std::vector<unsigned char> flip(px.size());
             for (int y = 0; y < 480; ++y)
@@ -676,7 +691,6 @@ int main(int argc, char **argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
 
-
       if (audio_dev > 0) {
         if (SDL_GetQueuedAudioSize(audio_dev) < 1024 * 4 * 2) {
           static int16_t abuf[1024 * 2];
@@ -684,13 +698,15 @@ int main(int argc, char **argv) {
           SDL_QueueAudio(audio_dev, abuf, 1024 * 4);
         }
       }
-      
+
       ctx->vblank_pending = true;
-      if (headless) std::this_thread::sleep_for(std::chrono::milliseconds(16));
+      if (headless)
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
     if (!headless) {
-      if (audio_dev > 0) SDL_CloseAudioDevice(audio_dev);
+      if (audio_dev > 0)
+        SDL_CloseAudioDevice(audio_dev);
       SDL_GL_DeleteContext(gl_ctx);
       SDL_DestroyWindow(window);
       SDL_Quit();
@@ -702,7 +718,6 @@ int main(int argc, char **argv) {
   ctx->pc = 0; // Trigger run_game to exit
   if (cpu_thread.joinable())
     cpu_thread.join();
-
 
   nwii::runtime::shutdown();
   return 0;
