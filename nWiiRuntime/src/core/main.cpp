@@ -110,6 +110,8 @@ int main(int argc, char **argv) {
   SDL_AudioDeviceID audio_dev = 0;
   GLuint efb_fbo = 0, efb_tex = 0;
   GLuint xfb_tex = 0;
+  GLuint snap_fbo = 0,
+         snap_tex = 0; // last-good frame snapshot, immune to EFB clear
 
   if (!headless) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) <
@@ -214,6 +216,20 @@ int main(int argc, char **argv) {
     glBindTexture(GL_TEXTURE_2D, xfb_tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Snapshot FBO: copy of EFB taken right after XFB copy, before EFB clear.
+    // The main display loop reads from this, so it never sees a cleared EFB.
+    glGenFramebuffers(1, &snap_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, snap_fbo);
+    glGenTextures(1, &snap_tex);
+    glBindTexture(GL_TEXTURE_2D, snap_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 640, 480, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           snap_tex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     SDL_AudioSpec want = {0}, have;
     want.freq = 32000;
@@ -648,17 +664,23 @@ int main(int argc, char **argv) {
       extern void ProcessGXFifo();
       ProcessGXFifo();
 
+      // Snapshot the EFB immediately after rendering — before the next
+      // ProcessGXFifo call clears it for the next frame.
       if (!headless && nwii::runtime::gx::g_state.frame_ready) {
         nwii::runtime::gx::g_state.frame_ready = false;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, snap_fbo);
+        glBlitFramebuffer(0, 0, 640, 480, 0, 0, 640, 480, GL_COLOR_BUFFER_BIT,
+                          GL_NEAREST);
 
+        // Present the snapshot to screen.
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         int draw_w = 0, draw_h = 0;
         SDL_GL_GetDrawableSize(window, &draw_w, &draw_h);
         glViewport(0, 0, draw_w, draw_h);
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
-
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, snap_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, 640, 480, 0, 0, draw_w, draw_h,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -667,7 +689,7 @@ int main(int argc, char **argv) {
           static int shot_frame = 0;
           if ((++shot_frame % 300) == 0) {
             std::vector<unsigned char> px(640 * 480 * 4);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, snap_fbo);
             glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
             std::vector<unsigned char> flip(px.size());
             for (int y = 0; y < 480; ++y)
