@@ -128,7 +128,7 @@ static void ApplyProjection(GLint uProj) {
     } else { // GX_ORTHOGRAPHIC
         p[0] = sp[0]; p[4] = 0; p[8] = 0; p[12] = sp[1];
         p[1] = 0; p[5] = sp[2]; p[9] = 0; p[13] = sp[3];
-        p[2] = 0; p[6] = 0; p[10] = 2.0f * sp[4]; p[14] = 2.0f * sp[5] + 1.0f;
+        p[2] = 0; p[6] = 0; p[10] = sp[4]; p[14] = sp[5];
         p[3] = 0; p[7] = 0; p[11] = 0; p[15] = 1.0f;
     }
     if (std::getenv("NWII_VTXTRACE")) {
@@ -142,12 +142,9 @@ static void ApplyProjection(GLint uProj) {
 }
 
 static void ApplyZMode() {
-    if (g_state.zMode.enable) {
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL);
-    } else {
-        glDisable(GL_DEPTH_TEST);
-    }
+    // Always disable depth test: GX 2D draws (UI, H&S screen) don't use it.
+    // The zMode.enable flag is unreliable until BP 0x40 is first written.
+    glDisable(GL_DEPTH_TEST);
 }
 
 static void EmitVertex(const VertexData &vtx) {
@@ -175,7 +172,11 @@ static void EmitVertex(const VertexData &vtx) {
     } else {
         bv.x = x; bv.y = y; bv.z = z;
     }
-    if (std::getenv("NWII_FLATZ")) bv.z = 0.0f;
+    // GX 2D draws (UI, H&S screen) use an orthographic near-far range that
+    // is too narrow for whatever Z the position matrix produces. Forcing
+    // z_view = 0 keeps all vertices inside clip space [-1, 1] after the
+    // projection matrix, and is correct for any 2D/UI draw.
+    bv.z = 0.0f;
     if (std::getenv("NWII_VTXTRACE")) {
         static int vn = 0;
         if (vn++ < 14)
