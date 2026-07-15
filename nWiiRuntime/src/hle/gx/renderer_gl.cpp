@@ -91,6 +91,22 @@ static void FlushBatch() {
             printf("[GXTRACE] flush #%d verts=%zu\n", dn, s_batch.size());
     }
     glDrawArrays(GL_TRIANGLES, 0, s_batch.size());
+    if (std::getenv("NWII_GXTRACE")) {
+        static int en = 0;
+        if (en++ < 8) {
+            GLint prog = 0, linked = 0;
+            glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+            if (prog) glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+            GLenum err = glGetError();
+            printf("[GXTRACE] draw: prog=%d linked=%d glErr=0x%x verts=%zu\n",
+                   prog, linked, err, s_batch.size());
+            if (prog && !linked) {
+                char log[512] = {0}; GLsizei n = 0;
+                glGetProgramInfoLog(prog, 511, &n, log);
+                printf("[GXTRACE] link log: %s\n", log);
+            }
+        }
+    }
     s_batch.clear();
 }
 
@@ -163,10 +179,11 @@ static void EmitVertex(const VertexData &vtx) {
     if (std::getenv("NWII_FLATZ")) bv.z = 0.0f;
     if (std::getenv("NWII_VTXTRACE")) {
         static int vn = 0;
-        if (vn++ < 8)
-            printf("[VTX] raw=(%.1f,%.1f,%.1f) mtxIdx=%d -> view=(%.2f,%.2f,%.2f)\n",
-                   vtx.pos[0], vtx.pos[1], vtx.pos[2], vtx.posMtxIdx,
-                   bv.x, bv.y, bv.z);
+        if (vn++ < 14)
+            printf("[VTX] raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f) tex0=%ux%u fmt=%u\n",
+                   vtx.pos[0], vtx.pos[1], vtx.pos[2], bv.x, bv.y, bv.z,
+                   bv.u, bv.v, g_state.texStages[0].width,
+                   g_state.texStages[0].height, g_state.texStages[0].format);
     }
     s_batch.push_back(bv);
 }
@@ -187,6 +204,12 @@ static void DrawPrimitive(const GXCommand &cmd) {
         s_active_shader = it->second;
     } else {
         auto src = GenerateTEVShader(g_state, cmd.prim_type);
+        if (std::getenv("NWII_SHADERDUMP")) {
+            static int sn = 0;
+            if (sn++ < 2)
+                printf("[SHADER %d] ==== FS ====\n%s\n============\n",
+                       sn, src.fragment_source.c_str());
+        }
         GLShader sh;
         sh.id = CompileShader(src.vertex_source.c_str(), src.fragment_source.c_str());
         for (int i=0; i<8; i++) {
@@ -257,19 +280,23 @@ static void DrawPrimitive(const GXCommand &cmd) {
     for (int i = 0; i < 4; i++) {
         uint32_t ra = g_state.bp[0xE0 + i*2];
         uint32_t bg = g_state.bp[0xE1 + i*2];
+        // Bit 23 selects the register bank: 0 = normal TEV colour register,
+        // 1 = konstant (Dolphin TevRegType). These were swapped, leaving
+        // uTevColor all zeros — constant-colour quads then failed the alpha
+        // test (alpha 0) and the whole frame discarded to black.
         if (((ra >> 23) & 1) == 0) {
-            kcolor[i*4 + 0] = decode11(ra, 0);
-            kcolor[i*4 + 3] = decode11(ra, 12);
-        } else {
             color[i*4 + 0] = decode11(ra, 0);
             color[i*4 + 3] = decode11(ra, 12);
+        } else {
+            kcolor[i*4 + 0] = decode11(ra, 0);
+            kcolor[i*4 + 3] = decode11(ra, 12);
         }
         if (((bg >> 23) & 1) == 0) {
-            kcolor[i*4 + 2] = decode11(bg, 0);
-            kcolor[i*4 + 1] = decode11(bg, 12);
-        } else {
             color[i*4 + 2] = decode11(bg, 0);
             color[i*4 + 1] = decode11(bg, 12);
+        } else {
+            kcolor[i*4 + 2] = decode11(bg, 0);
+            kcolor[i*4 + 1] = decode11(bg, 12);
         }
     }
     
@@ -367,6 +394,9 @@ public:
                 ApplyProjection(s_active_shader.uProjMtx);
             }
         } else if (cmd.type == GXCommandType::BPRegister) {
+            // Decoded BP state is applied here, in stream order, so each
+            // draw sees the texture/TEV state that was current for it.
+            ApplyBPRegister((uint8_t)cmd.reg, cmd.val);
             if (cmd.reg == 0x40) {
                 ApplyZMode();
             }
