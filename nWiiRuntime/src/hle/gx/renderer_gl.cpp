@@ -210,14 +210,55 @@ static void DrawPrimitive(const GXCommand &cmd) {
                 printf("[SHADER %d] ==== FS ====\n%s\n============\n",
                        sn, src.fragment_source.c_str());
         }
-        GLShader sh;
+        // Zero-init: any location that is not found must read back as -1,
+        // not stack garbage (an uninitialised uProjMtx passed the `< 0` guard
+        // and uploaded the matrix to a random location).
+        GLShader sh = {};
+        sh.uProjMtx = -1;
+        for (int i = 0; i < 8; i++) { sh.uTex[i] = -1; sh.uTexMtx[i] = -1; }
+        sh.uTevColor = sh.uTevKColor = -1;
         sh.id = CompileShader(src.vertex_source.c_str(), src.fragment_source.c_str());
+        if (std::getenv("NWII_SHADERDUMP")) {
+            static int vn2 = 0;
+            if (vn2++ < 1) {
+                printf("==== VS ====\n%s\n", src.vertex_source.c_str());
+                GLint ok = 0;
+                glGetProgramiv(sh.id, GL_LINK_STATUS, &ok);
+                printf("link=%d\n", ok);
+                char log[1024] = {0}; GLsizei n = 0;
+                glGetProgramInfoLog(sh.id, 1023, &n, log);
+                if (n) printf("proglog: %s\n", log);
+                GLint na = 0;
+                glGetProgramiv(sh.id, GL_ACTIVE_UNIFORMS, &na);
+                printf("active uniforms=%d:", na);
+                for (GLint i = 0; i < na; i++) {
+                    char nm[64]; GLsizei len; GLint sz; GLenum ty;
+                    glGetActiveUniform(sh.id, i, 63, &len, &sz, &ty, nm);
+                    printf(" %s", nm);
+                }
+                printf("\n");
+            }
+        }
         for (int i=0; i<8; i++) {
             sh.uTex[i] = glGetUniformLocation(sh.id, ("uTex" + std::to_string(i)).c_str());
             sh.uTexMtx[i] = glGetUniformLocation(sh.id, ("uTexMtx[" + std::to_string(i) + "]").c_str());
         }
-        sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor");
-        sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor");
+        // These are declared as arrays (uniform vec4 uTevColor[4]); GL names
+        // an array uniform by its first element, so asking for the bare name
+        // returns -1 on strict drivers and the TEV registers never upload —
+        // every constant-colour quad then draws from an empty tevReg.
+        sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor[0]");
+        if (sh.uTevKColor < 0)
+            sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor");
+        sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor[0]");
+        if (sh.uTevColor < 0)
+            sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor");
+        if (std::getenv("NWII_GXTRACE")) {
+            static int un = 0;
+            if (un++ < 3)
+                printf("[GXTRACE] uniforms: mvp=%d tevColor=%d tevKColor=%d\n",
+                       sh.uProjMtx, sh.uTevColor, sh.uTevKColor);
+        }
         // The generated vertex shader names this uniform "mvp" (see
         // tev_shader_gen.cpp). Looking up "uProjMtx" returned -1, so the
         // projection was never uploaded and gl_Position collapsed to 0 —
@@ -300,6 +341,14 @@ static void DrawPrimitive(const GXCommand &cmd) {
         }
     }
     
+    if (std::getenv("NWII_TEVTRACE")) {
+        static int tn = 0;
+        if (tn++ < 4)
+            printf("[TEV] bp E0=%06X E1=%06X E2=%06X E3=%06X | color0=(%.2f,%.2f,%.2f,%.2f) color1=(%.2f,%.2f,%.2f,%.2f)\n",
+                   g_state.bp[0xE0], g_state.bp[0xE1], g_state.bp[0xE2], g_state.bp[0xE3],
+                   color[0], color[1], color[2], color[3],
+                   color[4], color[5], color[6], color[7]);
+    }
     if (s_active_shader.uTevKColor >= 0) glUniform4fv(s_active_shader.uTevKColor, 4, kcolor);
     if (s_active_shader.uTevColor >= 0) glUniform4fv(s_active_shader.uTevColor, 4, color);
 
