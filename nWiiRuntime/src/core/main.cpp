@@ -666,13 +666,29 @@ int main(int argc, char **argv) {
                     << " proj=";
           for (int i = 0; i < 6; ++i)
             std::cout << nwii::runtime::gx::g_state.projection[i] << ",";
-          std::cout << " vp=";
-          for (int i = 0x1A; i <= 0x1F; ++i) {
-            float v;
-            std::memcpy(&v, &nwii::runtime::gx::g_state.xf[i], 4);
-            std::cout << v << ",";
+          // Texel/palette state over time. The per-draw dump only covers the
+          // first frames, and it showed the H&S image reading as zeros there —
+          // this says whether the data ever lands, and whether we re-decode it.
+          uint32_t base = nwii::runtime::gx::g_state.texStages[0].base_addr;
+          uint32_t toff = nwii::runtime::gx::g_state.texStages[0].tlut_offset;
+          uint32_t tex_nz = 0, tlut_nz = 0;
+          if (nwii::runtime::g_ctx_ptr) {
+            for (uint32_t i = 0; i < 2048; ++i)
+              if (nwii::runtime::g_ctx_ptr->mmu.read8(base + i))
+                ++tex_nz;
           }
-          std::cout << std::endl;
+          for (uint32_t i = 0; i < 512; ++i) {
+            uint32_t idx = toff + i;
+            if (idx < sizeof(nwii::runtime::gx::g_state.tlutMem) &&
+                nwii::runtime::gx::g_state.tlutMem[idx])
+              ++tlut_nz;
+          }
+          std::cout << " tex0=" << std::hex << base << std::dec << "/"
+                    << nwii::runtime::gx::g_state.texStages[0].width << "x"
+                    << nwii::runtime::gx::g_state.texStages[0].height << "/f"
+                    << (int)nwii::runtime::gx::g_state.texStages[0].format
+                    << " texnz=" << tex_nz << "/2048 tlutnz=" << tlut_nz << "/512"
+                    << std::endl;
         }
       }
 
