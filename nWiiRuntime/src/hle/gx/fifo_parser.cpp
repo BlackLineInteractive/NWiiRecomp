@@ -170,13 +170,12 @@ namespace {
             // signal draw-done.
             if (val & 0x4000) {
                 g_state.xfbAddr = g_state.efbCopyDest;
-
-            printf("[GXTRACE] g_state.xfbAddr set to 0x%08X (w=%d h=%d)\n", g_state.xfbAddr, g_state.efbW, g_state.efbH);
                 g_state.xfbW = g_state.efbW;
                 g_state.xfbH = g_state.efbH;
                 g_state.xfbStride = g_state.efbCopyStride
                                         ? g_state.efbCopyStride
                                         : (uint32_t)g_state.efbW * 2;
+                g_state.frame_ready = true;
             }
             if (val & 0x800) {
                 g_state.pe_clear_pending = true;

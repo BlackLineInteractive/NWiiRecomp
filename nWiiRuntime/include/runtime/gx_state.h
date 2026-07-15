@@ -104,6 +104,7 @@ struct GXState {
   uint32_t xfbAddr;
   uint16_t xfbW, xfbH, xfbStride;
   bool pe_clear_pending;
+  bool frame_ready; // set when game does XFB copy (BP 0x52 bit14)
 
   // XF (Transform) State
   float projection[7];

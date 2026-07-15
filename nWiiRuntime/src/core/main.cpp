@@ -17,8 +17,7 @@
 #include <thread>
 #include <vector>
 
-// Forward declarations of GX FIFO processing
-
+#include "runtime/gx_state.h"
 #include "runtime/hw/hw.h"
 
 namespace nwii::runtime {
@@ -617,32 +616,27 @@ int main(int argc, char **argv) {
       extern void ProcessGXFifo();
       ProcessGXFifo();
 
-      if (!headless) {
+      if (!headless && nwii::runtime::gx::g_state.frame_ready) {
+        nwii::runtime::gx::g_state.frame_ready = false;
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        // The window is created with SDL_WINDOW_ALLOW_HIGHDPI, so on a Retina
-        // display the GL drawable is 2x the logical window size. Using the
-        // logical size here painted only the lower-left quarter of the screen.
         int draw_w = 0, draw_h = 0;
         SDL_GL_GetDrawableSize(window, &draw_w, &draw_h);
         glViewport(0, 0, draw_w, draw_h);
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Very crude blit of EFB to screen to verify rendering
         glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, 640, 480, 0, 0, draw_w, draw_h,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
-        
-        // NWII_SCREENSHOT=prefix: dump the EFB to <prefix>_<frame>.bmp every
-        // ~5s so a windowed run can be inspected without screen access.
+
         if (const char *shot_pfx = std::getenv("NWII_SCREENSHOT")) {
           static int shot_frame = 0;
           if ((++shot_frame % 300) == 0) {
             std::vector<unsigned char> px(640 * 480 * 4);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
             glReadPixels(0, 0, 640, 480, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-            // glReadPixels origin is bottom-left; BMP wants top-down rows.
             std::vector<unsigned char> flip(px.size());
             for (int y = 0; y < 480; ++y)
               std::memcpy(&flip[(size_t)y * 640 * 4],
@@ -661,6 +655,8 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
+      } else if (!headless) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
 
       if (audio_dev > 0) {
