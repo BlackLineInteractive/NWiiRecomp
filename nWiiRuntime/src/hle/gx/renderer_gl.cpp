@@ -141,7 +141,7 @@ static void ApplyProjection(GLint uProj) {
 static void ApplyZMode() {
     if (g_state.zMode.enable) {
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL); // Dolphin default approx
+        glDepthFunc(GL_LEQUAL);
     } else {
         glDisable(GL_DEPTH_TEST);
     }
@@ -172,10 +172,6 @@ static void EmitVertex(const VertexData &vtx) {
     } else {
         bv.x = x; bv.y = y; bv.z = z;
     }
-    // NWII_FLATZ=1: force view-space z to 0. MP7's 2D splash quad transforms
-    // to z=-480, which is far outside the game's own ortho depth range
-    // (E=-0.1,F=-1 => visible z in [-10,0]) and gets clipped. If flattening z
-    // makes the quad appear, the modelview z row is what is wrong.
     if (std::getenv("NWII_FLATZ")) bv.z = 0.0f;
     if (std::getenv("NWII_VTXTRACE")) {
         static int vn = 0;
@@ -193,7 +189,7 @@ static void DrawPrimitive(const GXCommand &cmd) {
     const size_t n = v.size();
     if (n == 0) return;
 
-    FlushBatch(); // Start new batch for new state
+    FlushBatch();
 
     bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
     if (!use_shader) return;
@@ -210,9 +206,6 @@ static void DrawPrimitive(const GXCommand &cmd) {
                 printf("[SHADER %d] ==== FS ====\n%s\n============\n",
                        sn, src.fragment_source.c_str());
         }
-        // Zero-init: any location that is not found must read back as -1,
-        // not stack garbage (an uninitialised uProjMtx passed the `< 0` guard
-        // and uploaded the matrix to a random location).
         GLShader sh = {};
         sh.uProjMtx = -1;
         for (int i = 0; i < 8; i++) { sh.uTex[i] = -1; sh.uTexMtx[i] = -1; }
@@ -243,10 +236,6 @@ static void DrawPrimitive(const GXCommand &cmd) {
             sh.uTex[i] = glGetUniformLocation(sh.id, ("uTex" + std::to_string(i)).c_str());
             sh.uTexMtx[i] = glGetUniformLocation(sh.id, ("uTexMtx[" + std::to_string(i) + "]").c_str());
         }
-        // These are declared as arrays (uniform vec4 uTevColor[4]); GL names
-        // an array uniform by its first element, so asking for the bare name
-        // returns -1 on strict drivers and the TEV registers never upload —
-        // every constant-colour quad then draws from an empty tevReg.
         sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor[0]");
         if (sh.uTevKColor < 0)
             sh.uTevKColor = glGetUniformLocation(sh.id, "uTevKColor");
@@ -259,10 +248,6 @@ static void DrawPrimitive(const GXCommand &cmd) {
                 printf("[GXTRACE] uniforms: mvp=%d tevColor=%d tevKColor=%d\n",
                        sh.uProjMtx, sh.uTevColor, sh.uTevKColor);
         }
-        // The generated vertex shader names this uniform "mvp" (see
-        // tev_shader_gen.cpp). Looking up "uProjMtx" returned -1, so the
-        // projection was never uploaded and gl_Position collapsed to 0 —
-        // every triangle degenerated to a point and nothing rasterised.
         sh.uProjMtx = glGetUniformLocation(sh.id, "mvp");
         
         s_shader_cache[hash] = sh;
@@ -285,29 +270,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
     
     for (int i = 0; i < 8; i++) {
         if (s_active_shader.uTexMtx[i] >= 0) {
-            uint32_t texgenInfo = g_state.xf[0x1040 + i];
-            uint32_t texgenType = (texgenInfo >> 4) & 7;
-            uint32_t sourceRow = (texgenInfo >> 7) & 0x1F;
-            
             float mat[16] = {0};
-            if (texgenType == 0 && sourceRow != 30) {
-                int base = sourceRow * 4;
-                mat[0] = g_state.posMatrices[base + 0];
-                mat[4] = g_state.posMatrices[base + 1];
-                mat[8] = g_state.posMatrices[base + 2];
-                mat[12] = g_state.posMatrices[base + 3];
-                mat[1] = g_state.posMatrices[base + 4];
-                mat[5] = g_state.posMatrices[base + 5];
-                mat[9] = g_state.posMatrices[base + 6];
-                mat[13] = g_state.posMatrices[base + 7];
-                mat[2] = g_state.posMatrices[base + 8];
-                mat[6] = g_state.posMatrices[base + 9];
-                mat[10] = g_state.posMatrices[base + 10];
-                mat[14] = g_state.posMatrices[base + 11];
-                mat[15] = 1.0f;
-            } else {
-                mat[0]=1; mat[5]=1; mat[10]=1; mat[15]=1;
-            }
+            mat[0] = mat[5] = mat[10] = mat[15] = 1.0f;
             glUniformMatrix4fv(s_active_shader.uTexMtx[i], 1, GL_FALSE, mat);
         }
     }
@@ -321,10 +285,6 @@ static void DrawPrimitive(const GXCommand &cmd) {
     for (int i = 0; i < 4; i++) {
         uint32_t ra = g_state.bp[0xE0 + i*2];
         uint32_t bg = g_state.bp[0xE1 + i*2];
-        // Bit 23 selects the register bank: 0 = normal TEV colour register,
-        // 1 = konstant (Dolphin TevRegType). These were swapped, leaving
-        // uTevColor all zeros — constant-colour quads then failed the alpha
-        // test (alpha 0) and the whole frame discarded to black.
         if (((ra >> 23) & 1) == 0) {
             color[i*4 + 0] = decode11(ra, 0);
             color[i*4 + 3] = decode11(ra, 12);
@@ -375,7 +335,7 @@ static void DrawPrimitive(const GXCommand &cmd) {
             break;
     }
     
-    FlushBatch(); // Ensure it gets drawn immediately before state updates
+    FlushBatch();
 }
 
 class RendererGL : public IRenderer {
@@ -396,29 +356,6 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
-    // NWII_CMDTRACE=1: dump the shape of one command list — are BP registers
-    // actually interleaved with the draws, or emitted in a separate run? The
-    // stream-order fix assumes interleaving; verify before changing anything.
-    if (std::getenv("NWII_CMDTRACE")) {
-        static int cn = 0;
-        bool has_draw = false;
-        for (const auto &c : commands)
-            if (c.type == GXCommandType::DrawPrimitive) { has_draw = true; break; }
-        if (has_draw && cn++ < 3) {
-            printf("[CMD] chunk %d: %zu commands: ", cn, commands.size());
-            int shown = 0;
-            for (const auto &c : commands) {
-                if (shown++ > 40) { printf("..."); break; }
-                switch (c.type) {
-                case GXCommandType::BPRegister: printf("B%02X ", c.reg); break;
-                case GXCommandType::CPRegister: printf("c%02X ", c.reg); break;
-                case GXCommandType::XFRegister: printf("x%03X ", c.reg); break;
-                case GXCommandType::DrawPrimitive: printf("[DRAW:%zu] ", c.vertices.size()); break;
-                }
-            }
-            printf("\n");
-        }
-    }
     for (const auto &cmd : commands) {
         if (cmd.type == GXCommandType::XFRegister) {
             int addr = cmd.reg;
@@ -443,8 +380,6 @@ public:
                 ApplyProjection(s_active_shader.uProjMtx);
             }
         } else if (cmd.type == GXCommandType::BPRegister) {
-            // Decoded BP state is applied here, in stream order, so each
-            // draw sees the texture/TEV state that was current for it.
             ApplyBPRegister((uint8_t)cmd.reg, cmd.val);
             if (cmd.reg == 0x40) {
                 ApplyZMode();
@@ -465,9 +400,7 @@ public:
     }
 }
 
-    void Present() override {
-        // We will move SDL_GL_SwapWindow here or do it in main.cpp if we cast to SDL_Window
-    }
+    void Present() override {}
 
 private:
     void* m_window = nullptr;

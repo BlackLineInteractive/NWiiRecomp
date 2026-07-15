@@ -12,7 +12,6 @@ public:
     virtual void Render(const std::vector<GXCommand>& commands) = 0;
     virtual void Present() = 0;
     
-    // Creates the appropriate renderer (GL or Metal) based on Config::get().backend
     static std::unique_ptr<IRenderer> Create();
 };
 

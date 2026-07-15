@@ -14,28 +14,20 @@ public:
 
     void Initialize(void* window) override {
         m_window = window;
-        std::cout << "[Metal] Initializing Metal Renderer Stub..." << std::endl;
         m_device = MTLCreateSystemDefaultDevice();
         if (!m_device) {
-            std::cerr << "[Metal] Failed to find a suitable Metal device." << std::endl;
+            std::cerr << "[Metal] No device found" << std::endl;
             return;
         }
         m_commandQueue = [m_device newCommandQueue];
-        std::cout << "[Metal] Using device: " << [[m_device name] UTF8String] << std::endl;
+        std::cout << "[Metal] " << [[m_device name] UTF8String] << std::endl;
     }
 
     void Render(const std::vector<GXCommand>& commands) override {
-        // TODO: Implement Metal rendering
-        // 1. Get CAMetalLayer from SDL
-        // 2. id<CAMetalDrawable> drawable = [layer nextDrawable];
-        // 3. Create render pass descriptor
-        // 4. Encode commands
-        // 5. [commandBuffer presentDrawable:drawable];
+        // TODO: Metal rendering
     }
 
-    void Present() override {
-        // Implement presentation
-    }
+    void Present() override {}
 
 private:
     void* m_window = nullptr;

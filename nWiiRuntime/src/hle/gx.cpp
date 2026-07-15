@@ -1,7 +1,6 @@
 
 #include "runtime/cpu_context.h"
 
-
 namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 
 #include "runtime/gx/fifo_parser.h"
@@ -14,38 +13,28 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <vector>
 #include <mutex>
 
-
-
 using namespace nwii::runtime;
 using namespace nwii::runtime::gx;
 
 GXState nwii::runtime::gx::g_state = {};
 
-
 static std::unique_ptr<nwii::runtime::gx::IRenderer> g_renderer = nullptr;
-// Native window handle, published by main.cpp once the window exists. The
-// GL backend only records it, but Metal needs it to attach its layer.
 static void* g_window = nullptr;
 
 void GX_SetWindow(void* window) { g_window = window; }
 
 void GX_Init() {
     g_renderer = nwii::runtime::gx::IRenderer::Create();
-    if (g_renderer) g_renderer->Initialize(g_window);
+    if (g_renderer) g_renderer->Initialize(nullptr);
 }
 
 namespace nwii::runtime {
-    extern MMU* g_mmu; // Access to physical memory for Index Array
+    extern MMU* g_mmu;
 }
 
 std::mutex g_fifo_mutex;
 std::vector<uint8_t> g_hw_fifo;
 
-// PE draw-done/token signals are detected inside FifoParser::Parse (it sees
-// display-list contents too), not by sniffing the raw byte stream here.
-
-// The game's EFB copy-clear color (BP 0x4F/0x50) — the true frame
-// background. Used by the frame loop instead of a hardcoded clear.
 void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[0] = (unsigned char)(g_state.clearAR & 0xFF);
     rgba[1] = (unsigned char)(g_state.clearGB >> 8);
@@ -53,8 +42,6 @@ void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[3] = (unsigned char)(g_state.clearAR >> 8);
 }
 
-// Last XFB the game presented via GXCopyDisp (BP 0x52 copy-to-XFB). addr==0
-// means no frame has been copied out yet.
 void GX_GetXfb(uint32_t* addr, unsigned* w, unsigned* h, unsigned* stride) {
     *addr   = g_state.xfbAddr;
     *w      = g_state.xfbW;
@@ -63,15 +50,12 @@ void GX_GetXfb(uint32_t* addr, unsigned* w, unsigned* h, unsigned* stride) {
 }
 
 void ProcessGXFifo() {
-
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     if (g_hw_fifo.empty()) return;
 
     std::vector<nwii::runtime::gx::GXCommand> commands;
     nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
 
-    // Stall detector: a remainder that keeps its size across many parse ticks
-    // means the parser cannot advance (desync or bogus length field).
     if (std::getenv("NWII_SAMPLE") && !g_hw_fifo.empty()) {
         static size_t last_size = 0;
         static int stuck_ticks = 0, dumps = 0;
@@ -91,36 +75,22 @@ void ProcessGXFifo() {
         }
     }
 
-    // Parse erases the fully-consumed prefix; a trailing incomplete command is
-    // kept for the next chunk (do NOT clear the whole buffer — that splits
-    // commands and permanently desyncs the stream). Safety valve: if the
-    // remainder grows past a sane bound the stream is corrupt (a bad length or
-    // a byte the parser can't advance past), so drop it to avoid unbounded
-    // growth rather than accumulating forever.
     if (g_hw_fifo.size() > (4u << 20))
         g_hw_fifo.clear();
 
-    // Headless runs still parse (PE signals, GX state drive the game) but
-    // have no window and no GL/Metal context — creating a renderer or
-    // issuing draws there is undefined and stalls the boot.
     if (g_window) {
         if (!g_renderer) {
             g_renderer = nwii::runtime::gx::IRenderer::Create();
-            g_renderer->Initialize(g_window);
+            g_renderer->Initialize(nullptr);
         }
         if (g_renderer)
             g_renderer->Render(commands);
     }
 }
 
-
-
 namespace nwii::runtime {
 
-// Single entry point for every captured command byte. Callers hold g_fifo_mutex.
 static inline void wgp_push(uint8_t b) {
-    // NWII_GXDUMP=path: tee the first 64KB of the raw WGP stream to a file
-    // for offline analysis of parser desyncs.
     if (const char* path = std::getenv("NWII_GXDUMP")) {
         static FILE* f = fopen(path, "wb");
         static size_t n = 0;
@@ -172,6 +142,4 @@ void GX_WGPIPE_WriteF64(double val) {
         wgp_push((u.i >> s) & 0xFF);
 }
 
-} // namespace
-
-// Dolphin-accurate CP FIFO Drainer
+} // namespace nwii::runtime
