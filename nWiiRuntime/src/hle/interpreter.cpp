@@ -421,7 +421,7 @@ bool interpret_one(CPUContext& ctx) {
         for (uint32_t r = rD; r < 32; r++, ea += 4) ctx.mmu.write32(ea, ctx.gpr[r]);
         break;
     }
-    case 48: ctx.fpr[rD] = ctx.mmu.read_f32(ea_ra0(simm)); break;         // lfs
+    case 48: ctx.fpr[rD] = ctx.ps1[rD] = ctx.mmu.read_f32(ea_ra0(simm)); break; // lfs (both PS lanes)
     case 49: { // lfsu: load float single with update
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.fpr[rD] = ctx.mmu.read_f32(ea);

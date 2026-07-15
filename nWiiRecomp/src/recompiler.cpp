@@ -1520,13 +1520,17 @@ void Recompiler::emit_instruction(std::ostream &out,
     uint32_t fD = ppc_inst.rd();
     uint32_t rA = ppc_inst.ra();
     int16_t simm = ppc_inst.simm();
+    // lfs loads a scalar into BOTH paired-single slots (ps0 and ps1). Only
+    // writing ps0 left stale data in ps1, which a later psq_st then stored —
+    // e.g. PSMTXTrans wrote the previous row's y into m[2][1], tilting every
+    // matrix (z = -y). Set ps1 too.
     if (rA == 0) {
-      out << "    ctx.fpr[" << fD << "] = ctx.mmu.read_f32(" << simm
-          << "); // lfs f" << fD << ", " << simm << "(0)\n";
+      out << "    ctx.fpr[" << fD << "] = ctx.ps1[" << fD
+          << "] = ctx.mmu.read_f32(" << simm << "); // lfs\n";
     } else {
-      out << "    ctx.fpr[" << fD << "] = ctx.mmu.read_f32(ctx.gpr[" << rA
-          << "] + " << simm << "); // lfs f" << fD << ", " << simm << "(r" << rA
-          << ")\n";
+      out << "    ctx.fpr[" << fD << "] = ctx.ps1[" << fD
+          << "] = ctx.mmu.read_f32(ctx.gpr[" << rA << "] + " << simm
+          << "); // lfs\n";
     }
   } else if (ppc_inst.opcode() == 52) {
     // stfs
@@ -2238,14 +2242,16 @@ void Recompiler::emit_instruction(std::ostream &out,
       }
     } else if (xo == 535) { // lfsx
       uint32_t frD2 = ppc_inst.rd();
-      out << "    ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ctx.gpr["
-          << rA << "] + ctx.gpr[" << rB << "]); // lfsx\n";
+      out << "    ctx.fpr[" << frD2 << "] = ctx.ps1[" << frD2
+          << "] = (double)ctx.mmu.read_f32(ctx.gpr[" << rA << "] + ctx.gpr["
+          << rB << "]); // lfsx (both PS lanes)\n";
     } else if (xo == 567) { // lfsux
       uint32_t frD2 = ppc_inst.rd();
       out << "    { uint32_t ea = ctx.gpr[" << rA << "] + ctx.gpr[" << rB
           << "]; ";
-      out << "ctx.fpr[" << frD2 << "] = (double)ctx.mmu.read_f32(ea); ";
-      out << "ctx.gpr[" << rA << "] = ea; } // lfsux\n";
+      out << "ctx.fpr[" << frD2 << "] = ctx.ps1[" << frD2
+          << "] = (double)ctx.mmu.read_f32(ea); ";
+      out << "ctx.gpr[" << rA << "] = ea; } // lfsux (both PS lanes)\n";
     } else if (xo == 599) { // lfdx
       uint32_t frD2 = ppc_inst.rd();
       out << "    ctx.fpr[" << frD2 << "] = ctx.mmu.read_f64(ctx.gpr[" << rA

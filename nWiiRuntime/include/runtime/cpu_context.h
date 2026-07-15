@@ -528,21 +528,24 @@ struct CPUContext {
     fpr[D] = -std::abs(fpr[B]);
     ps1[D] = -std::abs(ps1[B]);
   }
+  // Both lanes must be read before either is written: D commonly aliases A
+  // or B in the SDK's matrix routines, and writing lane 0 first then reading
+  // the other operand returned the value just overwritten.
   inline void ps_merge00(uint32_t D, uint32_t A, uint32_t B) {
-    fpr[D] = fpr[A];
-    ps1[D] = fpr[B];
+    double a = fpr[A], b = fpr[B];
+    fpr[D] = a; ps1[D] = b;
   }
   inline void ps_merge01(uint32_t D, uint32_t A, uint32_t B) {
-    fpr[D] = fpr[A];
-    ps1[D] = ps1[B];
+    double a = fpr[A], b = ps1[B];
+    fpr[D] = a; ps1[D] = b;
   }
   inline void ps_merge10(uint32_t D, uint32_t A, uint32_t B) {
-    fpr[D] = ps1[A];
-    ps1[D] = fpr[B];
+    double a = ps1[A], b = fpr[B];
+    fpr[D] = a; ps1[D] = b;
   }
   inline void ps_merge11(uint32_t D, uint32_t A, uint32_t B) {
-    fpr[D] = ps1[A];
-    ps1[D] = ps1[B];
+    double a = ps1[A], b = ps1[B];
+    fpr[D] = a; ps1[D] = b;
   }
   inline void ps_cmpu0(uint32_t crD, uint32_t A, uint32_t B) {
     bool un = std::isnan(fpr[A]) || std::isnan(fpr[B]);
