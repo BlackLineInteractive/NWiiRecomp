@@ -34,6 +34,8 @@ namespace nwii::runtime {
 
 std::mutex g_fifo_mutex;
 std::vector<uint8_t> g_hw_fifo;
+// Commands of a frame the game has not finished submitting yet.
+static std::vector<nwii::runtime::gx::GXCommand> s_carry;
 
 void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[0] = (unsigned char)(g_state.clearAR & 0xFF);
@@ -78,13 +80,38 @@ void ProcessGXFifo() {
     if (g_hw_fifo.size() > (4u << 20))
         g_hw_fifo.clear();
 
+    // Render whole frames only. This runs once per host frame-loop iteration,
+    // pinned to the host's vsync, which has nothing to do with how far the
+    // guest CPU has got: the drain boundary regularly falls mid-frame, so we
+    // rendered (and EFB-cleared for) a fragment — that is the flicker, and the
+    // "sometimes only Press any button" frames. Dolphin has no such boundary
+    // because it drives the GP from the CP FIFO pointers and CPU ticks
+    // (FifoManager::RunGpuOnCpu), never a wall clock. The game marks a finished
+    // frame with BP 0x52 bit14 (copy-to-XFB), so buffer until one arrives and
+    // render everything up to it as one unit.
+    s_carry.insert(s_carry.end(), commands.begin(), commands.end());
+
+    int last_frame_end = -1;
+    for (size_t i = 0; i < s_carry.size(); ++i) {
+        const auto &c = s_carry[i];
+        if (c.type == nwii::runtime::gx::GXCommandType::BPRegister &&
+            c.reg == 0x52 && (c.val & 0x4000))
+            last_frame_end = (int)i;
+    }
+    if (last_frame_end < 0)
+        return; // frame still incomplete: keep buffering
+
+    std::vector<nwii::runtime::gx::GXCommand> frame(
+        s_carry.begin(), s_carry.begin() + last_frame_end + 1);
+    s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
+
     if (g_window) {
         if (!g_renderer) {
             g_renderer = nwii::runtime::gx::IRenderer::Create();
             g_renderer->Initialize(nullptr);
         }
         if (g_renderer)
-            g_renderer->Render(commands);
+            g_renderer->Render(frame);
     }
 }
 

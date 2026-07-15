@@ -54,9 +54,12 @@ struct TexStage {
 // by a logic op. Games use it for cutouts (fonts, foliage, UI edges) — a
 // pixel that fails is discarded before blending.
 struct AlphaTest {
-  uint8_t ref0, ref1;
-  uint8_t comp0, comp1; // CompareMode: 0=never 1=< 2=== 3=<= 4=> 5=!= 6=>= 7=always
-  uint8_t logic;        // 0=and 1=or 2=xor 3=xnor
+  uint8_t ref0 = 0, ref1 = 0;
+  // CompareMode: 0=never 1=< 2=== 3=<= 4=> 5=!= 6=>= 7=always.
+  // Default to ALWAYS like GXInit: zero-init would mean NEVER, i.e. discard
+  // every fragment until the game happens to write BPMEM_ALPHACOMPARE (0xF3).
+  uint8_t comp0 = 7, comp1 = 7;
+  uint8_t logic = 0; // 0=and 1=or 2=xor 3=xnor
 };
 
 struct ZMode {

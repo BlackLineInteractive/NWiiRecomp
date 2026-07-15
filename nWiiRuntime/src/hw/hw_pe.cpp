@@ -21,7 +21,9 @@ static std::atomic<bool> g_pe_finish_pending = false;
 std::atomic<uint32_t> g_pe_sr = 0;
 // Last GXSetDrawSync token seen in the command stream (BP 0x47/0x48 payload);
 // the PE ISR reads it back from 0xCC00100E to hand to the game's callback.
-uint32_t g_pe_token = 0;
+// Atomic: the parser writes it on the frame thread while the guest token ISR
+// reads it on the CPU thread (TSan named this exact pair).
+std::atomic<uint32_t> g_pe_token = 0;
 
 // PI lines follow (pending && enabled), like Dolphin's UpdateInterrupts.
 static void pe_update_interrupts() {

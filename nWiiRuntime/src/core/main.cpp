@@ -45,8 +45,18 @@ void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
   std::cout << "[Thread] CPU Core started. pc=" << std::hex << ctx->pc << " is_running=" << ctx->is_running << std::endl;
   std::flush(std::cout);
   run_game(*ctx);
-  std::cout << "[Thread] CPU Core exited. Final PC: 0x" << std::hex << ctx->pc
-            << ", LR: 0x" << ctx->lr << std::dec << std::endl;
+  // Teardown also stops the core by zeroing pc, so a clean exit and a wild
+  // jump to 0 printed the same thing (and the generated code dumps a PC
+  // history for both). Say which one it was: is_running is cleared only by the
+  // shutdown path.
+  if (!ctx->is_running) {
+    std::cout << "[Thread] CPU Core exited: shutdown requested (window closed "
+                 "or quit). NOT a crash." << std::endl;
+  } else {
+    std::cout << "[Thread] CPU Core CRASHED (jumped to 0). Final PC: 0x"
+              << std::hex << ctx->pc << ", LR: 0x" << ctx->lr << std::dec
+              << std::endl;
+  }
 }
 
 int main(int argc, char **argv) {
