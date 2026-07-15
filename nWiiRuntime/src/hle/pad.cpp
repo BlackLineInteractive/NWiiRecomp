@@ -12,12 +12,8 @@ void KPADInit(CPUContext& ctx) {}
 
 void PADRead(CPUContext& ctx) {
     uint32_t pad_status_array_addr = ctx.gpr[3];
-    
-    // CRITICAL FIX: Do NOT call Raylib Input functions here. 
-    // This is executing inside the CPU emulation thread thousands of times a second.
-    // Just fetch the cached state updated once per frame by the main thread.
     GameCubePadState state = InputManager::get().get_gcpad_state(0);
-    
+
     ctx.mmu.write16(pad_status_array_addr, state.buttons);
     ctx.mmu.write8(pad_status_array_addr + 2, (uint8_t)state.stick_x);
     ctx.mmu.write8(pad_status_array_addr + 3, (uint8_t)state.stick_y);
@@ -25,12 +21,11 @@ void PADRead(CPUContext& ctx) {
     ctx.mmu.write8(pad_status_array_addr + 5, (uint8_t)state.substick_y);
     ctx.mmu.write8(pad_status_array_addr + 6, state.trigger_l);
     ctx.mmu.write8(pad_status_array_addr + 7, state.trigger_r);
-    ctx.mmu.write8(pad_status_array_addr + 8, state.buttons & 0x0100 ? 0xFF : 0); 
-    ctx.mmu.write8(pad_status_array_addr + 9, state.buttons & 0x0200 ? 0xFF : 0); 
-    ctx.mmu.write8(pad_status_array_addr + 10, state.err); 
-    ctx.mmu.write8(pad_status_array_addr + 11, 0); 
+    ctx.mmu.write8(pad_status_array_addr + 8, state.buttons & 0x0100 ? 0xFF : 0);
+    ctx.mmu.write8(pad_status_array_addr + 9, state.buttons & 0x0200 ? 0xFF : 0);
+    ctx.mmu.write8(pad_status_array_addr + 10, state.err);
+    ctx.mmu.write8(pad_status_array_addr + 11, 0);
 
-    // Disconnected controllers
     for (int i = 1; i < 4; i++) {
         uint32_t offset = pad_status_array_addr + (i * 12);
         ctx.mmu.write16(offset, 0);
@@ -41,13 +36,11 @@ void PADRead(CPUContext& ctx) {
 void WPADRead(CPUContext& ctx) {
     int32_t chan = (int32_t)ctx.gpr[3];
     uint32_t data_ptr = ctx.gpr[4];
-    
+
     if (chan >= 0 && chan < 4 && data_ptr != 0) {
         WiimoteState state = InputManager::get().get_wiimote_state(chan);
-        // Basic WPADStatus structure
         ctx.mmu.write32(data_ptr + 0x00, state.err);
         ctx.mmu.write32(data_ptr + 0x04, state.buttons);
-        // In reality, WPADStatus is large, we only fill err and buttons for now
     }
     ctx.gpr[3] = 0; // WPAD_ERR_NONE
 }
@@ -55,27 +48,43 @@ void WPADRead(CPUContext& ctx) {
 void KPADRead(CPUContext& ctx) {
     int32_t chan = (int32_t)ctx.gpr[3];
     uint32_t data_array_ptr = ctx.gpr[4];
-    uint32_t length = ctx.gpr[5]; // How many structs
-    
+    uint32_t length = ctx.gpr[5];
+
     int read_count = 0;
     if (chan >= 0 && chan < 4 && data_array_ptr != 0 && length > 0) {
         WiimoteState state = InputManager::get().get_wiimote_state(chan);
-        
-        // Write one KPADStatus entry
-        if (state.err == 0) { // If connected
-            ctx.mmu.write32(data_array_ptr + 0x00, state.buttons);       // hold
-            ctx.mmu.write32(data_array_ptr + 0x04, 0);                   // trigger (we don't track edges yet)
-            ctx.mmu.write32(data_array_ptr + 0x08, 0);                   // release
-            
-            // IR data (KPADStatus offset 0x24 usually)
-            // Simplified: ir.x at 0x28, ir.y at 0x2C
-            // We just write some reasonable offsets if KPAD layout is standard
-            uint32_t ir_valid_offset = data_array_ptr + 0x24; // depends on SDK version!
-            // Actually, we should just write the struct. Let's write the most common fields.
-            // But this is highly dependent on KPADStatus structure size which is usually 0x48 or 0x54.
-            // We'll write to common offsets used by many games
-            
-            // For now, we return 1 to indicate 1 struct was read
+
+        if (state.err == 0) {
+            // KPADStatus layout (SDK ~4.x, size 0xF0 / common layout):
+            //   0x00: hold (buttons currently pressed)
+            //   0x04: trigger (pressed this frame)
+            //   0x08: release
+            //   0x0C: acc x/y/z (floats) - ignored
+            //   0x24: ir (struct) - ignored
+            //   0x48: ext_type (uint32, 0=no extension, 1=Nunchuk, 2=Classic)
+            //   0x4C: err (int32, 0=KPAD_ERR_NONE)
+            //   0x50: classic_hold, etc.
+            static uint32_t prev_buttons[4] = {};
+            uint32_t hold    = state.buttons;
+            uint32_t trigger = hold & ~prev_buttons[chan];  // newly pressed
+            uint32_t release = ~hold & prev_buttons[chan];  // newly released
+            prev_buttons[chan] = hold;
+
+            ctx.mmu.write32(data_array_ptr + 0x00, hold);
+            ctx.mmu.write32(data_array_ptr + 0x04, trigger);
+            ctx.mmu.write32(data_array_ptr + 0x08, release);
+            // acc
+            ctx.mmu.write32(data_array_ptr + 0x0C, 0);
+            ctx.mmu.write32(data_array_ptr + 0x10, 0);
+            ctx.mmu.write32(data_array_ptr + 0x14, 0);
+            // ir - zeroed
+            for (int b = 0x18; b < 0x48; b += 4)
+                ctx.mmu.write32(data_array_ptr + b, 0);
+            // ext_type = 0 (no extension / core Wiimote only)
+            ctx.mmu.write32(data_array_ptr + 0x48, 0);
+            // err = KPAD_ERR_NONE
+            ctx.mmu.write32(data_array_ptr + 0x4C, 0);
+
             read_count = 1;
         }
     }
@@ -83,4 +92,3 @@ void KPADRead(CPUContext& ctx) {
 }
 
 } // extern "C"
-

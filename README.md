@@ -34,7 +34,7 @@ NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) executables into na
 
 > **Note:** The recompiler and runtime are designed to be **universal**. We have tested the architecture on radically different games (e.g., *Need For Speed: Hot Pursuit 2*, *Mario Party 7*, and *Silent Hill: Shattered Memories*). The fact that these fundamentally different engines yield identical, stable hardware behavior and 0 crashes confirms the universality of the core emulator design.
 >
-> **Latest Update:** Both *Need For Speed* and *Mario Party 7* (GameCube) successfully boot, stream from DVD, and generate GX display lists! The runtime now correctly parses 2D/3D geometry and decodes hardware texture formats (I4, I8, RGB565, CMPR) via Raylib!
+> **Latest Update:** *Mario Party 7* (Wii) successfully renders the Health & Safety screen — correctly positioned, full-resolution, stable frame output — running natively via static recompilation with a custom OpenGL 3.3 renderer (SDL2 + GLAD). No instruction-level emulation, no Dolphin code.
 
 ---
 
@@ -104,7 +104,7 @@ NWiiRecomp/
 
 ### Studio (`nWiiStudio`)
 
-- Raylib + ImGui-based GUI
+- Raylib + ImGui-based GUI (legacy; main runtime now uses SDL2 + OpenGL)
 - DOL file browser and loader
 - Function list panel with address and instruction count
 - Disassembly viewer (raw PPC hex + decoded mnemonic)
@@ -120,7 +120,7 @@ NWiiRecomp/
 
 ## Building
 
-**Requirements:** CMake 3.20+, a C++20 compiler, internet access (Raylib is fetched automatically).
+**Requirements:** CMake 3.20+, a C++20 compiler, internet access (SDL2 is fetched automatically).
 
 ```bash
 cmake -B build
