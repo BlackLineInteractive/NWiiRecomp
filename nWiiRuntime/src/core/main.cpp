@@ -692,9 +692,8 @@ int main(int argc, char **argv) {
         }
       }
 
-      if (!headless && nwii::runtime::gx::g_state.frame_ready) {
-        nwii::runtime::gx::g_state.frame_ready = false;
 
+      if (!headless) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         int draw_w = 0, draw_h = 0;
         SDL_GL_GetDrawableSize(window, &draw_w, &draw_h);
@@ -731,8 +730,6 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
-      } else if (!headless) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
 
       if (audio_dev > 0) {
