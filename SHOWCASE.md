@@ -6,7 +6,7 @@ This document showcases the development progress, tools, and runtime execution o
 
 ## 🎮 Mario Party 7 — In-Game Rendering
 
-The first Wii game to successfully boot, stream from DVD, parse GX display lists, decode hardware textures, and render to screen — running **natively** via static recompilation, with **zero instruction-level emulation**.
+The first GC game to successfully boot, stream from DVD, parse GX display lists, decode hardware textures, and render to screen — running **natively** via static recompilation, with **zero instruction-level emulation**.
 
 <p align="center">
   <img src="image/game/mp7.png" alt="Mario Party 7 — Health & Safety screen rendered via NWiiRecomp" width="100%"/>
