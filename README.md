@@ -10,7 +10,7 @@
 (The first recompiler that really works)
 </p>
 
-### 🎥 Latest Milestone: Real-time 3D Intro & Z-Buffer
+### 🎥 Latest Milestone: Real-time Intro (Full Video on YouTube)
 
 [![NWiiRecomp Mario Party 7 3D Intro](https://img.youtube.com/vi/Q2SdZSAbhTQ/maxresdefault.jpg)](https://youtu.be/Q2SdZSAbhTQ)
 <p align="center">
