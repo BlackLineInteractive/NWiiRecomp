@@ -266,15 +266,16 @@ int main(int argc, char **argv) {
       }
     }
     // Text sections have statically recompiled bodies; everything outside
-    // them (low-mem helpers, streamed overlays) runs on the interpreter.
-    // Keep the low-mem region (< 0x80004000) on the interpreter: parts of it
-    // (memset/memcpy loop backedges) are reached only via mid-function jumps
-    // the analyzer did not register as dispatcher cases. Marking them as
-    // "recompiled" makes the interpreter yield to a dispatcher that has no
-    // case, ping-ponging forever. Interpreting straight through is slower
-    // but correct.
+    // them (streamed overlays, runtime-generated code) runs on the
+    // interpreter. The low-mem region (0x80003100+) used to stay on the
+    // interpreter because mid-function jumps had no dispatcher case; the
+    // generated g_func_bounds table now routes any in-function pc through
+    // the function's own pc-switch preamble, so the whole text section can
+    // be registered. NWII_INTERP_LOW=1 restores the old clamp for A/B runs.
     if (sec.is_text) {
-      uint32_t start = std::max<uint32_t>(sec.address, 0x80004000);
+      uint32_t start = sec.address;
+      if (std::getenv("NWII_INTERP_LOW"))
+        start = std::max<uint32_t>(sec.address, 0x80004000);
       uint32_t end = sec.address + sec.size;
       if (end > start)
         nwii::runtime::add_recompiled_range(start, end);
@@ -652,6 +653,7 @@ int main(int argc, char **argv) {
             5) {
           t0 = now;
           extern uint64_t g_stat_frames, g_stat_draws;
+          extern uint64_t g_stat_parse_us, g_stat_render_us;
           extern uint64_t nwii_stat_hash0(), nwii_stat_shaders();
           std::vector<unsigned char> p(640 * 480 * 4);
           glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
@@ -663,9 +665,13 @@ int main(int argc, char **argv) {
               ++nonblack;
           std::cout << "[STAT] " << ++stat_n * 5 << "s frames=" << std::dec
                     << g_stat_frames << " draws=" << g_stat_draws
+                    << " parse_ms=" << g_stat_parse_us / 1000
+                    << " render_ms=" << g_stat_render_us / 1000
                     << " efb_nonblack=" << nonblack << "/307200"
                     << " shaders=" << nwii_stat_shaders() << " hash0=0x"
                     << std::hex << nwii_stat_hash0();
+          g_stat_parse_us = 0;
+          g_stat_render_us = 0;
           // TEV colour registers: uniforms, so they are NOT in the shader hash.
           // The H&S shader resolves to uTevColor[1] and discards on alpha 0.
           std::cout << " E0..E7=";

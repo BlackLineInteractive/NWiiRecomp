@@ -88,13 +88,15 @@ static void FlushBatch() {
     glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
     glBufferData(GL_ARRAY_BUFFER, s_batch.size() * sizeof(BatchVertex), s_batch.data(), GL_STREAM_DRAW);
     
-    if (std::getenv("NWII_GXTRACE")) {
+    static const bool s_gxtrace1 = std::getenv("NWII_GXTRACE") != nullptr;
+    if (s_gxtrace1) {
         static int dn = 0;
         if (dn++ < 5)
             printf("[GXTRACE] flush #%d verts=%zu\n", dn, s_batch.size());
     }
     glDrawArrays(GL_TRIANGLES, 0, s_batch.size());
-    if (std::getenv("NWII_GXTRACE")) {
+    static const bool s_gxtrace2 = std::getenv("NWII_GXTRACE") != nullptr;
+    if (s_gxtrace2) {
         static int en = 0;
         if (en++ < 8) {
             GLint prog = 0, linked = 0;
@@ -131,7 +133,8 @@ static void ApplyProjection(GLint uProj) {
         p[2] = 0; p[6] = 0; p[10] = sp[4]; p[14] = sp[5];
         p[3] = 0; p[7] = 0; p[11] = 0; p[15] = 1.0f;
     }
-    if (std::getenv("NWII_VTXTRACE")) {
+    static const bool s_vtxtrace_p = std::getenv("NWII_VTXTRACE") != nullptr;
+    if (s_vtxtrace_p) {
         static int pn = 0;
         if (pn++ < 2)
             printf("[PROJ] type=%u set=%d raw=[%.5f %.2f %.5f %.2f %.2f %.2f]\n",
@@ -177,7 +180,8 @@ static void EmitVertex(const VertexData &vtx) {
     // z_view = 0 keeps all vertices inside clip space [-1, 1] after the
     // projection matrix, and is correct for any 2D/UI draw.
     bv.z = 0.0f;
-    if (std::getenv("NWII_VTXTRACE")) {
+    static const bool s_vtxtrace_v = std::getenv("NWII_VTXTRACE") != nullptr;
+    if (s_vtxtrace_v) {
         static int vn = 0;
         if (vn++ < 14)
             printf("[VTX] raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f) tex0=%ux%u fmt=%u\n",
@@ -188,6 +192,17 @@ static void EmitVertex(const VertexData &vtx) {
     s_batch.push_back(bv);
 }
 
+// A run of consecutive DrawPrimitive commands shares ALL GL state: anything
+// that could change it (BP/XF register loads) arrives as its own command and
+// closes the batch. Setting up program/uniforms/textures once per run instead
+// of once per draw call collapsed the title screen's ~5000 tiny draws from one
+// glDrawArrays + ~12 uniform uploads each into a handful of real GL calls.
+static bool s_batch_open = false;
+static uint8_t s_batch_prim = 0;
+
+static void SetupDrawState(const GXCommand &cmd);
+static void EmitPrimitive(const GXCommand &cmd);
+
 static void DrawPrimitive(const GXCommand &cmd) {
     const auto &v = cmd.vertices;
     const size_t n = v.size();
@@ -197,7 +212,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
     // bad run can be diffed directly. Every aggregate (shader hash, TEV regs,
     // projection, viewport) is identical between them, so the divergence has to
     // be per-draw.
-    if (std::getenv("NWII_DRAWLOG")) {
+    static const bool s_drawlog = std::getenv("NWII_DRAWLOG") != nullptr;
+    if (s_drawlog) {
         static int dn = 0;
         if (dn < 40) {
             // Everything else about a draw matches between a good and a bad
@@ -239,9 +255,17 @@ static void DrawPrimitive(const GXCommand &cmd) {
         }
     }
 
-    FlushBatch();
+    if (!s_batch_open || s_batch_prim != (uint8_t)cmd.prim_type) {
+        FlushBatch();
+        SetupDrawState(cmd);
+        s_batch_open = true;
+        s_batch_prim = (uint8_t)cmd.prim_type;
+    }
+    EmitPrimitive(cmd);
+}
 
-    bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
+static void SetupDrawState(const GXCommand &cmd) {
+    static const bool use_shader = (std::getenv("NWII_NOSHADER") == nullptr);
     if (!use_shader) return;
 
     uint64_t hash = g_state.GetShaderHash(cmd.prim_type);
@@ -255,7 +279,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
         s_active_shader = it->second;
     } else {
         auto src = GenerateTEVShader(g_state, cmd.prim_type);
-        if (std::getenv("NWII_SHADERDUMP")) {
+        static const bool s_shdump1 = std::getenv("NWII_SHADERDUMP") != nullptr;
+        if (s_shdump1) {
             static int sn = 0;
             if (sn++ < 2)
                 printf("[SHADER %d] ==== FS ====\n%s\n============\n",
@@ -266,7 +291,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
         for (int i = 0; i < 8; i++) { sh.uTex[i] = -1; sh.uTexMtx[i] = -1; }
         sh.uTevColor = sh.uTevKColor = -1;
         sh.id = CompileShader(src.vertex_source.c_str(), src.fragment_source.c_str());
-        if (std::getenv("NWII_SHADERDUMP")) {
+        static const bool s_shdump2 = std::getenv("NWII_SHADERDUMP") != nullptr;
+        if (s_shdump2) {
             static int vn2 = 0;
             if (vn2++ < 1) {
                 printf("==== VS ====\n%s\n", src.vertex_source.c_str());
@@ -297,7 +323,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
         sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor[0]");
         if (sh.uTevColor < 0)
             sh.uTevColor = glGetUniformLocation(sh.id, "uTevColor");
-        if (std::getenv("NWII_GXTRACE")) {
+        static const bool s_gxtrace3 = std::getenv("NWII_GXTRACE") != nullptr;
+        if (s_gxtrace3) {
             static int un = 0;
             if (un++ < 3)
                 printf("[GXTRACE] uniforms: mvp=%d tevColor=%d tevKColor=%d\n",
@@ -356,7 +383,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
         }
     }
     
-    if (std::getenv("NWII_TEVTRACE")) {
+    static const bool s_tevtrace = std::getenv("NWII_TEVTRACE") != nullptr;
+    if (s_tevtrace) {
         static int tn = 0;
         if (tn++ < 4)
             printf("[TEV] bp E0=%06X E1=%06X E2=%06X E3=%06X | color0=(%.2f,%.2f,%.2f,%.2f) color1=(%.2f,%.2f,%.2f,%.2f)\n",
@@ -366,6 +394,11 @@ static void DrawPrimitive(const GXCommand &cmd) {
     }
     if (s_active_shader.uTevKColor >= 0) glUniform4fv(s_active_shader.uTevKColor, 4, kcolor);
     if (s_active_shader.uTevColor >= 0) glUniform4fv(s_active_shader.uTevColor, 4, color);
+}
+
+static void EmitPrimitive(const GXCommand &cmd) {
+    const auto &v = cmd.vertices;
+    const size_t n = v.size();
 
     switch (cmd.prim_type) {
         case 0x80: // GX_QUADS
@@ -389,8 +422,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
             }
             break;
     }
-    
-    FlushBatch();
+    // No flush here: the batch stays open across consecutive draws and is
+    // flushed when a state-changing command or the end of the frame arrives.
 }
 
 class RendererGL : public IRenderer {
@@ -412,6 +445,13 @@ public:
     }
 
     for (const auto &cmd : commands) {
+        // Any non-draw command can change draw state: close the running
+        // vertex batch first so pending geometry draws with the state it
+        // was submitted under.
+        if (cmd.type != GXCommandType::DrawPrimitive && s_batch_open) {
+            FlushBatch();
+            s_batch_open = false;
+        }
         if (cmd.type == GXCommandType::XFRegister) {
             int addr = cmd.reg;
             bool touched_proj = false;
@@ -440,7 +480,10 @@ public:
                 ApplyZMode();
             }
         } else if (cmd.type == GXCommandType::DrawPrimitive) {
-            if (g_ctx_ptr) {
+            // Texture lookups (hash of texel data + TLUT) are per-run, not
+            // per-draw: nothing between two consecutive draws can retarget
+            // a texture stage.
+            if (!s_batch_open && g_ctx_ptr) {
                 for (int i = 0; i < 8; ++i) {
                     const auto &stage = g_state.texStages[i];
                     if (stage.base_addr != 0 && stage.width > 0 && stage.height > 0) {
@@ -452,6 +495,10 @@ public:
             }
             DrawPrimitive(cmd);
         }
+    }
+    if (s_batch_open) {
+        FlushBatch();
+        s_batch_open = false;
     }
 }
 

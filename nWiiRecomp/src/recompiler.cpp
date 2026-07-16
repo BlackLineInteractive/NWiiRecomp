@@ -869,10 +869,12 @@ void Recompiler::emit_function(std::ostream &out,
     return;
   }
 
-  // The OS low-memory region (below the 0x80004000 application base) holds
-  // exception vectors and helper routines the game copies in at runtime;
-  // DOL bytes there are stale. Same for functions that are all zeros in
-  // the image. Execute those from live guest memory instead.
+  // Only the exception-vector region (below 0x80003100, in front of any DOL
+  // text section) is populated at runtime — DOL bytes there are stale. Text
+  // from 0x80003100 up (crt0, TRK memset/memcpy helpers) is loaded from the
+  // image and static; stubbing it to the interpreter (the old 0x80004000
+  // cutoff) kept every memset/memcpy of the whole game on interpret_step.
+  // Same treatment for functions that are all zeros in the image.
   bool all_zero = !func.instructions.empty();
   for (const auto &inst : func.instructions) {
     if (inst.opcode != 0) {
@@ -880,7 +882,7 @@ void Recompiler::emit_function(std::ostream &out,
       break;
     }
   }
-  bool os_low_mem = (func.start_address & 0x3FFFFFFF) < 0x4000;
+  bool os_low_mem = (func.start_address & 0x3FFFFFFF) < 0x3100;
   if (all_zero || os_low_mem) {
     out << "    nwii::runtime::interpret_step(ctx);\n";
     out << "}\n\n";

@@ -12,6 +12,7 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <cstdlib>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 using namespace nwii::runtime;
 using namespace nwii::runtime::gx;
@@ -40,6 +41,11 @@ static std::vector<nwii::runtime::gx::GXCommand> s_carry;
 // Run-to-run diagnostics: which stage a run got to (see the [STAT] line).
 uint64_t g_stat_frames = 0;
 uint64_t g_stat_draws = 0;
+// Host-side cost split of the GX drain, microseconds since the last [STAT]
+// print (main.cpp zeroes them after reporting). Separates "guest submits
+// too much" from "our parser is slow" from "our GL backend is slow".
+uint64_t g_stat_parse_us = 0;
+uint64_t g_stat_render_us = 0;
 
 void GX_GetClearColor(unsigned char rgba[4]) {
     rgba[0] = (unsigned char)(g_state.clearAR & 0xFF);
@@ -59,10 +65,15 @@ void ProcessGXFifo() {
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     if (g_hw_fifo.empty()) return;
 
+    auto t0 = std::chrono::steady_clock::now();
     std::vector<nwii::runtime::gx::GXCommand> commands;
     nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
+    auto t1 = std::chrono::steady_clock::now();
+    g_stat_parse_us +=
+        std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 
-    if (std::getenv("NWII_SAMPLE") && !g_hw_fifo.empty()) {
+    static const bool s_sample = std::getenv("NWII_SAMPLE") != nullptr;
+    if (s_sample && !g_hw_fifo.empty()) {
         static size_t last_size = 0;
         static int stuck_ticks = 0, dumps = 0;
         if (g_hw_fifo.size() == last_size) {
@@ -119,16 +130,26 @@ void ProcessGXFifo() {
             g_renderer = nwii::runtime::gx::IRenderer::Create();
             g_renderer->Initialize(nullptr);
         }
-        if (g_renderer)
+        if (g_renderer) {
+            auto r0 = std::chrono::steady_clock::now();
             g_renderer->Render(frame);
+            auto r1 = std::chrono::steady_clock::now();
+            g_stat_render_us +=
+                std::chrono::duration_cast<std::chrono::microseconds>(r1 - r0)
+                    .count();
+        }
     }
 }
 
 namespace nwii::runtime {
 
 static inline void wgp_push(uint8_t b) {
-    if (const char* path = std::getenv("NWII_GXDUMP")) {
-        static FILE* f = fopen(path, "wb");
+    // Env probes are latched once: getenv() is a linear environ scan and
+    // this function runs for EVERY write-gather byte.
+    static const char* s_dump_path = std::getenv("NWII_GXDUMP");
+    static const char* s_seg_path = std::getenv("NWII_WGSEG");
+    if (s_dump_path) {
+        static FILE* f = fopen(s_dump_path, "wb");
         static size_t n = 0;
         if (f && n < 4000000) {
             fputc(b, f);
@@ -139,7 +160,7 @@ static inline void wgp_push(uint8_t b) {
     // NWII_WGSEG=path: append "offset pc" lines each time the guest pc
     // behind consecutive pipe bytes changes — segments the raw stream by
     // its writer, which pins draw-header vs vertex-data boundaries exactly.
-    if (const char* segp = std::getenv("NWII_WGSEG")) {
+    if (const char* segp = s_seg_path) {
         static FILE* sf = fopen(segp, "w");
         static uint64_t off = 0;
         static uint32_t last_pc = 0;
