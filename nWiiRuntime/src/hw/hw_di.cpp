@@ -68,7 +68,12 @@ static void di_execute() {
             vd.init(Config::get().game_dir);
         uint64_t offset = (uint64_t)di_cmd[1] << 2;
         uint32_t length = di_len ? di_len : di_cmd[2];
-        uint32_t dst = di_mar;
+        // DIMAR is a PHYSICAL bus address: games program it as raw physical
+        // (0x00020000) or as a virtual pointer (0x812e4f40) that the hardware
+        // masks. Normalize into our virtual map, or streams to low physical
+        // destinations land outside guest RAM and the game later jumps
+        // through the garbage it reads back.
+        uint32_t dst = 0x80000000u | (di_mar & 0x01FFFFFFu);
         if (nwii::runtime::g_mmu && length > 0 && length < 0x4000000) {
             std::vector<uint8_t> tmp(length, 0);
             size_t actual = vd.read(offset, length, tmp.data());
@@ -88,7 +93,7 @@ static void di_execute() {
     }
     case 0x12: { // Inquiry: DMA 0x20 bytes of drive info
         if (nwii::runtime::g_mmu && di_len > 0 && di_len <= 0x40) {
-            uint32_t dst = di_mar;
+            uint32_t dst = 0x80000000u | (di_mar & 0x01FFFFFFu); // physical DIMAR
             for (uint32_t i = 0; i < di_len; ++i)
                 nwii::runtime::g_mmu->write8(dst + i, 0);
             if (di_len >= 8) {

@@ -9,7 +9,7 @@ This document showcases the development progress, tools, and runtime execution o
 The first GC game to successfully boot, stream from DVD, parse GX display lists, decode hardware textures, and render to screen — running **natively** via static recompilation, with **zero instruction-level emulation**.
 
 <p align="center">
-  <img src="image/game/mp7.png" alt="Mario Party 7 — Health & Safety screen rendered via NWiiRecomp" width="100%"/>
+  <img src="image/game/mario_party_7.jpg" alt="Mario Party 7 — Health & Safety and "Nintendo" screen rendered via NWiiRecomp" width="100%"/>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@ The first GC game to successfully boot, stream from DVD, parse GX display lists,
 </p>
 
 <p align="center">
-  <img src="image/game/mario-party-7.jpg" alt="Mario Party 7 cover" width="340"/>
+  <img src="image/game/mp7.png" alt="Mario Party 7 cover" width="340"/>
 </p>
 
 ---
