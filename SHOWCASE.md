@@ -8,6 +8,12 @@ This document showcases the development progress, tools, and runtime execution o
 
 The first GC game to successfully boot, stream from DVD, parse GX display lists, decode hardware textures, and render to screen — running **natively** via static recompilation, with **zero instruction-level emulation**.
 
+### 🎥 Latest Milestone: Real-time 3D Intro & Z-Buffer
+[![NWiiRecomp Mario Party 7 3D Intro](https://img.youtube.com/vi/Q2SdZSAbhTQ/maxresdefault.jpg)](https://youtu.be/Q2SdZSAbhTQ)
+<p align="center">
+  <i>Watch the latest boot sequence showcasing the real-time 3D intro, proper aspect ratio, and hardware depth testing!</i>
+</p>
+
 <p align="center">
   <img src="image/game/mario_party_7.jpg" alt="Mario Party 7 — Health & Safety and "Nintendo" screen rendered via NWiiRecomp" width="100%"/>
 </p>

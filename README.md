@@ -10,6 +10,13 @@
 (The first recompiler that really works)
 </p>
 
+### 🎥 Latest Milestone: Real-time 3D Intro & Z-Buffer
+
+[![NWiiRecomp Mario Party 7 3D Intro](https://img.youtube.com/vi/Q2SdZSAbhTQ/maxresdefault.jpg)](https://youtu.be/Q2SdZSAbhTQ)
+<p align="center">
+  <i>Watch the latest boot sequence showcasing the real-time intro, proper aspect ratio, and hardware testing! Running proudly <b>without</b> Dolphin's runtime.</i>
+</p>
+
 <p align="center">
   <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a>
   <br><br>
@@ -33,8 +40,7 @@ NWiiRecomp translates Nintendo Wii/GameCube (`.dol`, `.elf`) executables into na
 > **A Note on Our Approach:** Unlike some recompilation projects that rely heavily on Dolphin's VideoCommon or shader generation (where the recompiler is merely a PPC-to-C translator feeding the GX stream back into an existing emulator), NWiiRecomp features a fully **custom-built** rasterizer, shader generator, and HLE runtime from scratch. We are not simply reusing an existing emulator's pipeline; this is a fully standalone implementation.
 
 > **Note:** The recompiler and runtime are designed to be **universal**. We have tested the architecture on radically different games (e.g., *Need For Speed: Hot Pursuit 2*, *Mario Party 7*, and *Silent Hill: Shattered Memories*). The fact that these fundamentally different engines yield identical, stable hardware behavior and 0 crashes confirms the universality of the core emulator design.
->
-> **Latest Update:** *Mario Party 7* (Wii) successfully renders the Health & Safety screen — correctly positioned, full-resolution, stable frame output — running natively via static recompilation with a custom OpenGL 3.3 renderer (SDL2 + GLAD). No instruction-level emulation, no Dolphin code.
+> **Latest Update:** *Mario Party 7* (GameCube) successfully boots past the Nintendo and Hudson logos, displaying the Dolby Pro Logic II screen and reaching the real-time 3D intro story sequence. It achieves this with accurate hardware projection matrix folding, viewport transforms, and fully functional Z-buffer depth testing natively in OpenGL! *Need for Speed: Hot Pursuit 2* (GameCube) has also shown new boot progress. No instruction-level emulation, no Dolphin code.
 
 ---
 
