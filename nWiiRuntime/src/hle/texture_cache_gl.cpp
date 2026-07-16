@@ -1,5 +1,6 @@
 #include "runtime/texture_cache_gl.h"
 #include <iostream>
+#include <cstring>
 
 // GX texture decoding, kept bit-exact with Dolphin's TextureDecoder:
 // tile-based layouts, IIII replication for intensity formats, RGB5A3
@@ -55,8 +56,17 @@ GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
     uint32_t size = texture_data_size(stage.width, stage.height, stage.format);
     uint32_t stride = size > 32 * 4096 ? size / 4096 : 32;
     uint32_t hash = 2166136261u;
-    for (uint32_t off = 0; off + 4 <= size; off += stride)
-        hash = (hash ^ ctx.mmu.read32(stage.base_addr + off)) * 16777619u;
+    // Fingerprint over the host pointer, not per-sample mmu.read32 calls:
+    // this runs for EVERY draw's texture lookup, and the MMU path (watch
+    // checks, HW-reg tests, byte swaps) made texture hashing the single
+    // hottest item on draw-heavy screens (title screen fell to ~0.4 fps).
+    if (const uint8_t* p = ctx.mmu.get_ptr(stage.base_addr)) {
+        for (uint32_t off = 0; off + 4 <= size; off += stride) {
+            uint32_t w;
+            std::memcpy(&w, p + off, 4);
+            hash = (hash ^ w) * 16777619u;
+        }
+    }
 
     // For paletted formats the TLUT decides every colour, so it belongs in the
     // hash exactly like the texel data (Dolphin XORs a TLUT hash into its
@@ -71,10 +81,24 @@ GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
         palette_entries = 256;
     else if (stage.format == 10)  // C14X2
         palette_entries = 16384;
-    for (uint32_t i = 0; i < palette_entries * 2; ++i) {
-        uint32_t idx = stage.tlut_offset + i;
-        uint8_t b = idx < sizeof(gx::g_state.tlutMem) ? gx::g_state.tlutMem[idx] : 0;
-        hash = (hash ^ b) * 16777619u;
+    // Word-stride the TLUT hash: a per-byte loop over C14X2's 32KB palette
+    // per draw was as expensive as the texel hash it accompanies.
+    {
+        uint32_t tl_bytes = palette_entries * 2;
+        uint32_t tl_off = stage.tlut_offset;
+        if (tl_off < sizeof(gx::g_state.tlutMem)) {
+            uint32_t avail = (uint32_t)sizeof(gx::g_state.tlutMem) - tl_off;
+            if (tl_bytes > avail) tl_bytes = avail;
+            const uint8_t* tp = gx::g_state.tlutMem + tl_off;
+            uint32_t i = 0;
+            for (; i + 4 <= tl_bytes; i += 4) {
+                uint32_t w;
+                std::memcpy(&w, tp + i, 4);
+                hash = (hash ^ w) * 16777619u;
+            }
+            for (; i < tl_bytes; ++i)
+                hash = (hash ^ tp[i]) * 16777619u;
+        }
     }
 
     TextureKey key = {stage.base_addr, stage.width, stage.height,
