@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 3.20)
 
 include(FetchContent)
+
+# GLAD GL loader: use the vendored copy when present, otherwise fetch the
+# generator and produce the same GL 3.3 core loader (glad1 keeps the
+# glad/glad.h + gladLoadGLLoader API this code uses). Either way the result is
+# a `glad` target nwiiruntime links against.
+set(NWII_VENDORED_GLAD "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/glad")
+if(EXISTS "${NWII_VENDORED_GLAD}/src/glad.c")
+    add_library(glad STATIC "${NWII_VENDORED_GLAD}/src/glad.c")
+    target_include_directories(glad PUBLIC "${NWII_VENDORED_GLAD}/include")
+else()
+    message(STATUS "vendored GLAD not found - fetching Dav1dde/glad v0.1.36")
+    set(GLAD_PROFILE "core" CACHE STRING "" FORCE)
+    set(GLAD_API "gl=3.3" CACHE STRING "" FORCE)
+    set(GLAD_GENERATOR "c" CACHE STRING "" FORCE)
+    FetchContent_Declare(glad
+        GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+        GIT_TAG        v0.1.36
+    )
+    FetchContent_MakeAvailable(glad)
+endif()
+
 add_library(nwiiruntime STATIC
     src/core/loader.cpp
     src/core/config.cpp
@@ -45,10 +66,9 @@ add_library(nwiiruntime STATIC
     src/hle/devices/usb_device.cpp
     src/hle/devices/es_device.cpp
     src/hle/interpreter.cpp
-    src/platform/glad/src/glad.c
 )
 
-target_link_libraries(nwiiruntime PUBLIC SDL2-static tomlplusplus::tomlplusplus)
+target_link_libraries(nwiiruntime PUBLIC SDL2-static tomlplusplus::tomlplusplus glad)
 
 if(APPLE)
     find_library(COCOA_LIBRARY Cocoa)
@@ -66,9 +86,8 @@ if(APPLE)
     target_sources(nwiiruntime PRIVATE src/hle/gx/renderer_metal.mm)
 endif()
 
-target_include_directories(nwiiruntime PUBLIC 
+target_include_directories(nwiiruntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/glad/include
 )
 
 # add_executable(nwiiruntime_exe src/main.cpp)

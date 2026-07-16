@@ -7,6 +7,29 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
+# Dolphin SDK signature database (GPLv2+ data from dolphin-emu, referenced by
+# the config TOMLs as third_party/dolphin-sigdb/totaldb.dsy). Fetched on demand
+# so the blob does not have to live in this repository.
+set(NWII_SIGDB "${CMAKE_SOURCE_DIR}/third_party/dolphin-sigdb/totaldb.dsy")
+if(NOT EXISTS "${NWII_SIGDB}")
+    message(STATUS "totaldb.dsy not found - downloading from dolphin-emu")
+    file(DOWNLOAD
+        "https://raw.githubusercontent.com/dolphin-emu/dolphin/master/Data/Sys/totaldb.dsy"
+        "${NWII_SIGDB}"
+        EXPECTED_HASH SHA256=09fb4a167946dbdfee5890c0f027e40b3eacbb6cc5ee9184adeb9d1a81c2c0aa
+        STATUS NWII_SIGDB_STATUS
+        SHOW_PROGRESS)
+    list(GET NWII_SIGDB_STATUS 0 NWII_SIGDB_CODE)
+    if(NOT NWII_SIGDB_CODE EQUAL 0)
+        file(REMOVE "${NWII_SIGDB}")
+        message(FATAL_ERROR
+            "totaldb.dsy download failed (${NWII_SIGDB_STATUS}). Fetch it "
+            "manually from the Dolphin repository (Data/Sys/totaldb.dsy) into "
+            "third_party/dolphin-sigdb/. If upstream changed the file, update "
+            "EXPECTED_HASH here.")
+    endif()
+endif()
+
 FetchContent_Declare(
     tomlplusplus
     GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
