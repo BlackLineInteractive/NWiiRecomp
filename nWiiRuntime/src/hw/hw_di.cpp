@@ -92,19 +92,8 @@ static void di_execute() {
                           << " len=0x" << length << " covered=0x" << actual << " (no file region)\n";
                 std::memset(tmp.data() + actual, 0, length - actual);
             }
-            // DOL DATA[5] lives at 0x80249CE0–0x8029F480 and contains the
-            // runtime dispatch tables.  A large streaming read (e.g. titlemp7.bin
-            // loaded to 0x80020000+) overwrites that range with raw compressed
-            // bytes, corrupting every function pointer.  Skip writes that land
-            // inside the DOL data sections so the tables survive the stream.
-            static constexpr uint32_t DOL_DATA_LO = 0x80249CE0u;
-            static constexpr uint32_t DOL_DATA_HI = 0x8029F480u;
-            for (uint32_t i = 0; i < length; ++i) {
-                uint32_t addr = dst + i;
-                if (addr >= DOL_DATA_LO && addr < DOL_DATA_HI)
-                    continue; // preserve initialized DOL data / dispatch tables
-                nwii::runtime::g_mmu->write8(addr, tmp[i]);
-            }
+            for (uint32_t i = 0; i < length; ++i)
+                nwii::runtime::g_mmu->write8(dst + i, tmp[i]);
             std::cout << "[HW DI] DMA read off=0x" << std::hex << offset
                       << " len=0x" << length << " dst=0x" << dst << std::dec << "\n";
         }
