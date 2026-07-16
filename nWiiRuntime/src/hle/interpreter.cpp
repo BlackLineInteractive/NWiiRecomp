@@ -685,7 +685,7 @@ void interpret_step(CPUContext& ctx) {
     // means the guest jumped through a bad function pointer. Report it once
     // with LR so the caller can be identified, instead of silently walking
     // zeroed memory as NOPs forever.
-    if (ctx.pc >= 0x80800000) {
+    if (ctx.pc > 0x817FFFFF || (ctx.pc < 0x80000000 && ctx.pc > 0x10000)) {
         static int wild_budget = 20;
         if (wild_budget > 0) {
             wild_budget--;
@@ -694,6 +694,11 @@ void interpret_step(CPUContext& ctx) {
                       << " r1=0x" << ctx.gpr[1] << " r3=0x" << ctx.gpr[3]
                       << std::dec << "\n";
         }
+        // Fake-return: the target address is outside valid GC RAM so there is
+        // no code to execute there.  Redirect to LR so the caller gets a
+        // clean return instead of a stream of zero-opcodes followed by abort.
+        ctx.pc = ctx.lr;
+        return;
     }
 
     // Fast path is checked only at a function entry (here and after each
