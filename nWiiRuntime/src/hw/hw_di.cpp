@@ -2,6 +2,7 @@
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
 #include "runtime/virtual_disc.h"
+#include "runtime/event_scheduler.h"
 
 namespace nwii::runtime { extern CPUContext* g_ctx_ptr; }
 #include <iostream>
@@ -97,8 +98,28 @@ static void di_execute() {
             std::cout << "[HW DI] DMA read off=0x" << std::hex << offset
                       << " len=0x" << length << " dst=0x" << dst << std::dec << "\n";
         }
-        di_len = 0;
-        di_sr |= SR_TCINT;
+        // The data is in RAM, but COMPLETION must take disc time. An instant
+        // TCINT re-enters the SDK's DVD state machine inside DVDReadAsyncPrio
+        // itself, before the caller finishes its own bookkeeping — MP7's
+        // streamer stores the destination base for its chunk callback right
+        // after issuing the first read, so firing early made every following
+        // chunk read to base 0 and the archive landed on the game's globals.
+        // Dolphin schedules DI completion through CoreTiming the same way.
+        di_cr |= 1; // transfer in flight: TSTART reads back set
+        {
+            // Timebase here is instruction count. The point is ORDERING, not
+            // disc realism: the issuer must run its post-issue bookkeeping
+            // (tens of instructions) before the completion callback fires.
+            // Large values stack with the interrupt-delivery EE window and
+            // visibly slowed NFS's asset streaming (90 -> 30 reads).
+            uint64_t ticks = 1000 + (uint64_t)length / 32;
+            EventScheduler::get().schedule_after(ticks, [](CPUContext&, uint64_t) {
+                di_cr &= ~1u;
+                di_len = 0;
+                di_sr |= SR_TCINT;
+                di_update_interrupt();
+            });
+        }
         break;
     }
     case 0x12: { // Inquiry: DMA 0x20 bytes of drive info
