@@ -255,13 +255,20 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                         else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
                     }
                 }
-                // DMA completes synchronously; raise the ARAM-done status.
-                // With the mask enabled this asserts PI 0x40, which the leaf
-                // dispatch routes to OS interrupt 6 (__ARHandler / ARQ), not
-                // to __DSPHandler.
-                ar_cnt = 0;
-                dsp_control |= 0x0020;
-                dsp_update_pi();
+                // The copy is done above, but the COMPLETION must not be
+                // synchronous: real ARAM DMA moves ~81MB/s, and raising the
+                // done interrupt inside this same MMIO store re-enters the
+                // guest ARQ before it has finished updating its queue state
+                // (observed on MP7's titlemp7.bin stream: ARAM offsets ended
+                // up programmed into DIMAR and the archive landed on top of
+                // the game's globals). ar_cnt stays nonzero while "in
+                // flight" so polls see a busy DMA.
+                EventScheduler::get().schedule_after(
+                    (uint64_t)count / 2 + 64, [](CPUContext&, uint64_t) {
+                        ar_cnt = 0;
+                        dsp_control |= 0x0020;
+                        dsp_update_pi();
+                    });
             }
         }
     );

@@ -451,13 +451,18 @@ int main(int argc, char **argv) {
   // Initial SP
   ctx->gpr[1] = 0x816FFFF0;
 
+  // Low memory 0xF8/0xFC hold the BUS and CPU clocks (Dolphin writes
+  // 162MHz/486MHz there for GC); the SDK derives the timebase as bus/4
+  // itself (`lwz [0xF8]; srwi 2`). Storing the pre-divided 40.5MHz here made
+  // every guest time conversion run 4x fast (MP7's 1500ms logo hold became
+  // 375ms, and every SDK timeout fired 4x early).
   if (is_gc) {
-    ctx->mmu.write32(0x800000F8, 40500000);  // OS_TIMER_CLOCK
-    ctx->mmu.write32(0x800000FC, 162000000); // OS_BUS_CLOCK
+    ctx->mmu.write32(0x800000F8, 162000000); // OS_BUS_CLOCK
+    ctx->mmu.write32(0x800000FC, 486000000); // OS_CORE_CLOCK
     ctx->tb_freq = 40500000;                 // TB = bus/4
   } else {
-    ctx->mmu.write32(0x800000F8, 60750000);  // OS_TIMER_CLOCK
-    ctx->mmu.write32(0x800000FC, 243000000); // OS_BUS_CLOCK
+    ctx->mmu.write32(0x800000F8, 243000000); // OS_BUS_CLOCK
+    ctx->mmu.write32(0x800000FC, 729000000); // OS_CORE_CLOCK
     ctx->tb_freq = 60750000;                 // TB = bus/4
   }
   // Reset the wall-clock origin now that the platform TB rate is known,

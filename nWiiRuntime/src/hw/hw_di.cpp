@@ -2,6 +2,8 @@
 #include "runtime/config.h"
 #include "runtime/cpu_context.h"
 #include "runtime/virtual_disc.h"
+
+namespace nwii::runtime { extern CPUContext* g_ctx_ptr; }
 #include <iostream>
 #include <cstring>
 #include <algorithm>
@@ -74,6 +76,14 @@ static void di_execute() {
         // destinations land outside guest RAM and the game later jumps
         // through the garbage it reads back.
         uint32_t dst = 0x80000000u | (di_mar & 0x01FFFFFFu);
+        // A destination inside the DOL image (below ArenaLo) overwrites live
+        // code/globals — no sane transfer does that. Name the guest code that
+        // programmed it so the corrupted upstream state can be traced.
+        if (di_mar < 0x00300000 && nwii::runtime::g_ctx_ptr) {
+            std::cout << "[HW DI] SUSPECT dst: di_mar=0x" << std::hex << di_mar
+                      << " pc=0x" << nwii::runtime::g_ctx_ptr->pc << " lr=0x"
+                      << nwii::runtime::g_ctx_ptr->lr << std::dec << "\n";
+        }
         if (nwii::runtime::g_mmu && length > 0 && length < 0x4000000) {
             std::vector<uint8_t> tmp(length, 0);
             size_t actual = vd.read(offset, length, tmp.data());
