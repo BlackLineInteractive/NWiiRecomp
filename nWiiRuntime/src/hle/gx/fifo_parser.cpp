@@ -143,9 +143,14 @@ namespace {
             uint32_t dst = (val & 0x3FF) << 9;
             uint32_t bytes = ((val >> 10) & 0x7FF) * 32;
             if (nwii::runtime::g_mmu && dst + bytes <= sizeof(g_state.tlutMem)) {
-                for (uint32_t i = 0; i < bytes; i++)
-                    g_state.tlutMem[dst + i] =
-                        nwii::runtime::g_mmu->read8(g_state.tlutSrcAddr + i);
+                if (const uint8_t* p =
+                        nwii::runtime::g_mmu->get_ptr(g_state.tlutSrcAddr)) {
+                    std::memcpy(&g_state.tlutMem[dst], p, bytes);
+                } else {
+                    for (uint32_t i = 0; i < bytes; i++)
+                        g_state.tlutMem[dst + i] =
+                            nwii::runtime::g_mmu->read8(g_state.tlutSrcAddr + i);
+                }
             }
         } else if (reg == 0x40) {
             g_state.zMode.enable  = (val >> 0) & 1;
@@ -446,8 +451,15 @@ static void ExpandDisplayList(uint32_t addr, uint32_t size,
         phys + size > 0x01800000 || depth >= 4)
         return;
     std::vector<uint8_t> dl(size);
-    for (uint32_t i = 0; i < size; i++)
-        dl[i] = nwii::runtime::g_mmu->read8(addr + i);
+    // Bulk-copy from the host MEM1 pointer instead of size× read8 (each
+    // read8 runs the full watch/HW-reg/translate path). Display lists are
+    // the bulk of MP7's geometry, so this dominated parse time.
+    if (const uint8_t* p = nwii::runtime::g_mmu->get_ptr(0x80000000u | phys)) {
+        std::memcpy(dl.data(), p, size);
+    } else {
+        for (uint32_t i = 0; i < size; i++)
+            dl[i] = nwii::runtime::g_mmu->read8(addr + i);
+    }
     size_t off = 0;
     ParseStream(dl, off, commands, depth + 1);
 }
@@ -513,7 +525,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                         printf("]\n");
                     }
                 }
-                commands.push_back(c);
+                commands.push_back(std::move(c));
             }
             offset += 5;
         } else if (cmd == 0x61) {
@@ -527,7 +539,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             c.type = GXCommandType::BPRegister;
             c.reg = reg;
             c.val = val;
-            commands.push_back(c);
+            commands.push_back(std::move(c));
 
             offset += 5;
         } else if (cmd == 0x08) {
@@ -541,7 +553,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             c.type = GXCommandType::CPRegister;
             c.reg = reg;
             c.val = val;
-            commands.push_back(c);
+            commands.push_back(std::move(c));
 
             offset += 6;
         } else if (cmd == 0x10) {
@@ -575,7 +587,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                 std::memcpy(&c.payload[i], &val, 4);
             }
 
-            commands.push_back(c);
+            commands.push_back(std::move(c));
 
             offset += total_size;
         } else if (cmd >= 0x80 && cmd <= 0xBF) {
@@ -670,7 +682,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             // next chunk (offset is not advanced past it).
             if (!parse_ok || curr_offset > fifo_size) break;
 
-            commands.push_back(c);
+            commands.push_back(std::move(c));
             offset = curr_offset;
         } else {
             // Unknown opcode: skip a byte to stay in sync (best effort).

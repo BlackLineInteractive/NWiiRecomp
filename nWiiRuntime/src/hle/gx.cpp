@@ -12,6 +12,7 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <cstdlib>
 #include <vector>
 #include <mutex>
+#include <iterator>
 #include <chrono>
 
 using namespace nwii::runtime;
@@ -62,38 +63,50 @@ void GX_GetXfb(uint32_t* addr, unsigned* w, unsigned* h, unsigned* stride) {
 }
 
 void ProcessGXFifo() {
-    std::lock_guard<std::mutex> lock(g_fifo_mutex);
-    if (g_hw_fifo.empty()) return;
+    // Take the pipe bytes and release the lock BEFORE parsing: the guest CPU
+    // thread takes g_fifo_mutex for every write-gather burst, so parsing
+    // (hundreds of ms on draw-heavy screens) under the lock stalled the whole
+    // guest for that long each drain.
+    static std::vector<uint8_t> s_parse_buf;
+    {
+        std::lock_guard<std::mutex> lock(g_fifo_mutex);
+        if (!g_hw_fifo.empty()) {
+            s_parse_buf.insert(s_parse_buf.end(), g_hw_fifo.begin(),
+                               g_hw_fifo.end());
+            g_hw_fifo.clear();
+        }
+    }
+    if (s_parse_buf.empty()) return;
 
     auto t0 = std::chrono::steady_clock::now();
     std::vector<nwii::runtime::gx::GXCommand> commands;
-    nwii::runtime::gx::FifoParser::Parse(g_hw_fifo, commands);
+    nwii::runtime::gx::FifoParser::Parse(s_parse_buf, commands);
     auto t1 = std::chrono::steady_clock::now();
     g_stat_parse_us +=
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 
     static const bool s_sample = std::getenv("NWII_SAMPLE") != nullptr;
-    if (s_sample && !g_hw_fifo.empty()) {
+    if (s_sample && !s_parse_buf.empty()) {
         static size_t last_size = 0;
         static int stuck_ticks = 0, dumps = 0;
-        if (g_hw_fifo.size() == last_size) {
+        if (s_parse_buf.size() == last_size) {
             if (++stuck_ticks == 60 && dumps < 8) {
                 dumps++;
                 stuck_ticks = 0;
                 std::cout << "[GX] stalled remainder " << std::dec
-                          << g_hw_fifo.size() << " bytes, head:" << std::hex;
-                for (size_t i = 0; i < g_hw_fifo.size() && i < 24; i++)
-                    std::cout << " " << (unsigned)g_hw_fifo[i];
+                          << s_parse_buf.size() << " bytes, head:" << std::hex;
+                for (size_t i = 0; i < s_parse_buf.size() && i < 24; i++)
+                    std::cout << " " << (unsigned)s_parse_buf[i];
                 std::cout << std::dec << "\n";
             }
         } else {
-            last_size = g_hw_fifo.size();
+            last_size = s_parse_buf.size();
             stuck_ticks = 0;
         }
     }
 
-    if (g_hw_fifo.size() > (4u << 20))
-        g_hw_fifo.clear();
+    if (s_parse_buf.size() > (4u << 20))
+        s_parse_buf.clear();
 
     // Render whole frames only. This runs once per host frame-loop iteration,
     // pinned to the host's vsync, which has nothing to do with how far the
@@ -104,7 +117,8 @@ void ProcessGXFifo() {
     // (FifoManager::RunGpuOnCpu), never a wall clock. The game marks a finished
     // frame with BP 0x52 bit14 (copy-to-XFB), so buffer until one arrives and
     // render everything up to it as one unit.
-    s_carry.insert(s_carry.end(), commands.begin(), commands.end());
+    s_carry.insert(s_carry.end(), std::make_move_iterator(commands.begin()),
+                   std::make_move_iterator(commands.end()));
 
     int last_frame_end = -1;
     for (size_t i = 0; i < s_carry.size(); ++i) {
@@ -117,7 +131,8 @@ void ProcessGXFifo() {
         return; // frame still incomplete: keep buffering
 
     std::vector<nwii::runtime::gx::GXCommand> frame(
-        s_carry.begin(), s_carry.begin() + last_frame_end + 1);
+        std::make_move_iterator(s_carry.begin()),
+        std::make_move_iterator(s_carry.begin() + last_frame_end + 1));
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
 
     ++g_stat_frames;
