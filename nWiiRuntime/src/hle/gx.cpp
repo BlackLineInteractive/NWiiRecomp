@@ -136,21 +136,102 @@ static inline void wgp_push(uint8_t b) {
             ++n;
         }
     }
+    // NWII_WGSEG=path: append "offset pc" lines each time the guest pc
+    // behind consecutive pipe bytes changes — segments the raw stream by
+    // its writer, which pins draw-header vs vertex-data boundaries exactly.
+    if (const char* segp = std::getenv("NWII_WGSEG")) {
+        static FILE* sf = fopen(segp, "w");
+        static uint64_t off = 0;
+        static uint32_t last_pc = 0;
+        extern CPUContext* g_ctx_ptr;
+        uint32_t pc = g_ctx_ptr ? g_ctx_ptr->pc : 0;
+        if (sf && pc != last_pc) {
+            fprintf(sf, "%llx %x\n", (unsigned long long)off, pc);
+            last_pc = pc;
+        }
+        ++off;
+    }
+    // NWII_WGTRACE=1: name the guest code behind pipe traffic. Logs the
+    // pc/lr writing (a) a draw opcode arriving right after a GXFlush pad
+    // (>=24 zero bytes) and (b) the starts of CP register loads.
+    static const bool wgtrace = std::getenv("NWII_WGTRACE") != nullptr;
+    if (wgtrace) {
+        static int zeros = 0;
+        static int logged = 0;
+        static uint8_t prev = 0xFF;
+        static int vcd_collect = 0;      // bytes left of a VCD value
+        static uint32_t vcd_val = 0;
+        static uint8_t vcd_reg = 0;
+        extern CPUContext* g_ctx_ptr;
+        if (vcd_collect > 0) {
+            vcd_val = (vcd_val << 8) | b;
+            if (--vcd_collect == 0)
+                std::cout << "[WGP] VCD 0x" << std::hex << (unsigned)vcd_reg
+                          << " = 0x" << vcd_val << " lr=0x"
+                          << (g_ctx_ptr ? g_ctx_ptr->lr : 0) << std::dec << "\n";
+        } else if (prev == 0x08 && (b == 0x50 || b == 0x60) && g_ctx_ptr &&
+                   (g_ctx_ptr->pc == 0x800bbbac)) {
+            vcd_collect = 4; vcd_val = 0; vcd_reg = b;
+        }
+        prev = b;
+        if (b == 0) {
+            ++zeros;
+        } else {
+            if (zeros >= 24 && b >= 0x80 && logged < 16 && g_ctx_ptr) {
+                std::cout << "[WGP] draw 0x" << std::hex << (unsigned)b
+                          << " after " << std::dec << zeros << " zeros pc=0x"
+                          << std::hex << g_ctx_ptr->pc << " lr=0x"
+                          << g_ctx_ptr->lr << std::dec << "\n";
+                ++logged;
+            }
+            zeros = 0;
+        }
+    }
     g_hw_fifo.push_back(b);
 }
 
+// The write-gather pipe lands wherever the PI CPU-fifo points. When that
+// fifo is NOT the GP-linked one — GXBeginDisplayList redirected it to a
+// display-list buffer — gathered bytes belong in that guest-RAM buffer,
+// not in the live command stream. Leaking them into the parser desynced
+// it (recorded vertices misread under the live VCD/VAT) and left the DL
+// buffer empty for the later GXCallDisplayList. Returns true if consumed.
+static bool wgp_redirect(uint8_t b) {
+    uint32_t base, end, wptr;
+    nwii::runtime::hw::pi_fifo_get(base, end, wptr);
+    if (base == 0) return false; // fifo not programmed yet (early boot)
+    uint32_t cp_base = nwii::runtime::hw::cp_fifo_base_reg();
+    if ((base & 0x03FFFFFF) == (cp_base & 0x03FFFFFF))
+        return false; // GP-linked: live rendering path
+    if (!nwii::runtime::g_mmu) return false;
+    nwii::runtime::g_mmu->write8(0x80000000u | (wptr & 0x01FFFFFFu), b);
+    wptr += 1;
+    if ((wptr & 0x03FFFFFF) > (end & 0x03FFFFFF))
+        wptr = base;
+    nwii::runtime::hw::pi_fifo_set_wptr(wptr);
+    return true;
+}
+
 void GX_WGPIPE_Write8(uint8_t val) {
+    if (wgp_redirect(val)) return;
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     wgp_push(val);
 }
 
 void GX_WGPIPE_Write16(uint16_t val) {
+    if (wgp_redirect(val >> 8)) { wgp_redirect(val & 0xFF); return; }
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     wgp_push(val >> 8);
     wgp_push(val & 0xFF);
 }
 
 void GX_WGPIPE_Write32(uint32_t val) {
+    if (wgp_redirect(val >> 24)) {
+        wgp_redirect((val >> 16) & 0xFF);
+        wgp_redirect((val >> 8) & 0xFF);
+        wgp_redirect(val & 0xFF);
+        return;
+    }
     if (std::getenv("NWII_SAMPLE")) {
         static uint64_t n = 0;
         ++n;
@@ -173,6 +254,11 @@ void GX_WGPIPE_WriteF32(float val) {
 
 void GX_WGPIPE_WriteF64(double val) {
     union { double d; uint64_t i; } u; u.d = val;
+    if (wgp_redirect((u.i >> 56) & 0xFF)) {
+        for (int s = 48; s >= 0; s -= 8)
+            wgp_redirect((u.i >> s) & 0xFF);
+        return;
+    }
     std::lock_guard<std::mutex> lock(g_fifo_mutex);
     for (int s = 56; s >= 0; s -= 8)
         wgp_push((u.i >> s) & 0xFF);

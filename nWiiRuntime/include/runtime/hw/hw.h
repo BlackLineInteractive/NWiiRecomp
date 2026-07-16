@@ -37,6 +37,12 @@ void pe_signal_token(uint32_t token, bool raise_interrupt); // GX stream saw BP 
 void pe_signal_finish();                                    // GX stream saw draw-done (BP 0x45)
 
 void register_pi(MMIODispatcher &dispatcher);
+// PI CPU-fifo (write-gather destination) registers; see hw_pi.cpp.
+void pi_fifo_get(uint32_t &base, uint32_t &end, uint32_t &wptr);
+void pi_fifo_set_wptr(uint32_t wptr);
+// GP fifo base as programmed via CP MMIO; used to detect whether the CPU
+// fifo is GP-linked (live rendering) or standalone (display-list record).
+uint32_t cp_fifo_base_reg();
 void register_pe(MMIODispatcher &dispatcher);
 void register_vi(MMIODispatcher &dispatcher);
 void register_dsp(MMIODispatcher &dispatcher);

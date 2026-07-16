@@ -39,8 +39,18 @@ void watch_hit(uint32_t addr, uint32_t value, int width) {
   CPUContext *c = g_ctx_ptr;
   std::cout << "[Watch] write" << width << " 0x" << std::hex << addr << " = 0x"
             << value;
-  if (c)
+  if (c) {
     std::cout << " pc=0x" << c->pc << " lr=0x" << c->lr;
+    // NWII_WATCH_REGS=1: also dump the callee-saved registers, so the
+    // pointers a copy loop is running with are visible at the moment of
+    // the hit (finding them statically means re-deriving the whole frame).
+    static const bool regs = std::getenv("NWII_WATCH_REGS") != nullptr;
+    if (regs) {
+      for (int r = 24; r <= 31; ++r)
+        std::cout << " r" << std::dec << r << "=0x" << std::hex << c->gpr[r];
+      std::cout << " r3=0x" << c->gpr[3] << " r4=0x" << c->gpr[4];
+    }
+  }
   std::cout << std::dec << "\n";
 }
 
@@ -161,14 +171,24 @@ uint32_t HW_Reg_Read32(uint32_t addr) {
   }
   return MMIODispatcher::get().read32(addr);
 }
-uint16_t HW_Reg_Read16(uint32_t addr) { return (uint16_t)HW_Reg_Read32(addr); }
+uint16_t HW_Reg_Read16(uint32_t addr) {
+  if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
+  }
+  return MMIODispatcher::get().read16(addr);
+}
 void HW_Reg_Write32(uint32_t addr, uint32_t val) {
   if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
     addr = (addr & 0x00FFFFFF) | 0xCC000000;
   }
   MMIODispatcher::get().write32(addr, val);
 }
-void HW_Reg_Write16(uint32_t addr, uint16_t val) { HW_Reg_Write32(addr, val); }
+void HW_Reg_Write16(uint32_t addr, uint16_t val) {
+  if ((addr & 0xFF000000) != 0xCD000000 && (addr & 0xFF000000) != 0x0D000000) {
+    addr = (addr & 0x00FFFFFF) | 0xCC000000;
+  }
+  MMIODispatcher::get().write16(addr, val);
+}
 } // namespace nwii::runtime
 
 extern "C" void DVD_Callback(CPUContext &ctx) {

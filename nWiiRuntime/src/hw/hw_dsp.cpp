@@ -42,6 +42,41 @@ static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
 // and 0.13 game-frames/s on MP7 with a backedge-tick countdown).
 static void dsp_update_pi();
 
+// Runs the ARAM<->RAM copy latched in AR_DMA_MMADDR/ARADDR/CNT. Triggered by
+// the CNT low-half write (16-bit path, as on hardware) or a full 32-bit CNT
+// store. CNT bit 31 selects direction: 1 = ARAM -> RAM. MEM2 doubles as the
+// 16MB ARAM backing store on GC.
+static void ar_dma_execute() {
+    bool dir = (ar_cnt & 0x80000000) != 0;
+    uint32_t count = ar_cnt & 0x7FFFFFFF;
+    uint32_t mm = ar_mmaddr & 0x01FFFFFF;
+    uint32_t ar_a = ar_araddr & 0x00FFFFFF;
+    if (g_mmu && count > 0) {
+        uint8_t *mem1 = nwii::runtime::g_mmu->mem1.data();
+        uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
+        uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
+        uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
+        if (mm < mem1_size && ar_a < mem2_size) {
+            uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
+            if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, copy_count);
+            else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
+        }
+    }
+    // The copy is done above, but the COMPLETION must not be synchronous:
+    // real ARAM DMA moves ~81MB/s, and raising the done interrupt inside
+    // this same MMIO store re-enters the guest ARQ before it has finished
+    // updating its queue state (observed on MP7's titlemp7.bin stream:
+    // ARAM offsets ended up programmed into DIMAR and the archive landed
+    // on top of the game's globals). ar_cnt stays nonzero while "in
+    // flight" so polls see a busy DMA.
+    EventScheduler::get().schedule_after(
+        (uint64_t)count / 2 + 64, [](CPUContext&, uint64_t) {
+            ar_cnt = 0;
+            dsp_control |= 0x0020;
+            dsp_update_pi();
+        });
+}
+
 // ---- Audio DMA (0xCC005030-0xCC00503A) ----
 // The final mixed output of the console: the game points this DMA at a
 // PCM buffer in main RAM (s16 big-endian, interleaved stereo, 32kHz) and
@@ -156,28 +191,58 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             return 0;
         },
         [](uint32_t addr, uint32_t val) {
+            static const bool artrace = std::getenv("NWII_ARTRACE") != nullptr;
+            if (artrace && (addr & 0xFFF0) >= 0x5010 && (addr & 0xFFF0) < 0x5030)
+                std::cout << "[ARw] 0x" << std::hex << (addr & 0xFFFF)
+                          << " = 0x" << val << std::dec << "\n";
             if (addr == 0xCC005000 || addr == 0xCC005002) {
+                // Assemble full 32-bit CPU->DSP mails (hi @5000, lo @5002)
+                // and speak the AX ucode protocol (Dolphin AXUCode::HandleMail):
+                //   0xBABExxxx  = command list of xxxx words follows
+                //   <address>   = the list; ucode processes the frame and
+                //                 acknowledges with DSP_YIELD 0xDCD10002 + int
+                //   0xCDD10001  = resume request -> DSP_RESUME 0xDCD10001
+                // Anything else keeps the old generic resume ack (the ROM
+                // ucode boot mails 0x80F3xxxx rely on it). Blanket-acking
+                // every mail with 0xDCD10000 left the game's audio frame
+                // loop unacknowledged forever: the audio thread never woke,
+                // and MP7's intro reloaded its task table over the word the
+                // eternally-sleeping worker was parked on.
+                static uint16_t s_cpu_mail_hi = 0;
+                static int s_ax_state = 0; // 0=want size, 1=want addr, 2=want task
+                bool completed = (addr == 0xCC005002);
+                if (addr == 0xCC005000)
+                    s_cpu_mail_hi = val & 0xFFFF;
                 dsp_mbox_cpu_hi = (val & 0x7FFF) | 0x8000;
                 dsp_mbox_cpu_hi &= ~0x8000;
-                dsp_mbox_dsp_hi = 0x8000;
-                // Once the game unmasks the DSP-mailbox interrupt it has a
-                // task registered and __DSPHandler's callback slots are live
-                // (the AX init loop spins on a flag that only the handler's
-                // "resumed" branch sets). Acknowledge each CPU mail with the
-                // resume mail, but AFTER a delay: an instant ack made the
-                // audio task submit the next frame immediately, an unbounded
-                // ping-pong that starved the rest of the game. Before the
-                // mask is set (boot probes) stay silent: raising the
-                // interrupt with no task installed jumped to garbage.
-                // Pace: one ack per real DSP audio frame (5ms wall-clock),
-                // measured from the previous ack so bursts don't accumulate.
-                if (dsp_control & 0x0100) {
-                    EventScheduler::get().schedule_after(g_ctx_ptr->tb_freq / 200, [](CPUContext& c, uint64_t){
-                        dsp_mbox_dsp_hi = 0xDCD1;
-                        dsp_mbox_dsp_lo = 0x0000;
-                        dsp_control |= 0x0080;
-                        dsp_update_pi();
-                    });
+                if (completed && (dsp_control & 0x0100)) {
+                    uint32_t mail = ((uint32_t)s_cpu_mail_hi << 16) | (val & 0xFFFF);
+                    auto reply = [](uint16_t lo) {
+                        EventScheduler::get().schedule_after(
+                            g_ctx_ptr->tb_freq / 1000, [lo](CPUContext&, uint64_t) {
+                                dsp_mbox_dsp_hi = 0xDCD1;
+                                dsp_mbox_dsp_lo = lo;
+                                dsp_control |= 0x0080;
+                                dsp_update_pi();
+                            });
+                    };
+                    if (s_ax_state == 1) {
+                        // Command list address: "process" the frame.
+                        reply(0x0002); // DSP_YIELD
+                        s_ax_state = 2;
+                    } else if ((mail & 0xFFFF0000u) == 0xBABE0000u) {
+                        s_ax_state = 1;
+                    } else if (mail == 0xCDD10001u) {
+                        reply(0x0001); // DSP_RESUME
+                        s_ax_state = 0;
+                    } else if ((mail & 0xFFFF0000u) == 0xCDD10000u) {
+                        s_ax_state = 0; // new-ucode / reset requests
+                        reply(0x0000);
+                    } else {
+                        // ROM/boot mails: generic delayed resume ack, one per
+                        // completed mail (was: one per 16-bit write).
+                        reply(0x0000);
+                    }
                 }
                 if (std::getenv("NWII_DSPTRACE"))
                     std::cout << "[DSPm] cpu mail write @" << std::hex
@@ -240,36 +305,41 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 ar_araddr = val;
             } else if (addr == 0xCC005028) {
                 ar_cnt = val;
-                bool dir = (val & 0x80000000) != 0;
-                uint32_t count = val & 0x7FFFFFFF;
-                uint32_t mm = ar_mmaddr & 0x01FFFFFF;
-                uint32_t ar_a = ar_araddr & 0x00FFFFFF;
-                if (g_mmu && count > 0) {
-                    uint8_t *mem1 = nwii::runtime::g_mmu->mem1.data();
-                    uint8_t *mem2 = nwii::runtime::g_mmu->mem2.data();
-                    uint32_t mem1_size = nwii::runtime::g_mmu->mem1.size();
-                    uint32_t mem2_size = nwii::runtime::g_mmu->mem2.size();
-                    if (mm < mem1_size && ar_a < mem2_size) {
-                        uint32_t copy_count = std::min({count, mem1_size - mm, mem2_size - ar_a});
-                        if (!dir) std::memcpy(mem2 + ar_a, mem1 + mm, copy_count);
-                        else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
-                    }
-                }
-                // The copy is done above, but the COMPLETION must not be
-                // synchronous: real ARAM DMA moves ~81MB/s, and raising the
-                // done interrupt inside this same MMIO store re-enters the
-                // guest ARQ before it has finished updating its queue state
-                // (observed on MP7's titlemp7.bin stream: ARAM offsets ended
-                // up programmed into DIMAR and the archive landed on top of
-                // the game's globals). ar_cnt stays nonzero while "in
-                // flight" so polls see a busy DMA.
-                EventScheduler::get().schedule_after(
-                    (uint64_t)count / 2 + 64, [](CPUContext&, uint64_t) {
-                        ar_cnt = 0;
-                        dsp_control |= 0x0020;
-                        dsp_update_pi();
-                    });
+                ar_dma_execute();
             }
+        },
+        // 16-bit access handlers: the AR DMA registers are 16-bit pairs
+        // (Dolphin DSP.cpp: MMADDR_H/L, ARADDR_H/L, CNT_H/L) and the SDK's
+        // __ARStartDMA programs them with six sth stores. Folding those into
+        // the 32-bit handler treated each HIGH half as a whole register and
+        // started the transfer on CNT_H with a garbage count and direction
+        // (observed on MP7: entry reads from ARAM never copied, the game
+        // decompressed stale heap bytes and wild-jumped). The DMA fires on
+        // the CNT_L write, as on hardware.
+        [](uint32_t addr) -> uint16_t {
+            if (addr == 0xCC005020) return (uint16_t)(ar_mmaddr >> 16);
+            if (addr == 0xCC005022) return (uint16_t)ar_mmaddr;
+            if (addr == 0xCC005024) return (uint16_t)(ar_araddr >> 16);
+            if (addr == 0xCC005026) return (uint16_t)ar_araddr;
+            if (addr == 0xCC005028) return (uint16_t)(ar_cnt >> 16);
+            if (addr == 0xCC00502A) return (uint16_t)ar_cnt;
+            return (uint16_t)MMIODispatcher::get().read32(addr);
+        },
+        [](uint32_t addr, uint16_t val) {
+            static const bool artrace = std::getenv("NWII_ARTRACE") != nullptr;
+            if (artrace && (addr & 0xFFFF) >= 0x5020 && (addr & 0xFFFF) < 0x5030)
+                std::cout << "[ARw16] 0x" << std::hex << (addr & 0xFFFF)
+                          << " = 0x" << val << std::dec << "\n";
+            if      (addr == 0xCC005020) ar_mmaddr = (ar_mmaddr & 0x0000FFFF) | ((uint32_t)val << 16);
+            else if (addr == 0xCC005022) ar_mmaddr = (ar_mmaddr & 0xFFFF0000) | val;
+            else if (addr == 0xCC005024) ar_araddr = (ar_araddr & 0x0000FFFF) | ((uint32_t)val << 16);
+            else if (addr == 0xCC005026) ar_araddr = (ar_araddr & 0xFFFF0000) | val;
+            else if (addr == 0xCC005028) ar_cnt = (ar_cnt & 0x0000FFFF) | ((uint32_t)val << 16);
+            else if (addr == 0xCC00502A) {
+                ar_cnt = (ar_cnt & 0xFFFF0000) | val;
+                ar_dma_execute();
+            }
+            else MMIODispatcher::get().write32(addr, val);
         }
     );
 }}
