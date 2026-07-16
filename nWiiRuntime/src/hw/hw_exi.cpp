@@ -154,11 +154,15 @@ void register_exi(MMIODispatcher& dispatcher) {{
             int reg = (addr - 0xCC006800) % 0x14;
             if (ch >= 0 && ch < 3) {
                 if (reg == 0x00) {
-                    // EXT (bit12): device present. The MX chip is hard-wired
-                    // on channel 0; memory card slots report empty.
-                    uint32_t v = exi_chan[ch].csr;
-                    if (ch == 0) v |= 0x1000;
-                    return v;
+                    // EXT (bit12) reports the SLOT device (memory card in
+                    // slot A/B = device 0 via CS0), never the hard-wired MX
+                    // chip — Dolphin EXI_Channel.cpp: "EXT =
+                    // GetDevice(1)->IsPresent()", channel 2 always 0. We
+                    // emulate no cards, so EXT stays 0: CARDProbe then fails
+                    // fast with NOCARD and games take their "no save" path.
+                    // Reporting 1 here made MP7 poll a card that never
+                    // answers, hanging the intro right after the H&S screen.
+                    return exi_chan[ch].csr;
                 }
                 if (reg == 0x04) return exi_chan[ch].mar;
                 if (reg == 0x08) return exi_chan[ch].len;
