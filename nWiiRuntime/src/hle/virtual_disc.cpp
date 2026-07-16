@@ -174,7 +174,12 @@ size_t VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
             std::cout << "[VDisc] ERROR: Cannot open file " << r.host_path << "\n";
             continue;
         }
+        // fseeko is POSIX; MSVC uses _fseeki64 instead.
+#ifdef _WIN32
+        _fseeki64(f, (long long)(lo - r.offset), SEEK_SET);
+#else
         fseeko(f, (off_t)(lo - r.offset), SEEK_SET);
+#endif
         size_t bytes_read = fread(dst + (lo - offset), 1, hi - lo, f);
         if (bytes_read < (hi - lo)) {
             static int trunc_budget = 20;
