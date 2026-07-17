@@ -144,10 +144,27 @@ static void ApplyProjection(GLint uProj) {
     glUniformMatrix4fv(uProj, 1, GL_FALSE, p);
 }
 
+// True when the current projection is perspective — i.e. a real 3D scene, not
+// a 2D/UI pass. Perspective draws need a depth buffer to sort geometry; 2D
+// passes submit in painter order and must NOT depth-test.
+static bool CurrentIsPerspective() {
+    static const bool flatz = std::getenv("NWII_FLATZ") != nullptr;
+    if (flatz) return false; // force the old flatten-everything behaviour
+    return g_state.projSet && g_state.projType == 0;
+}
+
 static void ApplyZMode() {
-    // Always disable depth test: GX 2D draws (UI, H&S screen) don't use it.
-    // The zMode.enable flag is unreliable until BP 0x40 is first written.
-    glDisable(GL_DEPTH_TEST);
+    // 2D/UI draws submit in painter order and don't depth-test. Perspective 3D
+    // (the intro scene) needs the depth buffer, or its polygons draw in FIFO
+    // order and near geometry vanishes behind far — the "coloured quads over
+    // everything" the intro showed. The zMode.enable flag is unreliable until
+    // BP 0x40 is first written, so key off the projection type instead.
+    if (CurrentIsPerspective()) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+    } else {
+        glDisable(GL_DEPTH_TEST);
+    }
 }
 
 static void EmitVertex(const VertexData &vtx) {
@@ -175,11 +192,12 @@ static void EmitVertex(const VertexData &vtx) {
     } else {
         bv.x = x; bv.y = y; bv.z = z;
     }
-    // GX 2D draws (UI, H&S screen) use an orthographic near-far range that
-    // is too narrow for whatever Z the position matrix produces. Forcing
-    // z_view = 0 keeps all vertices inside clip space [-1, 1] after the
-    // projection matrix, and is correct for any 2D/UI draw.
-    bv.z = 0.0f;
+    // 2D/UI draws (orthographic) use a near-far range too narrow for whatever
+    // Z the position matrix produces; forcing z_view = 0 keeps them inside
+    // clip space and is correct for a flat pass. Perspective 3D keeps its real
+    // transformed Z so the depth buffer can sort the scene.
+    if (!CurrentIsPerspective())
+        bv.z = 0.0f;
     static const bool s_vtxtrace_v = std::getenv("NWII_VTXTRACE") != nullptr;
     if (s_vtxtrace_v) {
         static int vn = 0;
@@ -436,6 +454,14 @@ public:
     }
 
     void Render(const std::vector<GXCommand> &commands) override {
+    // We render one complete guest frame per call, so the depth buffer must
+    // start fresh every frame or geometry z-fights against the previous
+    // frame's depth — with the depth test now enabled for perspective scenes
+    // that stale depth was the "disco" flicker. Depth clear is unconditional;
+    // clearing depth is harmless for 2D frames (depth test off there). Colour
+    // still follows the game's own EFB clear so 2D overlays composite right.
+    glDepthMask(GL_TRUE); // depth writes must be enabled for the clear to land
+    glClear(GL_DEPTH_BUFFER_BIT);
     if (g_state.pe_clear_pending) {
         g_state.pe_clear_pending = false;
         unsigned char cc[4];

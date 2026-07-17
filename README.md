@@ -10,13 +10,6 @@
 (The first recompiler that really works)
 </p>
 
-### 🎥 Latest Milestone: Real-time Intro (Full Video on YouTube)
-
-[![NWiiRecomp Mario Party 7 3D Intro](https://img.youtube.com/vi/Q2SdZSAbhTQ/maxresdefault.jpg)](https://youtu.be/Q2SdZSAbhTQ)
-<p align="center">
-  <i>Watch the latest boot sequence showcasing the real-time intro, proper aspect ratio, and hardware testing! Running proudly <b>without</b> Dolphin's runtime.</i>
-</p>
-
 <p align="center">
   <a href="SHOWCASE.md"><strong>View Media Showcase</strong></a>
   <br><br>
@@ -165,7 +158,7 @@ NWII_TRACE_CALLS=1   # print every recompiled function entry
 
 ---
 
-- [PS2Recomp](https://github.com/ran-j/PS2Recomp) — Project structure and early inspiration from former friend Ran-J; the foundation this recompiler is built on.
+- [PS2Recomp](https://github.com/ran-j/PS2Recomp) — Project structure and early inspiration from friend Ran-J; the foundation this recompiler is built on.
 - [N64Recomp](https://github.com/N64Recomp/N64Recomp) — Inspiration for the static recompilation approach
 
 - [Dolphin Emulator](https://github.com/dolphin-emu/dolphin) — Huge thanks for the endless hardware documentation, GX/DSP accuracy, and HLE inspiration!

@@ -334,14 +334,27 @@ namespace {
         }
         if (!nwii::runtime::g_mmu) return true;
         uint32_t base = g_state.arrayBase[array_idx] + index * g_state.arrayStride[array_idx];
+        // Resolve the array region to a host pointer once. read8/read16/read_f32
+        // each run the full watch/HW-reg/translate path; the model streamer
+        // reads 3-9 indexed components per vertex over tens of thousands of
+        // vertices, so those calls dominated parse_ms. Big-endian assembly by
+        // hand matches the MMU's own read16/read32 byte order.
+        const uint8_t* p = nwii::runtime::g_mmu->get_ptr(base);
+        if (!p) return true;
+        float inv = 1.0f / (float)(1 << shift);
         for (int i = 0; i < ncomp; i++) {
-            uint32_t a = base + (uint32_t)sz * i;
+            const uint8_t* q = p + (size_t)sz * i;
             switch (type) {
-                case VtxAttrType::U8:  out[i] = (float)nwii::runtime::g_mmu->read8(a) / (float)(1 << shift); break;
-                case VtxAttrType::S8:  out[i] = (float)(int8_t)nwii::runtime::g_mmu->read8(a) / (float)(1 << shift); break;
-                case VtxAttrType::U16: out[i] = (float)(uint16_t)nwii::runtime::g_mmu->read16(a) / (float)(1 << shift); break;
-                case VtxAttrType::S16: out[i] = (float)(int16_t)nwii::runtime::g_mmu->read16(a) / (float)(1 << shift); break;
-                default:               out[i] = nwii::runtime::g_mmu->read_f32(a); break;
+                case VtxAttrType::U8:  out[i] = (float)q[0] * inv; break;
+                case VtxAttrType::S8:  out[i] = (float)(int8_t)q[0] * inv; break;
+                case VtxAttrType::U16: out[i] = (float)(uint16_t)((q[0] << 8) | q[1]) * inv; break;
+                case VtxAttrType::S16: out[i] = (float)(int16_t)((q[0] << 8) | q[1]) * inv; break;
+                default: {
+                    uint32_t w = ((uint32_t)q[0] << 24) | ((uint32_t)q[1] << 16) |
+                                 ((uint32_t)q[2] << 8) | q[3];
+                    std::memcpy(&out[i], &w, 4);
+                    break;
+                }
             }
         }
         return true;
@@ -427,10 +440,9 @@ namespace {
         }
         if (!nwii::runtime::g_mmu) return true;
         uint32_t base = g_state.arrayBase[2 + chan] + index * g_state.arrayStride[2 + chan];
-        uint8_t raw[4] = {0};
-        for (int i = 0; i < nbytes; i++)
-            raw[i] = nwii::runtime::g_mmu->read8(base + i);
-        DecodeColor(raw, clrType, out);
+        const uint8_t* p = nwii::runtime::g_mmu->get_ptr(base);
+        if (!p) return true;
+        DecodeColor(p, clrType, out);
         return true;
     }
 }

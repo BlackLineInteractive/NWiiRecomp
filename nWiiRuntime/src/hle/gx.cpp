@@ -121,18 +121,37 @@ void ProcessGXFifo() {
                    std::make_move_iterator(commands.end()));
 
     int last_frame_end = -1;
+    int prev_frame_end = -1; // second-to-last copy-to-XFB, if we fell behind
     for (size_t i = 0; i < s_carry.size(); ++i) {
         const auto &c = s_carry[i];
         if (c.type == nwii::runtime::gx::GXCommandType::BPRegister &&
-            c.reg == 0x52 && (c.val & 0x4000))
+            c.reg == 0x52 && (c.val & 0x4000)) {
+            prev_frame_end = last_frame_end;
             last_frame_end = (int)i;
+        }
     }
     if (last_frame_end < 0)
         return; // frame still incomplete: keep buffering
 
-    std::vector<nwii::runtime::gx::GXCommand> frame(
-        std::make_move_iterator(s_carry.begin()),
-        std::make_move_iterator(s_carry.begin() + last_frame_end + 1));
+    // When the guest submits frames faster than the host can draw them, the
+    // carry buffer holds several complete frames. Rendering them all
+    // concatenated is the intro's death spiral (parse+render climbing into
+    // tens of seconds, draws hundreds of thousands). Only the newest frame is
+    // ever presented, so keep the DRAWS of the last frame only and strip the
+    // draws of every stale frame before it — their non-draw commands (BP/XF
+    // register loads, matrices) still run so the surviving frame inherits
+    // correct GPU state. This is frame-skipping, exactly what a real GP does
+    // when it can't keep up; nothing visible is lost since intermediate frames
+    // were never shown.
+    std::vector<nwii::runtime::gx::GXCommand> frame;
+    frame.reserve(s_carry.size());
+    for (int i = 0; i <= last_frame_end; ++i) {
+        auto &c = s_carry[i];
+        if (i <= prev_frame_end &&
+            c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive)
+            continue; // stale frame's geometry: drop, keep only its state
+        frame.push_back(std::move(c));
+    }
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
 
     ++g_stat_frames;
