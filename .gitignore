@@ -4,12 +4,6 @@ export/
 test_export/
 out/
 bin/
-export_gc/
-export_gc_mp7/
-export_gc_re4/
-export_gc_mgs/
-export_gc_re4_d2/
-export_gc_mgs_d2/
 
 # IDE files
 .vscode/
