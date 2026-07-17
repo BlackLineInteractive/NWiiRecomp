@@ -45,3 +45,5 @@ log.txt
 *.ini
 *.txt
 *.log
+# Auto-downloaded by CMake (file(DOWNLOAD) in CMakeLists.txt); not committed.
+third_party/dolphin-sigdb/totaldb.dsy
