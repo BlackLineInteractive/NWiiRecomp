@@ -139,7 +139,13 @@ bool Executable::load_rel(const std::string& path, uint32_t module_base,
             case R_ADDR32: wr32(patch_fo, value); break;
             case R_ADDR16:
             case R_ADDR16_LO: wr16(patch_fo, value & 0xFFFF); break;
-            case R_ADDR16_HI: wr16(patch_fo, (value >> 16) & 0xFFFF); break;
+            // Metrowerks/OSLink emit ADDR16_HI paired with a sign-extending
+            // low (addi/lwz), and this game's OSLink applies the high-adjusted
+            // (@ha) value: verified against the game's own relocated code
+            // (ctor lis=0x8053 for 0x8052DA08, bss lis=0x8058). Applying plain
+            // #hi left every lis/addi data pointer 0x10000 too low, so the REL
+            // dereferenced its ctor table on the stack and jumped to garbage.
+            case R_ADDR16_HI:
             case R_ADDR16_HA:
                 wr16(patch_fo, ((value >> 16) + ((value & 0x8000) ? 1 : 0)) & 0xFFFF);
                 break;

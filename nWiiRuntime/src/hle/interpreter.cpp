@@ -666,7 +666,7 @@ void interpret_step(CPUContext& ctx) {
     static const bool relcap = std::getenv("NWII_RELCAP") != nullptr;
     if (relcap) {
         static bool done = false;
-        if (!done && ctx.pc >= 0x8051de60 && ctx.pc < 0x80570000) {
+        if (!done && ctx.pc >= 0x8051d000 && ctx.pc < 0x80570000) {
             uint16_t hi = ctx.mmu.read16(0x8051dff2);
             uint16_t lo = ctx.mmu.read16(0x8051dff6);
             uint32_t val = ((uint32_t)hi << 16) | lo;
@@ -674,6 +674,17 @@ void interpret_step(CPUContext& ctx) {
             std::cout << "[RELCAP] module_base=0x8051de60 first-exec-pc=0x"
                       << std::hex << ctx.pc << " hi=0x" << hi << " lo=0x" << lo
                       << " => bss_base=0x" << bss << std::dec << "\n";
+            // Ground-truth the ctor-table pointer the game's OSLink produced:
+            // prolog lis @0x8051df54, addi @0x8051df58. Compute both the
+            // sign-extended (addi) and zero-extended (ori) results so we can
+            // see which layout sec2 actually got.
+            uint16_t plis = ctx.mmu.read16(0x8051df56);
+            uint16_t padd = ctx.mmu.read16(0x8051df5a);
+            uint32_t r31_addi = ((uint32_t)plis << 16) + (int32_t)(int16_t)padd;
+            uint32_t r31_ori = ((uint32_t)plis << 16) | padd;
+            std::cout << "[RELCAP] prolog lis=0x" << std::hex << plis << " low=0x"
+                      << padd << " => ctor_table addi=0x" << r31_addi
+                      << " ori=0x" << r31_ori << std::dec << "\n";
             done = true;
         }
     }
