@@ -14,7 +14,7 @@ struct GameCubePadState {
 
 struct WiimoteState {
     uint32_t buttons;
-    float ir_x, ir_y; // 0.0 to 1.0
+    float ir_x, ir_y; 
     float accel_x, accel_y, accel_z;
     float gyro_pitch, gyro_yaw, gyro_roll;
     int8_t err;
@@ -24,10 +24,9 @@ class IInputSource {
 public:
     virtual ~IInputSource() = default;
 
-    // Called once per frame. The source should update the relevant arrays.
-    // If multiple sources write to the same index, they should combine inputs 
-    // (e.g. by doing pads[i].buttons |= my_buttons).
+    
+    
     virtual void update(GameCubePadState pads[4], WiimoteState motes[4]) = 0;
 };
 
-} // namespace nwii::runtime::input
+} 

@@ -99,4 +99,4 @@ private:
 
 uint32_t texture_data_size(uint32_t width, uint32_t height, uint32_t format);
 
-} // namespace nwii::runtime::hle
+} 

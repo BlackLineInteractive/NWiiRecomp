@@ -19,15 +19,14 @@ public:
     int32_t ioctlv(CPUContext& ctx, const IpcRequest& req) override {
         std::cout << "[ES] ioctlv cmd=0x" << std::hex << req.ioctl_cmd << std::dec 
                   << " in=" << req.arg_cnt_in << " out=" << req.arg_cnt_out << std::endl;
-        
-        // Zero out all output vectors by default
+
         for (uint32_t i = req.arg_cnt_in; i < req.arg_cnt_in + req.arg_cnt_out; i++) {
             uint32_t addr = req.ioctlv_vecs[i].addr;
             uint32_t len = req.ioctlv_vecs[i].len;
             if (addr != 0 && len > 0) {
                 if (len > 0x10000) {
                     std::cout << "[ES] Warning: Huge ioctlv output buffer! len=0x" << std::hex << len << std::dec << "\n";
-                    len = 0x10000; // Cap to prevent hang
+                    len = 0x10000; 
                 }
                 for (uint32_t j = 0; j < len; j++) {
                     ctx.mmu.write8(addr + j, 0);
@@ -36,9 +35,8 @@ public:
         }
         std::cout << "[ES] Output vectors zeroed.\n";
 
-        // Handle specific commands
-        // Handle specific commands
-        if (req.ioctl_cmd == 0x20) { // ES_GetTitleId
+        
+        if (req.ioctl_cmd == 0x20) { 
             if (req.arg_cnt_out >= 1) {
                 uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
                 uint32_t view_len = req.ioctlv_vecs[req.arg_cnt_in].len;
@@ -56,7 +54,7 @@ public:
                     std::cout << "[ES] Warning: ES_GetTitleId output buffer too small (len=" << view_len << ")\n";
                 }
             }
-        } else if (req.ioctl_cmd == 0x1E) { // ES_GetDeviceCert
+        } else if (req.ioctl_cmd == 0x1E) { 
             if (req.arg_cnt_out >= 1) {
                 uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
                 uint32_t view_len = req.ioctlv_vecs[req.arg_cnt_in].len;
@@ -94,7 +92,7 @@ public:
                     }
                 }
             }
-        } else if (req.ioctl_cmd == 0x1B) { // ES_DiGetTicketView
+        } else if (req.ioctl_cmd == 0x1B) { 
             if (req.arg_cnt_out >= 1) {
                 uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
                 if (view_addr) {
@@ -104,48 +102,44 @@ public:
                     for (size_t i = 0; i < 4 && i < gid.size(); i++) {
                         title_id_low |= ((uint32_t)gid[i]) << ((3 - i) * 8);
                     }
-                    ctx.mmu.write32(view_addr + 0x0, 0); // view_version
-                    ctx.mmu.write32(view_addr + 0x4, 0); // ticket_id high
-                    ctx.mmu.write32(view_addr + 0x8, 0); // ticket_id low
-                    ctx.mmu.write32(view_addr + 0xC, 0); // dev_type
+                    ctx.mmu.write32(view_addr + 0x0, 0); 
+                    ctx.mmu.write32(view_addr + 0x4, 0); 
+                    ctx.mmu.write32(view_addr + 0x8, 0); 
+                    ctx.mmu.write32(view_addr + 0xC, 0); 
                     ctx.mmu.write32(view_addr + 0x10, title_id_high);
                     ctx.mmu.write32(view_addr + 0x14, title_id_low);
-                    ctx.mmu.write16(view_addr + 0x18, 0xFFFF); // access_mask
+                    ctx.mmu.write16(view_addr + 0x18, 0xFFFF); 
                     
                     std::cout << "[ES] Returning TicketView for TitleID " << std::hex << title_id_high << "-" << title_id_low << std::dec << std::endl;
                 }
             }
             return IPC_OK;
-        } else if (req.ioctl_cmd == 0x24) { // ES_GetTicketViews
-            // Output 0: Array of TicketViews
-            // Output 1: viewCount
+        } else if (req.ioctl_cmd == 0x24) { 
+
             if (req.arg_cnt_out >= 2) {
                 uint32_t count_addr = req.ioctlv_vecs[req.arg_cnt_in + 1].addr;
                 if (count_addr) {
-                    ctx.mmu.write32(count_addr, 1); // We have 1 ticket
+                    ctx.mmu.write32(count_addr, 1); 
                 }
                 
                 uint32_t view_addr = req.ioctlv_vecs[req.arg_cnt_in].addr;
                 if (view_addr && req.arg_cnt_in > 0) {
-                    // Try to copy the requested Title ID into the ticket view
-                    // Input 0: TitleID (8 bytes)
+
                     uint32_t tid_addr = req.ioctlv_vecs[0].addr;
                     if (tid_addr) {
                         uint64_t tid = ((uint64_t)ctx.mmu.read32(tid_addr) << 32) | ctx.mmu.read32(tid_addr + 4);
-                        // Write TitleID into TicketView (usually at offset 0x1C8 or similar, but for view it's offset 0x0)
-                        // Actually, just putting the TitleID at offset 0 of the view might be enough for a naive check.
+
                         ctx.mmu.write32(view_addr + 0, (uint32_t)(tid >> 32));
                         ctx.mmu.write32(view_addr + 4, (uint32_t)(tid & 0xFFFFFFFF));
                     }
                 }
             }
-        } else if (req.ioctl_cmd == 0x26) { // ES_GetTMDView
-            // Input 0: TitleID
-            // Output 0: Array of TMDViews
-            // Output 1: viewCount
+        } else if (req.ioctl_cmd == 0x26) { 
+
+            
             if (req.arg_cnt_out >= 2) {
                 uint32_t count_addr = req.ioctlv_vecs[req.arg_cnt_in + 1].addr;
-                if (count_addr) ctx.mmu.write32(count_addr, 1); // 1 TMD
+                if (count_addr) ctx.mmu.write32(count_addr, 1); 
             }
         }
 
@@ -166,4 +160,4 @@ void register_all() {
     kernel.register_device(create_es_device());
 }
 
-} // namespace nwii::runtime::devices
+} 

@@ -17,10 +17,9 @@ void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
         SDL_GameController* controller = SDL_GameControllerOpen(i);
         if (!controller) continue;
 
-        pads[i].err = 0;  // connected
-        motes[i].err = 0; // connected
+        pads[i].err = 0;  
+        motes[i].err = 0; 
 
-        // Pointer emulation from stick or gyro
         if (want_pointer) {
             float dx = 0.0f, dy = 0.0f;
             
@@ -34,7 +33,7 @@ void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
             } else {
                 int rx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX);
                 int ry = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY);
-                // Apply deadzone and scale
+                
                 if (std::abs(rx) > 8000) dx = (rx / 32767.0f);
                 if (std::abs(ry) > 8000) dy = (ry / 32767.0f);
             }
@@ -53,37 +52,35 @@ void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
             motes[i].accel_z = 1.0f;
         }
 
-        // WPAD buttons
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) motes[i].buttons |= 0x0800; // A
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) motes[i].buttons |= 0x0400; // B
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) motes[i].buttons |= 0x0002; // 1
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) motes[i].buttons |= 0x0001; // 2
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) motes[i].buttons |= 0x0010; // Plus
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_BACK)) motes[i].buttons |= 0x1000;  // Minus
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_GUIDE)) motes[i].buttons |= 0x0080; // Home
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) motes[i].buttons |= 0x0800; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) motes[i].buttons |= 0x0400; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) motes[i].buttons |= 0x0002; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) motes[i].buttons |= 0x0001; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) motes[i].buttons |= 0x0010; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_BACK)) motes[i].buttons |= 0x1000;  
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_GUIDE)) motes[i].buttons |= 0x0080; 
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) motes[i].buttons |= 0x0008;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) motes[i].buttons |= 0x0004;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) motes[i].buttons |= 0x0001;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) motes[i].buttons |= 0x0002;
 
-        // GC pad
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) pads[i].buttons |= 0x0100; // A
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) pads[i].buttons |= 0x0200; // B
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) pads[i].buttons |= 0x1000;  // Start
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) pads[i].buttons |= 0x0400; // X
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) pads[i].buttons |= 0x0800; // Y
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_A)) pads[i].buttons |= 0x0100; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_B)) pads[i].buttons |= 0x0200; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_START)) pads[i].buttons |= 0x1000;  
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_X)) pads[i].buttons |= 0x0400; 
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_Y)) pads[i].buttons |= 0x0800; 
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP)) pads[i].buttons |= 0x0008;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) pads[i].buttons |= 0x0004;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT)) pads[i].buttons |= 0x0001;
         if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) pads[i].buttons |= 0x0002;
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) pads[i].buttons |= 0x0040;  // L
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) pads[i].buttons |= 0x0020; // R
-        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16384) pads[i].buttons |= 0x0010; // Z
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) pads[i].buttons |= 0x0040;  
+        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) pads[i].buttons |= 0x0020; 
+        if (SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16384) pads[i].buttons |= 0x0010; 
 
         int lx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX);
         int ly = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY);
         if (std::abs(lx) > 8000) pads[i].stick_x = (int8_t)((lx / 32767.0f) * 127.0f);
-        if (std::abs(ly) > 8000) pads[i].stick_y = (int8_t)((-ly / 32767.0f) * 127.0f); // Invert Y
+        if (std::abs(ly) > 8000) pads[i].stick_y = (int8_t)((-ly / 32767.0f) * 127.0f); 
         
         if (!want_pointer) {
             int rx = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX);
@@ -97,4 +94,4 @@ void GamepadSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
     }
 }
 
-} // namespace nwii::runtime::input
+} 

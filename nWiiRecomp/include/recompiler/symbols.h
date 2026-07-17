@@ -20,5 +20,5 @@ private:
     std::map<uint32_t, std::string> symbols_;
 };
 
-} // namespace recomp
-} // namespace nwii
+} 
+} 

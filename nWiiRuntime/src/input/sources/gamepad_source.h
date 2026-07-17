@@ -11,4 +11,4 @@ public:
     void update(GameCubePadState pads[4], WiimoteState motes[4]) override;
 };
 
-} // namespace nwii::runtime::input
+} 

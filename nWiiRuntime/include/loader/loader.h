@@ -38,7 +38,14 @@ public:
 
     bool load_dol(const std::string& path);
     bool load_unpacked_game(const std::string& directory_path);
+
+    
+
+    
+
+    bool load_rel(const std::string& path, uint32_t module_base,
+                  uint32_t bss_base);
 };
 
-} // namespace loader
-} // namespace nwii
+} 
+} 

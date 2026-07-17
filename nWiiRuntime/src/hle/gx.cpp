@@ -36,15 +36,13 @@ namespace nwii::runtime {
 
 std::mutex g_fifo_mutex;
 std::vector<uint8_t> g_hw_fifo;
-// Commands of a frame the game has not finished submitting yet.
+
 static std::vector<nwii::runtime::gx::GXCommand> s_carry;
 
-// Run-to-run diagnostics: which stage a run got to (see the [STAT] line).
 uint64_t g_stat_frames = 0;
 uint64_t g_stat_draws = 0;
-// Host-side cost split of the GX drain, microseconds since the last [STAT]
-// print (main.cpp zeroes them after reporting). Separates "guest submits
-// too much" from "our parser is slow" from "our GL backend is slow".
+
+
 uint64_t g_stat_parse_us = 0;
 uint64_t g_stat_render_us = 0;
 
@@ -63,10 +61,9 @@ void GX_GetXfb(uint32_t* addr, unsigned* w, unsigned* h, unsigned* stride) {
 }
 
 void ProcessGXFifo() {
-    // Take the pipe bytes and release the lock BEFORE parsing: the guest CPU
-    // thread takes g_fifo_mutex for every write-gather burst, so parsing
-    // (hundreds of ms on draw-heavy screens) under the lock stalled the whole
-    // guest for that long each drain.
+
+    
+    
     static std::vector<uint8_t> s_parse_buf;
     {
         std::lock_guard<std::mutex> lock(g_fifo_mutex);
@@ -108,20 +105,17 @@ void ProcessGXFifo() {
     if (s_parse_buf.size() > (4u << 20))
         s_parse_buf.clear();
 
-    // Render whole frames only. This runs once per host frame-loop iteration,
-    // pinned to the host's vsync, which has nothing to do with how far the
-    // guest CPU has got: the drain boundary regularly falls mid-frame, so we
-    // rendered (and EFB-cleared for) a fragment — that is the flicker, and the
+    
+
     // "sometimes only Press any button" frames. Dolphin has no such boundary
-    // because it drives the GP from the CP FIFO pointers and CPU ticks
-    // (FifoManager::RunGpuOnCpu), never a wall clock. The game marks a finished
-    // frame with BP 0x52 bit14 (copy-to-XFB), so buffer until one arrives and
-    // render everything up to it as one unit.
+
+    
+    
     s_carry.insert(s_carry.end(), std::make_move_iterator(commands.begin()),
                    std::make_move_iterator(commands.end()));
 
     int last_frame_end = -1;
-    int prev_frame_end = -1; // second-to-last copy-to-XFB, if we fell behind
+    int prev_frame_end = -1; 
     for (size_t i = 0; i < s_carry.size(); ++i) {
         const auto &c = s_carry[i];
         if (c.type == nwii::runtime::gx::GXCommandType::BPRegister &&
@@ -131,25 +125,21 @@ void ProcessGXFifo() {
         }
     }
     if (last_frame_end < 0)
-        return; // frame still incomplete: keep buffering
+        return; 
 
-    // When the guest submits frames faster than the host can draw them, the
-    // carry buffer holds several complete frames. Rendering them all
-    // concatenated is the intro's death spiral (parse+render climbing into
-    // tens of seconds, draws hundreds of thousands). Only the newest frame is
-    // ever presented, so keep the DRAWS of the last frame only and strip the
-    // draws of every stale frame before it — their non-draw commands (BP/XF
-    // register loads, matrices) still run so the surviving frame inherits
-    // correct GPU state. This is frame-skipping, exactly what a real GP does
-    // when it can't keep up; nothing visible is lost since intermediate frames
-    // were never shown.
+    
+
+    
+
+    
+
     std::vector<nwii::runtime::gx::GXCommand> frame;
     frame.reserve(s_carry.size());
     for (int i = 0; i <= last_frame_end; ++i) {
         auto &c = s_carry[i];
         if (i <= prev_frame_end &&
             c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive)
-            continue; // stale frame's geometry: drop, keep only its state
+            continue; 
         frame.push_back(std::move(c));
     }
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
@@ -178,8 +168,7 @@ void ProcessGXFifo() {
 namespace nwii::runtime {
 
 static inline void wgp_push(uint8_t b) {
-    // Env probes are latched once: getenv() is a linear environ scan and
-    // this function runs for EVERY write-gather byte.
+
     static const char* s_dump_path = std::getenv("NWII_GXDUMP");
     static const char* s_seg_path = std::getenv("NWII_WGSEG");
     if (s_dump_path) {
@@ -191,9 +180,8 @@ static inline void wgp_push(uint8_t b) {
             ++n;
         }
     }
-    // NWII_WGSEG=path: append "offset pc" lines each time the guest pc
-    // behind consecutive pipe bytes changes — segments the raw stream by
-    // its writer, which pins draw-header vs vertex-data boundaries exactly.
+
+    
     if (const char* segp = s_seg_path) {
         static FILE* sf = fopen(segp, "w");
         static uint64_t off = 0;
@@ -206,15 +194,14 @@ static inline void wgp_push(uint8_t b) {
         }
         ++off;
     }
-    // NWII_WGTRACE=1: name the guest code behind pipe traffic. Logs the
-    // pc/lr writing (a) a draw opcode arriving right after a GXFlush pad
-    // (>=24 zero bytes) and (b) the starts of CP register loads.
+
+    
     static const bool wgtrace = std::getenv("NWII_WGTRACE") != nullptr;
     if (wgtrace) {
         static int zeros = 0;
         static int logged = 0;
         static uint8_t prev = 0xFF;
-        static int vcd_collect = 0;      // bytes left of a VCD value
+        static int vcd_collect = 0;      
         static uint32_t vcd_val = 0;
         static uint8_t vcd_reg = 0;
         extern CPUContext* g_ctx_ptr;
@@ -245,19 +232,17 @@ static inline void wgp_push(uint8_t b) {
     g_hw_fifo.push_back(b);
 }
 
-// The write-gather pipe lands wherever the PI CPU-fifo points. When that
-// fifo is NOT the GP-linked one — GXBeginDisplayList redirected it to a
-// display-list buffer — gathered bytes belong in that guest-RAM buffer,
-// not in the live command stream. Leaking them into the parser desynced
-// it (recorded vertices misread under the live VCD/VAT) and left the DL
-// buffer empty for the later GXCallDisplayList. Returns true if consumed.
+
+
+
+
 static bool wgp_redirect(uint8_t b) {
     uint32_t base, end, wptr;
     nwii::runtime::hw::pi_fifo_get(base, end, wptr);
-    if (base == 0) return false; // fifo not programmed yet (early boot)
+    if (base == 0) return false; 
     uint32_t cp_base = nwii::runtime::hw::cp_fifo_base_reg();
     if ((base & 0x03FFFFFF) == (cp_base & 0x03FFFFFF))
-        return false; // GP-linked: live rendering path
+        return false; 
     if (!nwii::runtime::g_mmu) return false;
     nwii::runtime::g_mmu->write8(0x80000000u | (wptr & 0x01FFFFFFu), b);
     wptr += 1;
@@ -319,4 +304,4 @@ void GX_WGPIPE_WriteF64(double val) {
         wgp_push((u.i >> s) & 0xFF);
 }
 
-} // namespace nwii::runtime
+} 

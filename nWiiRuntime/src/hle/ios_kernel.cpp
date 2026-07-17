@@ -6,7 +6,7 @@ namespace nwii::runtime {
 void IOSKernel::init() {
     m_devices.clear();
     m_fds.clear();
-    // Reserve fd 0 as invalid
+    
     m_fds.push_back({nullptr, 0, true});
 }
 
@@ -94,4 +94,4 @@ int32_t IOSKernel::ioctlv(CPUContext& ctx, const IpcRequest& req) {
     return e->device->ioctlv(ctx, req);
 }
 
-} // namespace nwii::runtime
+} 

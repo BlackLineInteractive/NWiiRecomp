@@ -35,20 +35,18 @@ bool init(const char *config_path = "config.toml") {
   return true;
 }
 void shutdown() {}
-} // namespace nwii::runtime
+} 
 
 extern "C" void run_game(nwii::runtime::CPUContext &ctx);
 
-// CPU Execution Thread
 void cpu_thread_func(nwii::runtime::CPUContext *ctx) {
   nwii::runtime::g_ctx_ptr = ctx;
   std::cout << "[Thread] CPU Core started. pc=" << std::hex << ctx->pc << " is_running=" << ctx->is_running << std::endl;
   std::flush(std::cout);
   run_game(*ctx);
-  // Teardown also stops the core by zeroing pc, so a clean exit and a wild
-  // jump to 0 printed the same thing (and the generated code dumps a PC
-  // history for both). Say which one it was: is_running is cleared only by the
-  // shutdown path.
+
+  
+  
   if (!ctx->is_running) {
     std::cout << "[Thread] CPU Core exited: shutdown requested (window closed "
                  "or quit). NOT a crash." << std::endl;
@@ -71,29 +69,28 @@ int main(int argc, char **argv) {
     return 1;
   nwii::runtime::Config::get().game_dir = argv[1];
 
-  // Register input sources per configured mode ([input] mode in TOML)
   {
     using namespace nwii::runtime::input;
     auto& im = InputManager::get();
     int mode = nwii::runtime::Config::get().input_mode;
     switch (mode) {
-    case 1: // real Wiimote over Bluetooth: not implemented yet
+    case 1: 
       std::cout << "[Input] Mode 1 (Bluetooth Wiimote) not implemented, "
                    "falling back to keyboard+mouse" << std::endl;
       im.add_source(std::make_unique<MouseKeyboardSource>());
       break;
-    case 2: // gamepad as Classic/GC controller
-    case 3: // gamepad + pointer assist
-    case 4: // gamepad full tilt
+    case 2: 
+    case 3: 
+    case 4: 
       im.add_source(std::make_unique<GamepadSource>());
-      // Keyboard stays available for menus/debugging
+      
       im.add_source(std::make_unique<MouseKeyboardSource>());
       break;
-    case 5: // smartphone over UDP
+    case 5: 
       im.add_source(std::make_unique<PhoneSource>());
       im.add_source(std::make_unique<MouseKeyboardSource>());
       break;
-    case 7: // touch: raylib maps primary touch to mouse on most hosts
+    case 7: 
       std::cout << "[Input] Mode 7 (touch): using pointer-as-touch mapping"
                 << std::endl;
       im.add_source(std::make_unique<MouseKeyboardSource>());
@@ -106,11 +103,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  // NWII_HEADLESS=1 runs without a window (log-driven testing, CI)
   const char *headless_env = std::getenv("NWII_HEADLESS");
   bool headless = headless_env && headless_env[0] == '1';
 
-  // Initialize graphics context FIRST in the main thread
   SDL_Window* window = nullptr;
   SDL_GLContext gl_ctx = nullptr;
   SDL_AudioDeviceID audio_dev = 0;
@@ -122,14 +117,12 @@ int main(int argc, char **argv) {
       std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
       return 1;
     }
-    // macOS only offers a 3.2 core profile through NSOpenGLProfile (SDL maps
-    // any core request onto it), so ask for exactly that.
+
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    // Spell the framebuffer out: SDL derives the pixel format's colour size
-    // from the current display mode, which is bogus when the process cannot
-    // see a display (locked/asleep screen) and the format then fails.
+
+    
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
@@ -147,9 +140,8 @@ int main(int argc, char **argv) {
                   << " (screen locked or no display attached?)" << std::endl;
     }
 #ifdef __APPLE__
-    // macOS only exposes core profiles through a forward-compatible context.
-    // The flag is set via SDL_GL_CONTEXT_FLAGS; there is no standalone
-    // SDL_GL_CONTEXT_FORWARD_COMPATIBLE attribute.
+
+    
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS,
                         SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
@@ -170,9 +162,8 @@ int main(int argc, char **argv) {
       std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
       return 1;
     }
-    // Publish the window before any GX work: the renderer is created lazily
-    // on the first FIFO flush, and the Metal backend needs the real handle
-    // to attach its layer to.
+
+    
     extern void GX_SetWindow(void *);
     GX_SetWindow(window);
     if (use_gl) {
@@ -199,9 +190,8 @@ int main(int argc, char **argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, efb_tex, 0);
     {
-      // Depth renderbuffer — required for glEnable(GL_DEPTH_TEST) to work on
-      // the EFB FBO. Without it, the macOS OpenGL (Metal) driver silently
-      // rejects all fragments when depth test is enabled.
+
+      
       GLuint efb_depth_rbo = 0;
       glGenRenderbuffers(1, &efb_depth_rbo);
       glBindRenderbuffer(GL_RENDERBUFFER, efb_depth_rbo);
@@ -210,7 +200,7 @@ int main(int argc, char **argv) {
                                 GL_RENDERBUFFER, efb_depth_rbo);
     }
     {
-      // An incomplete FBO silently swallows every draw and reads back black.
+      
       GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
       std::cout << "[GL] EFB FBO status: 0x" << std::hex << st << std::dec
                 << (st == GL_FRAMEBUFFER_COMPLETE ? " (complete)" : " (INCOMPLETE!)")
@@ -232,17 +222,15 @@ int main(int argc, char **argv) {
     if (audio_dev > 0) SDL_PauseAudioDevice(audio_dev, 0);
   }
 
-  // Context allocation
   auto ctx = std::make_unique<nwii::runtime::CPUContext>();
   nwii::runtime::g_mmu = &ctx->mmu;
 
-  // Load DOL
   nwii::loader::Executable exe;
   if (!exe.load_unpacked_game(argv[1]))
     return 1;
 
   uint32_t arena_lo = 0x80000000;
-  // First pass: Clear BSS sections
+  
   for (const auto &sec : exe.sections) {
     uint32_t end_addr = sec.address + sec.size;
     if (end_addr > arena_lo)
@@ -254,7 +242,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Second pass: Load Data and Text sections (overwriting BSS if overlapping)
   for (const auto &sec : exe.sections) {
     if (!sec.is_bss) {
       std::cout << "[Loader] Loading section at 0x" << std::hex << sec.address << " size 0x" << sec.size << std::dec << std::endl;
@@ -265,13 +252,11 @@ int main(int argc, char **argv) {
         ctx->mmu.write8(sec.address + i, sec.data[i]);
       }
     }
-    // Text sections have statically recompiled bodies; everything outside
-    // them (streamed overlays, runtime-generated code) runs on the
-    // interpreter. The low-mem region (0x80003100+) used to stay on the
-    // interpreter because mid-function jumps had no dispatcher case; the
-    // generated g_func_bounds table now routes any in-function pc through
-    // the function's own pc-switch preamble, so the whole text section can
-    // be registered. NWII_INTERP_LOW=1 restores the old clamp for A/B runs.
+
+    
+
+    
+    
     if (sec.is_text) {
       uint32_t start = sec.address;
       if (std::getenv("NWII_INTERP_LOW"))
@@ -284,23 +269,21 @@ int main(int argc, char **argv) {
 
   arena_lo = (arena_lo + 31) & ~31;
 
-  // The crt stack usually sits ABOVE the last section (linker __stack),
-  // and OSClearArena wipes everything from ArenaLo up. Recover the stack
-  // top from the entry code itself: __init_registers loads r1 with
-  // "lis r1, X@ha" (3C20xxxx) followed by "ori/addi r1, r1, X@lo".
+  
+
   {
     uint32_t stack_top = 0;
     uint32_t hi = 0;
     bool have_hi = false;
     for (uint32_t off = 0; off < 0x200; off += 4) {
       uint32_t insn = ctx->mmu.read32(exe.entry_point + off);
-      if ((insn & 0xFFFF0000) == 0x3C200000) { // lis r1, hi
+      if ((insn & 0xFFFF0000) == 0x3C200000) { 
         hi = (insn & 0xFFFF) << 16;
         have_hi = true;
-      } else if (have_hi && (insn & 0xFFFF0000) == 0x60210000) { // ori r1,r1,lo
+      } else if (have_hi && (insn & 0xFFFF0000) == 0x60210000) { 
         stack_top = hi | (insn & 0xFFFF);
         break;
-      } else if (have_hi && (insn & 0xFFFF0000) == 0x38210000) { // addi r1,r1,lo
+      } else if (have_hi && (insn & 0xFFFF0000) == 0x38210000) { 
         stack_top = hi + (int16_t)(insn & 0xFFFF);
         break;
       }
@@ -309,8 +292,7 @@ int main(int argc, char **argv) {
       std::cout << "[Loader] crt stack top 0x" << std::hex << stack_top
                 << " above section end 0x" << arena_lo
                 << ", raising ArenaLo" << std::dec << std::endl;
-      // +0x100 guard: __OSInitAudioSystem stashes DSP boot code in the
-      // 128 bytes right below ArenaLo, which must not be live stack
+
       arena_lo = (stack_top + 0x100 + 31) & ~31u;
     }
   }
@@ -318,13 +300,12 @@ int main(int argc, char **argv) {
   bool is_gc = nwii::runtime::Config::get().platform ==
                nwii::runtime::Platform::GameCube;
 
-  // Extracted-disc support: place the FST at the top of MEM1 and publish
-  // disc header + FST location in low memory, like the apploader does.
+  
   uint32_t arena_hi = 0x81700000;
   auto &vdisc = nwii::runtime::VirtualDisc::get();
   if (vdisc.init(argv[1])) {
     const auto &boot = vdisc.boot_data();
-    // Disc header (game ID, magics) at 0x80000000
+    
     for (size_t i = 0; i < 0x20 && i < boot.size(); ++i)
       ctx->mmu.write8(0x80000000 + (uint32_t)i, boot[i]);
 
@@ -334,8 +315,8 @@ int main(int argc, char **argv) {
     for (uint32_t i = 0; i < fst_size; ++i)
       ctx->mmu.write8(fst_addr + i, fst[i]);
 
-    ctx->mmu.write32(0x80000038, fst_addr); // FST base
-    ctx->mmu.write32(0x8000003C, fst_size); // FST max size
+    ctx->mmu.write32(0x80000038, fst_addr); 
+    ctx->mmu.write32(0x8000003C, fst_size); 
     if (fst_addr < 0x81700000)
       arena_hi = fst_addr & ~31u;
     std::cout << "[Loader] FST loaded at 0x" << std::hex << fst_addr
@@ -343,37 +324,33 @@ int main(int argc, char **argv) {
   }
 
   // Console type (Dolphin BootManager): Wii retail Hollywood = 0x10000006,
-  // GameCube retail (latest production board) = 0x00000003.
+  
   uint32_t console_type = is_gc ? 0x00000003 : 0x10000006;
-  uint32_t mem1_size = 24 * 1024 * 1024; // 24MB MEM1
-  uint32_t mem2_size = 64 * 1024 * 1024; // 64MB MEM2
+  uint32_t mem1_size = 24 * 1024 * 1024; 
+  uint32_t mem2_size = 64 * 1024 * 1024; 
 
-  ctx->mmu.write32(0x80000020, is_gc ? 0x0D15EA5E : console_type); // GC boot magic
-  // 0x24: __OSSimulatedMemSize (MEM1)
+  ctx->mmu.write32(0x80000020, is_gc ? 0x0D15EA5E : console_type); 
+  
   ctx->mmu.write32(0x80000024, mem1_size);
-  // 0x28: __OSPhysMemSize (MEM1)
+  
   ctx->mmu.write32(0x80000028, mem1_size);
   ctx->mmu.write32(0x8000002C, console_type);
   // Arena bounds, apploader-style (matches Dolphin BS2 emulation):
-  // GC: 0x30 (ArenaLo) stays 0 so OSInit uses the game's linker __ArenaLo
-  // (a section-end guess would overlap the runtime stack and OSClearArena
-  // would wipe it). 0x34 (ArenaHi) must be a real top-of-memory value or
-  // the arena has zero size and every game heap allocation returns NULL.
-  // The RVL SDK build of SHSM reads its MEM1 arena lo from 0x34 instead.
+
+  
+
   if (!is_gc) {
     ctx->mmu.write32(0x80000030, arena_lo);
     ctx->mmu.write32(0x80000034, arena_hi);
   }
   if (!vdisc.valid()) {
-    // No extracted disc: keep legacy behaviour of 0x38 = top of usable MEM1
+    
     ctx->mmu.write32(0x80000038, arena_hi);
   }
   if (is_gc) {
-    // BI2 pointer (0x800000F4): the real apploader keeps its BI2 copy in
-    // the apploader scratch area, which the game recycles after OSInit
-    // reads the debug flags. Placing it below the FST would shrink the
-    // arena below what games budget for (NFS HP2 sizes its heap map to
-    // the full ArenaLo..FST range). Same recycling behaviour here.
+
+    
+
     uint32_t gc_arena_hi = arena_hi;
     uint32_t fst_base = ctx->mmu.read32(0x80000038);
     if (fst_base >= 0x80000000 && fst_base < 0x81800000)
@@ -384,64 +361,57 @@ int main(int argc, char **argv) {
       std::ifstream bi2(bi2_path, std::ios::binary);
       std::vector<char> bi2_data((std::istreambuf_iterator<char>(bi2)),
                                  std::istreambuf_iterator<char>());
-      uint32_t bi2_addr = 0x81200000; // apploader scratch region
+      uint32_t bi2_addr = 0x81200000; 
       for (size_t i = 0; i < bi2_data.size(); ++i)
         ctx->mmu.write8(bi2_addr + (uint32_t)i, (uint8_t)bi2_data[i]);
       ctx->mmu.write32(0x800000F4, bi2_addr);
       std::cout << "[Loader] BI2 loaded at 0x" << std::hex << bi2_addr
                 << std::dec << std::endl;
     }
-    // Classic YAGCD layout, confirmed by OSClearArena's actual arguments
-    // (start=*(0x30), size=*(0x34)-*(0x30)): ArenaLo at 0x30, ArenaHi at
-    // 0x34. ArenaLo = end of sections raised above the crt stack plus the
-    // DSP-boot scratch guard.
+
+    
+    
     ctx->mmu.write32(0x80000030, arena_lo);
     ctx->mmu.write32(0x80000034, gc_arena_hi);
     std::cout << "[Loader] GC Arena = 0x" << std::hex << arena_lo << " - 0x"
               << gc_arena_hi << " (" << std::dec
               << (gc_arena_hi - arena_lo) / 1024 << " KiB)" << std::endl;
   }
-  // 0xF0: simulated memory size (read by OSGetConsoleSimulatedMemSize)
+  
   ctx->mmu.write32(0x800000F0, mem1_size);
 
-  // The 0x8000311x-0x8000315x block below is OS low-memory (MEM2 bounds,
-  // Hollywood revision) on real hardware, but some games load a code/data
-  // section over that range (NFS HP2's CodeWarrior runtime memset/memcpy
-  // helpers sit at 0x80003100). Writing synthesized globals there would
-  // corrupt executable code. Only poke an address the game itself does not
-  // occupy — the loaded section is always authoritative for its own bytes.
+  
+
+  
+  
   auto poke_global = [&](uint32_t addr, uint32_t val) {
     for (const auto &sec : exe.sections)
       if (!sec.is_bss && addr >= sec.address && addr < sec.address + sec.size)
-        return; // game section owns this address
+        return; 
     ctx->mmu.write32(addr, val);
   };
 
   if (!is_gc) {
-    // Wii-only low-mem fields
-    // 0x3118: Simulated MEM2 Size, 0x311C: Physical MEM2 Size
+
     poke_global(0x80003118, mem2_size);
     poke_global(0x8000311C, mem2_size);
-    // 0x3124 - 0x3134: usable MEM2 bounds + IOS-reserved region
+    
     poke_global(0x80003124, 0x90000800);
     poke_global(0x80003128, 0x93e00000);
     poke_global(0x80003130, 0x93e00000);
     poke_global(0x80003134, 0x94000000);
-    // 0x3158: Hollywood hardware revision (retail = 0x00000023)
+    
     poke_global(0x80003158, 0x00000023);
   }
 
-  // VI current TV mode (__VIDTVStatus / OS low-mem 0x800000CC): the bootrom
-  // leaves this set to the console's video system. A PAL title configures a
-  // PAL render mode and the SDK VIConfigure asserts+halts if it sees this as
-  // an NTSC->PAL change. Derive NTSC vs PAL from the disc region letter (4th
-  // char of the game id) so any title gets a consistent starting mode — the
-  // game's own VIConfigure still overwrites it (and only matters here for the
-  // very first configure). VITVMode: NTSC=0, PAL=1.
+  
+
+  
+
   {
     const std::string &gid = nwii::runtime::Config::get().game_id;
     char region = gid.size() >= 4 ? gid[3] : 'E';
-    // PAL/50Hz regions per the Nintendo disc region letters.
+    
     bool pal = (region == 'P' || region == 'D' || region == 'F' ||
                 region == 'I' || region == 'S' || region == 'H' ||
                 region == 'U' || region == 'X' || region == 'Y' ||
@@ -449,40 +419,35 @@ int main(int argc, char **argv) {
     poke_global(0x800000CC, pal ? 1u : 0u);
   }
 
-  // Initial SP
   ctx->gpr[1] = 0x816FFFF0;
 
   // Low memory 0xF8/0xFC hold the BUS and CPU clocks (Dolphin writes
-  // 162MHz/486MHz there for GC); the SDK derives the timebase as bus/4
-  // itself (`lwz [0xF8]; srwi 2`). Storing the pre-divided 40.5MHz here made
-  // every guest time conversion run 4x fast (MP7's 1500ms logo hold became
-  // 375ms, and every SDK timeout fired 4x early).
+
+  
+  
   if (is_gc) {
-    ctx->mmu.write32(0x800000F8, 162000000); // OS_BUS_CLOCK
-    ctx->mmu.write32(0x800000FC, 486000000); // OS_CORE_CLOCK
-    ctx->tb_freq = 40500000;                 // TB = bus/4
+    ctx->mmu.write32(0x800000F8, 162000000); 
+    ctx->mmu.write32(0x800000FC, 486000000); 
+    ctx->tb_freq = 40500000;                 
   } else {
-    ctx->mmu.write32(0x800000F8, 243000000); // OS_BUS_CLOCK
-    ctx->mmu.write32(0x800000FC, 729000000); // OS_CORE_CLOCK
-    ctx->tb_freq = 60750000;                 // TB = bus/4
+    ctx->mmu.write32(0x800000F8, 243000000); 
+    ctx->mmu.write32(0x800000FC, 729000000); 
+    ctx->tb_freq = 60750000;                 
   }
-  // Reset the wall-clock origin now that the platform TB rate is known,
-  // so the guest's first OSGetTime reads a small value.
+
   ctx->tb_start = std::chrono::steady_clock::now();
 
   nwii::runtime::init_ipc_client(*ctx);
 
-  // Launch CPU emulation in a background thread
   std::thread cpu_thread(cpu_thread_func, ctx.get());
 
   if (headless) {
-    // No window: only pace VBlank so the OS thread queue keeps moving
+    
     uint64_t tick = 0;
     while (ctx->is_running) {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
 
-      // Window-less input still works for network sources (PhoneSource
-      // UDP); keyboard/gamepad sources read empty raylib state safely.
+      
       nwii::runtime::input::InputManager::get().update();
 
       extern void ProcessGXFifo();
@@ -493,7 +458,7 @@ int main(int argc, char **argv) {
                   << ctx->lr << " msr=0x" << ctx->msr << " r3=0x" << ctx->gpr[3]
                   << " cb=" << (ctx->in_callback ? 1 : 0) << " inst=" << std::dec
                   << ctx->inst_count << "\n";
-        // NWII_PEEK=hexaddr[,words]: dump guest memory once per second.
+        
         if (const char *env = std::getenv("NWII_PEEK")) {
           uint32_t pa = 0, pw = 8;
           if (std::sscanf(env, "%x,%u", &pa, &pw) >= 1 && pa) {
@@ -503,27 +468,23 @@ int main(int argc, char **argv) {
             std::cout << std::dec << "\n";
           }
         }
-        // Run-queue bitmap + reschedule flag (SDA offsets from the SDK
-        // scheduler): shows whether the OS ever reaches its EE=1 idle spin
-        // (bitmap==0) or keeps churning ready threads.
+
+        
         if ((tick % 300) == 0 && ctx->gpr[13] >= 0x80000000u) {
           uint32_t r13 = ctx->gpr[13];
           std::cout << "  [RunQ] bitmap=0x" << std::hex
                     << ctx->mmu.read32(r13 - 0x21c8) << " resched=0x"
                     << ctx->mmu.read32(r13 - 0x21c4) << " cur=0x"
                     << ctx->mmu.read32(0x800000E4)
-                    // VI retrace state (SDA offsets from the VI handler):
-                    // count, pre-retrace CB, post-CB/flip flag slots.
+
                     << " retrace=" << std::dec << ctx->mmu.read32(r13 - 0x2358)
                     << std::hex << " postCB=0x" << ctx->mmu.read32(r13 - 0x2344)
                     << std::dec << "\n";
-          // Gates of the game's post-retrace callback (0x80137584): it only
-          // flips + sends the frame message when [vidstate+0xa2]==0 and the
-          // flip-pending byte [r13-0x29b6] is set.
+
+          
           uint32_t vs = ctx->mmu.read32(r13 - 0x29c0);
-          // EndFrame (0x801376dc) operates on the object at [r13-0x2AF0]:
-          // +0xB0 frame ptr, +0xB4 float gate, +0xB8/BA flags, +0xBE wait
-          // mode (0=msg queue, else token spin), +0x9C countdown.
+
+          
           uint32_t ef = ctx->mmu.read32(r13 - 0x2AF0);
           std::cout << "  [FlipG] vs=0x" << std::hex << vs
                     << " vsA2=" << std::dec << (int)ctx->mmu.read8(vs + 0xa2)
@@ -540,19 +501,17 @@ int main(int argc, char **argv) {
                     << std::hex << " tok=0x" << ctx->mmu.read16(r13 - 0x29b8)
                     << " pe_sr=0x" << nwii::runtime::hw::g_pe_sr
                     << std::dec << "\n";
-          // Which HW block the game's own retrace-ish handler polls: hwp is
-          // the register base it reads +8/+0xC from, shp a shadow struct,
-          // sdkPre/wrapPre the SDK and wrapper pre-retrace callback slots.
+
+          
           std::cout << "  [VIwrap] hwp=0x" << std::hex
                     << ctx->mmu.read32(r13 - 0x4118) << " shp=0x"
                     << ctx->mmu.read32(r13 - 0x239c) << " sdkPre=0x"
                     << ctx->mmu.read32(r13 - 0x2348) << " wrapPre=0x"
                     << ctx->mmu.read32(r13 - 0x237c) << std::dec << "\n";
         }
-        // Wall-clock thread dump: walk the OS active-thread list and peek at
-        // each sleeper's wait object so a starved producer/consumer chain is
-        // visible even when DEC (the other dump site) barely fires. Racy
-        // reads against the CPU thread are fine for diagnostics.
+
+        
+        
         if ((tick % 300) == 0) {
           uint32_t cur = ctx->mmu.read32(0x800000E4);
           uint32_t th = ctx->mmu.read32(0x800000DC);
@@ -580,7 +539,7 @@ int main(int argc, char **argv) {
       }
     }
   } else {
-    // Main SDL/GPU Thread Loop
+    
     std::vector<unsigned char> xfb_px;
     unsigned xfb_w = 0, xfb_h = 0;
     bool quit = false;
@@ -641,10 +600,8 @@ int main(int argc, char **argv) {
       extern void ProcessGXFifo();
       ProcessGXFifo();
 
-      // One line per ~5s saying how far this run got. A good and a bad run
-      // differ in exactly one of these numbers, which pins the diverging stage:
-      // frames=0 -> guest never completed a frame (CPU/interrupt side);
-      // draws=0 -> frames but no geometry; nonblack=0 -> geometry drawn black.
+      
+
       if (!headless) {
         static auto t0 = std::chrono::steady_clock::now();
         static int stat_n = 0;
@@ -672,23 +629,20 @@ int main(int argc, char **argv) {
                     << std::hex << nwii_stat_hash0();
           g_stat_parse_us = 0;
           g_stat_render_us = 0;
-          // TEV colour registers: uniforms, so they are NOT in the shader hash.
-          // The H&S shader resolves to uTevColor[1] and discards on alpha 0.
+
           std::cout << " E0..E7=";
           for (int i = 0xE0; i <= 0xE7; ++i)
             std::cout << nwii::runtime::gx::g_state.bp[i] << ",";
-          // Projection and viewport reach the shader as uniforms / GL state, so
-          // neither is in the shader hash: they can differ while hash0 does not.
-          // A projection with a zero x/y scale collapses every vertex.
+
+          
           std::cout << std::dec << " projType="
                     << nwii::runtime::gx::g_state.projType
                     << " projSet=" << (int)nwii::runtime::gx::g_state.projSet
                     << " proj=";
           for (int i = 0; i < 6; ++i)
             std::cout << nwii::runtime::gx::g_state.projection[i] << ",";
-          // Texel/palette state over time. The per-draw dump only covers the
-          // first frames, and it showed the H&S image reading as zeros there —
-          // this says whether the data ever lands, and whether we re-decode it.
+
+          
           uint32_t base = nwii::runtime::gx::g_state.texStages[0].base_addr;
           uint32_t toff = nwii::runtime::gx::g_state.texStages[0].tlut_offset;
           uint32_t tex_nz = 0, tlut_nz = 0;
@@ -711,7 +665,6 @@ int main(int argc, char **argv) {
                     << std::endl;
         }
       }
-
 
       if (!headless) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -772,12 +725,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Teardown
   ctx->is_running = false;
-  ctx->pc = 0; // Trigger run_game to exit
+  ctx->pc = 0; 
   if (cpu_thread.joinable())
     cpu_thread.join();
-
 
   nwii::runtime::shutdown();
   return 0;

@@ -20,31 +20,27 @@ static uint32_t g_cp_fifo_rw_dist = 0;
 static uint32_t g_cp_fifo_wp = 0;
 static uint32_t g_cp_fifo_rp = 0;
 
-// CP fifo pointer registers are 16-bit pairs with the LOW half at the
 // lower address (Dolphin CommandProcessor: FIFO_BASE_LO=0x20, _HI=0x22).
-// The old heuristic treated the +0 half as HIGH and assembled garbage
-// (base 0x00474EA0 became 0x4EA00047).
+
 static void write_reg32(uint32_t addr, uint32_t val, uint32_t& reg32) {
-    if ((addr & 3) == 0) { // Low half (or full 32-bit store)
+    if ((addr & 3) == 0) { 
         if (val > 0xFFFF) {
             reg32 = val;
         } else {
             reg32 = (reg32 & 0xFFFF0000) | (val & 0xFFFF);
         }
-    } else if ((addr & 3) == 2) { // High half
+    } else if ((addr & 3) == 2) { 
         reg32 = (reg32 & 0xFFFF) | ((val & 0xFFFF) << 16);
     }
 }
 
 static void process_cp_fifo() {
     if (!g_ctx_ptr) return;
-    if (!(g_cp_cr & 1)) return; // CP not enabled
+    if (!(g_cp_cr & 1)) return; 
 
-    // Process from RP to WP
     int count = 0;
+
     
-    // In GC, addresses are physical (usually 0x00XXXXXX or 0x01XXXXXX)
-    // We mask with 0x03FFFFFF to be safe
     uint32_t rp = g_cp_fifo_rp & 0x03FFFFFF;
     uint32_t wp = g_cp_fifo_wp & 0x03FFFFFF;
     uint32_t base = g_cp_fifo_base & 0x03FFFFFF;
@@ -77,7 +73,7 @@ void register_cp(MMIODispatcher &dispatcher) {
             switch (addr) {
                 case 0xCC000000: return g_cp_sr;
                 case 0xCC000002: return g_cp_cr;
-                // 16-bit pairs, LOW half at the lower address.
+                
                 case 0xCC000020: return g_cp_fifo_base & 0xFFFF;
                 case 0xCC000022: return g_cp_fifo_base >> 16;
                 case 0xCC000024: return g_cp_fifo_end & 0xFFFF;
@@ -110,8 +106,7 @@ void register_cp(MMIODispatcher &dispatcher) {
             else if (addr >= 0xCC000030 && addr <= 0xCC000032) { write_reg32(addr, val, g_cp_fifo_rw_dist); }
             else if (addr >= 0xCC000034 && addr <= 0xCC000036) {
                 write_reg32(addr, val, g_cp_fifo_wp);
-                // Drain only once WP is fully programmed: the SDK writes the
-                // halves separately and a half-updated WP would drain junk.
+
                 if (addr == 0xCC000036 || val > 0xFFFF)
                     process_cp_fifo();
             }
@@ -120,4 +115,4 @@ void register_cp(MMIODispatcher &dispatcher) {
     );
 }
 
-} // namespace nwii::runtime::hw
+} 

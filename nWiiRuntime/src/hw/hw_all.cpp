@@ -15,4 +15,4 @@ void register_all_hw(MMIODispatcher &dispatcher) {
   register_ipc(dispatcher);
   register_mi(dispatcher);
 }
-} // namespace nwii::runtime::hw
+} 

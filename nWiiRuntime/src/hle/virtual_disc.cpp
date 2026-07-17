@@ -46,7 +46,7 @@ bool VirtualDisc::init(const std::string& game_dir) {
     fs::path root(game_dir);
     fs::path sys = root / "sys";
     if (!fs::exists(sys / "fst.bin") || !fs::exists(sys / "boot.bin")) {
-        // Also accept a flat layout (boot.bin next to main.dol)
+        
         if (fs::exists(root / "fst.bin") && fs::exists(root / "boot.bin")) {
             sys = root;
         } else {
@@ -61,7 +61,6 @@ bool VirtualDisc::init(const std::string& game_dir) {
         return false;
     }
 
-    // Disc magics: Wii @0x18 = 0x5D1C9EA3, GC @0x1C = 0xC2339F3D
     m_is_wii = be32(&m_boot_data[0x18]) == 0x5D1C9EA3;
     int shift = m_is_wii ? 2 : 0;
 
@@ -110,7 +109,6 @@ void VirtualDisc::parse_fst() {
 
     fs::path files_root = fs::path(m_dir) / "files";
 
-    // Directory stack: (last_entry_index, path)
     std::vector<std::pair<uint32_t, fs::path>> dirs;
     dirs.push_back({num_entries, files_root});
 
@@ -174,7 +172,7 @@ size_t VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
             std::cout << "[VDisc] ERROR: Cannot open file " << r.host_path << "\n";
             continue;
         }
-        // fseeko is POSIX; MSVC uses _fseeki64 instead.
+        
 #ifdef _WIN32
         _fseeki64(f, (long long)(lo - r.offset), SEEK_SET);
 #else
@@ -191,8 +189,7 @@ size_t VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
         }
         covered += bytes_read;
     }
-    // A read that matches no extracted file returns zeros; the game then
-    // parses garbage. Surface it so disc-layout gaps are visible.
+
     if (covered < len) {
         static int miss_budget = 40;
         if (miss_budget > 0) {
@@ -205,4 +202,4 @@ size_t VirtualDisc::read(uint64_t offset, uint32_t len, uint8_t* dst) {
     return covered;
 }
 
-} // namespace nwii::runtime
+} 

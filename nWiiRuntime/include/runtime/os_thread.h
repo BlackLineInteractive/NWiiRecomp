@@ -18,9 +18,9 @@ enum class ThreadState {
 struct OSThread {
     uint32_t id;
     ThreadState state;
-    uint32_t context_addr; // Pointer to the thread's context saved in guest memory
-    uint64_t wakeup_time;  // For OSSleepThread based on time
-    bool is_vblank_wait;   // For OSSleepThread waiting on VBlank
+    uint32_t context_addr; 
+    uint64_t wakeup_time;  
+    bool is_vblank_wait;   
 };
 
 class ThreadManager {
@@ -78,4 +78,4 @@ private:
     std::mutex m_mutex;
 };
 
-} // namespace nwii::runtime
+} 

@@ -15,10 +15,9 @@ struct MMIORegion {
     uint32_t end_addr;
     MMIORegionReadCallback read_cb;
     MMIORegionWriteCallback write_cb;
-    // Optional width-aware handlers for devices whose registers are 16-bit
-    // pairs (e.g. ARAM DMA): a 16-bit store to the high half must not be
-    // mistaken for a full 32-bit register write. Absent, 16-bit accesses
-    // fall back to the 32-bit callbacks (legacy behaviour).
+
+    
+    
     MMIORegionRead16Callback read16_cb;
     MMIORegionWrite16Callback write16_cb;
 };
@@ -44,4 +43,4 @@ private:
     std::vector<MMIORegion> m_regions;
 };
 
-} // namespace nwii::runtime
+} 

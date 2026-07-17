@@ -70,13 +70,12 @@ bool EventScheduler::cancel(EventId id) {
 }
 
 void EventScheduler::advance(CPUContext& ctx, uint64_t now) {
-    if (now < m_now) return; // timebase never runs backwards
+    if (now < m_now) return; 
     m_now = now;
-    if (m_firing) return; // re-entrancy guard (a callback that pumps)
+    if (m_firing) return; 
     m_firing = true;
-    // Fire in due order. Recurring events are re-pushed with their next due
-    // so a slow pump that jumped past several periods emits one catch-up
-    // fire per pass rather than looping unboundedly here.
+
+    
     while (!m_heap.empty() && m_heap.front().due <= m_now) {
         Event e = std::move(m_heap.front());
         m_heap[0] = std::move(m_heap.back());
@@ -85,11 +84,10 @@ void EventScheduler::advance(CPUContext& ctx, uint64_t now) {
 
         uint64_t late = m_now - e.due;
         if (e.period) {
-            // Reschedule first so a callback that itself schedules keeps the
-            // heap consistent; skip whole missed periods to bound catch-up.
+
             uint64_t next = e.due + e.period;
             if (next <= m_now) next = m_now + e.period;
-            Callback cb = e.cb; // keep for the recurring copy
+            Callback cb = e.cb; 
             push({next, e.id, e.period, cb});
             cb(ctx, late);
         } else {
@@ -106,4 +104,4 @@ void EventScheduler::reset() {
     m_firing = false;
 }
 
-} // namespace nwii::runtime
+} 

@@ -10,7 +10,7 @@ bool SymbolTable::load_csv(const std::string& filepath) {
     if (!file.is_open()) return false;
     
     std::string line;
-    // Skip header if exists (Name, Location, Size)
+    
     std::getline(file, line);
     
     while (std::getline(file, line)) {
@@ -20,13 +20,12 @@ bool SymbolTable::load_csv(const std::string& filepath) {
         std::string name, loc_str, size_str;
         
         if (std::getline(ss, name, ',') && std::getline(ss, loc_str, ',')) {
-            // Trim quotes if any
+            
             if (!name.empty() && name.front() == '"') name.erase(0, 1);
             if (!name.empty() && name.back() == '"') name.pop_back();
             if (!loc_str.empty() && loc_str.front() == '"') loc_str.erase(0, 1);
             if (!loc_str.empty() && loc_str.back() == '"') loc_str.pop_back();
 
-            // Sanitize name for C++
             if (name == "default" || name == "new" || name == "delete" || name == "class" || name == "struct" || name == "auto") {
                 name += "_sym";
             }
@@ -64,5 +63,5 @@ void SymbolTable::add_symbol(uint32_t address, const std::string& name) {
     symbols_[address] = name;
 }
 
-} // namespace recomp
-} // namespace nwii
+} 
+} 

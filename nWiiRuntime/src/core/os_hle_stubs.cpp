@@ -41,9 +41,8 @@ void watch_hit(uint32_t addr, uint32_t value, int width) {
             << value;
   if (c) {
     std::cout << " pc=0x" << c->pc << " lr=0x" << c->lr;
-    // NWII_WATCH_REGS=1: also dump the callee-saved registers, so the
-    // pointers a copy loop is running with are visible at the moment of
-    // the hit (finding them statically means re-deriving the whole frame).
+
+    
     static const bool regs = std::getenv("NWII_WATCH_REGS") != nullptr;
     if (regs) {
       for (int r = 24; r <= 31; ++r)
@@ -54,8 +53,7 @@ void watch_hit(uint32_t addr, uint32_t value, int width) {
   std::cout << std::dec << "\n";
 }
 
-// Optional allow-list: NWII_TRACE_ONLY=addr,addr,... restricts [CALL] logging
-// to those function entries (hex, comma-separated). Empty = trace everything.
+
 static std::set<uint32_t> g_trace_only = []() {
   std::set<uint32_t> s;
   const char *env = std::getenv("NWII_TRACE_ONLY");
@@ -87,7 +85,7 @@ void trace_call(uint32_t func_addr, CPUContext &ctx) {
             << " r13=0x" << ctx.gpr[13] << " r1=0x" << ctx.gpr[1]
             << std::dec << "\n";
 }
-} // namespace nwii::runtime
+} 
 
 static std::string read_guest_string(CPUContext &ctx, uint32_t addr) {
   std::string str;
@@ -189,7 +187,7 @@ void HW_Reg_Write16(uint32_t addr, uint16_t val) {
   }
   MMIODispatcher::get().write16(addr, val);
 }
-} // namespace nwii::runtime
+} 
 
 extern "C" void DVD_Callback(CPUContext &ctx) {
   std::cout << "[HLE DVD_Callback] Triggered at PC=0x" << std::hex << ctx.pc
@@ -199,7 +197,7 @@ extern "C" void DVD_Callback(CPUContext &ctx) {
 extern "C" void VIInit(CPUContext &ctx) {
   std::cout << "[HLE VIInit] Triggered at PC=0x" << std::hex << ctx.pc
             << std::dec << "\n";
-  // The game unmasks VI (PI_INTMR bit 8 = 0x100) itself via MMIO writes.
+  
 }
 
 extern "C" void VIConfigure(CPUContext &ctx) {
@@ -224,7 +222,6 @@ extern "C" void VIGetNextField(CPUContext &ctx) {
 }
 
 extern "C" void VIWaitForRetrace(CPUContext &ctx) {
-  // Advance the global retrace counter so the caller exits immediately.
-  // Without a real VI ISR updating __VIRetraceCount, the game loops forever.
+
   nwii::runtime::hw::vi_trigger_interrupt();
 }

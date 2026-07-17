@@ -23,11 +23,11 @@ IPlatform& IPlatform::get() {
 }
 
 void GCPlatform::init() {
-    // GC specific init
+    
 }
 
 void WiiPlatform::init() {
-    // Wii specific init
+    
 }
 
-} // namespace nwii::runtime::platform
+} 

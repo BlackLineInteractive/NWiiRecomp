@@ -6,19 +6,15 @@
 #include <bit>
 #include <cmath>
 
-// PPC750 integer-subset interpreter. Used as a dispatcher fallback for
-// code that does not exist in the DOL image: routines the game copies
-// into low memory at runtime (arena clear, cache helpers, TRK stubs),
-// trampolines, and self-modifying code. Executes straight from guest
-// memory one instruction at a time until control returns to recompiled
-// code.
+
+
+
 
 namespace nwii {
 namespace runtime {
 
-// Address ranges covered by statically recompiled code (DOL text sections),
-// registered by the loader. Anything outside is interpreter territory:
-// low-memory helpers, overlays the game streams into BSS/heap, and so on.
+
+
 struct CodeRange { uint32_t start, end; };
 static CodeRange g_code_ranges[16];
 static int g_code_range_count = 0;
@@ -49,7 +45,6 @@ static inline void set_crf(CPUContext& ctx, uint32_t crf, bool lt, bool gt, bool
     ctx.cr[crf].so = (ctx.xer >> 31) & 1;
 }
 
-// Executes one instruction at ctx.pc. Returns true if it was handled.
 bool interpret_one(CPUContext& ctx) {
     uint32_t pc = ctx.pc;
     if (pc == 0x801c6124) {
@@ -71,46 +66,46 @@ bool interpret_one(CPUContext& ctx) {
     };
 
     switch (op) {
-    case 7: // mulli
+    case 7: 
         ctx.gpr[rD] = (int32_t)ctx.gpr[rA] * simm;
         break;
-    case 8: { // subfic
+    case 8: { 
         uint64_t r = (uint64_t)(uint32_t)(~ctx.gpr[rA]) + (uint32_t)simm + 1;
         ctx.gpr[rD] = (uint32_t)r;
         if (r >> 32) ctx.xer |= 0x20000000; else ctx.xer &= ~0x20000000;
         break;
     }
-    case 10: { // cmpli
+    case 10: { 
         uint32_t a = ctx.gpr[rA];
         uint32_t b = uimm;
         set_crf(ctx, rD >> 2, a < b, a > b, a == b);
         break;
     }
-    case 11: { // cmpi
+    case 11: { 
         int32_t a = (int32_t)ctx.gpr[rA];
         set_crf(ctx, rD >> 2, a < simm, a > simm, a == simm);
         break;
     }
-    case 12: { // addic
+    case 12: { 
         uint64_t r = (uint64_t)ctx.gpr[rA] + (uint32_t)(int32_t)simm;
         ctx.gpr[rD] = (uint32_t)r;
         if (r >> 32) ctx.xer |= 0x20000000; else ctx.xer &= ~0x20000000;
         break;
     }
-    case 13: { // addic.
+    case 13: { 
         uint64_t r = (uint64_t)ctx.gpr[rA] + (uint32_t)(int32_t)simm;
         ctx.gpr[rD] = (uint32_t)r;
         if (r >> 32) ctx.xer |= 0x20000000; else ctx.xer &= ~0x20000000;
         set_cr0(ctx, (int32_t)ctx.gpr[rD]);
         break;
     }
-    case 14: // addi
+    case 14: 
         ctx.gpr[rD] = (rA ? ctx.gpr[rA] : 0) + simm;
         break;
-    case 15: // addis
+    case 15: 
         ctx.gpr[rD] = (rA ? ctx.gpr[rA] : 0) + ((int32_t)simm << 16);
         break;
-    case 16: { // bc
+    case 16: { 
         uint32_t BO = rD, BI = rA;
         int32_t bd = (int16_t)(insn & 0xFFFC);
         bool ctr_ok = true;
@@ -130,19 +125,19 @@ bool interpret_one(CPUContext& ctx) {
                                      : pc + 4;
         return true;
     }
-    case 17: // sc
+    case 17: 
         handle_syscall(ctx);
         break;
-    case 18: { // b/bl/ba/bla
+    case 18: { 
         int32_t li = insn & 0x03FFFFFC;
         if (li & 0x02000000) li |= 0xFC000000;
         if (insn & 1) ctx.lr = pc + 4;
         ctx.pc = (insn & 2) ? (uint32_t)li : pc + li;
         return true;
     }
-    case 19: { // branch unit / CR ops
+    case 19: { 
         uint32_t xo = (insn >> 1) & 0x3FF;
-        if (xo == 16) { // bclr
+        if (xo == 16) { 
             uint32_t BO = rD, BI = rA;
             bool ctr_ok = true;
             if (!(BO & 0x04)) {
@@ -161,7 +156,7 @@ bool interpret_one(CPUContext& ctx) {
             ctx.pc = (ctr_ok && cond_ok) ? target : pc + 4;
             return true;
         }
-        if (xo == 528) { // bcctr
+        if (xo == 528) { 
             uint32_t BO = rD, BI = rA;
             bool cond_ok = true;
             if (!(BO & 0x10)) {
@@ -175,21 +170,21 @@ bool interpret_one(CPUContext& ctx) {
             ctx.pc = cond_ok ? target : pc + 4;
             return true;
         }
-        if (xo == 50) { // rfi
+        if (xo == 50) { 
             uint32_t ee_was = ctx.msr & 0x8000;
             ctx.msr = ctx.srr1;
             ctx.pc = ctx.srr0;
-            ctx.dispatch_saved_ctx = 0; // exit ISR
+            ctx.dispatch_saved_ctx = 0; 
             if (!ee_was && (ctx.msr & 0x8000)) {
                 if (process_pending_callbacks(ctx)) return true;
             }
             return true;
         }
-        if (xo == 150) break; // isync
-        // CR logic ops: crand/cror/crxor/... rarely matter in stubs
+        if (xo == 150) break; 
+        
         break;
     }
-    case 20: { // rlwimi
+    case 20: { 
         uint32_t sh = rB, mb = (insn >> 6) & 0x1F, me = (insn >> 1) & 0x1F;
         uint32_t r = (ctx.gpr[rD] << sh) | (ctx.gpr[rD] >> ((32 - sh) & 31));
         uint32_t mask = (mb <= me)
@@ -199,7 +194,7 @@ bool interpret_one(CPUContext& ctx) {
         if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
         break;
     }
-    case 21: { // rlwinm
+    case 21: { 
         uint32_t sh = rB, mb = (insn >> 6) & 0x1F, me = (insn >> 1) & 0x1F;
         uint32_t r = (ctx.gpr[rD] << sh) | (ctx.gpr[rD] >> ((32 - sh) & 31));
         uint32_t mask = (mb <= me)
@@ -209,7 +204,7 @@ bool interpret_one(CPUContext& ctx) {
         if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
         break;
     }
-    case 23: { // rlwnm
+    case 23: { 
         uint32_t sh = ctx.gpr[rB] & 0x1F, mb = (insn >> 6) & 0x1F, me = (insn >> 1) & 0x1F;
         uint32_t r = (ctx.gpr[rD] << sh) | (ctx.gpr[rD] >> ((32 - sh) & 31));
         uint32_t mask = (mb <= me)
@@ -219,62 +214,62 @@ bool interpret_one(CPUContext& ctx) {
         if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
         break;
     }
-    case 24: ctx.gpr[rA] = ctx.gpr[rD] | uimm; break;            // ori
-    case 25: ctx.gpr[rA] = ctx.gpr[rD] | ((uint32_t)uimm << 16); break; // oris
-    case 26: ctx.gpr[rA] = ctx.gpr[rD] ^ uimm; break;            // xori
-    case 27: ctx.gpr[rA] = ctx.gpr[rD] ^ ((uint32_t)uimm << 16); break; // xoris
-    case 28: ctx.gpr[rA] = ctx.gpr[rD] & uimm; set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // andi.
-    case 29: ctx.gpr[rA] = ctx.gpr[rD] & ((uint32_t)uimm << 16); set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // andis.
+    case 24: ctx.gpr[rA] = ctx.gpr[rD] | uimm; break;            
+    case 25: ctx.gpr[rA] = ctx.gpr[rD] | ((uint32_t)uimm << 16); break; 
+    case 26: ctx.gpr[rA] = ctx.gpr[rD] ^ uimm; break;            
+    case 27: ctx.gpr[rA] = ctx.gpr[rD] ^ ((uint32_t)uimm << 16); break; 
+    case 28: ctx.gpr[rA] = ctx.gpr[rD] & uimm; set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+    case 29: ctx.gpr[rA] = ctx.gpr[rD] & ((uint32_t)uimm << 16); set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
     case 31: {
         uint32_t xo = (insn >> 1) & 0x3FF;
         switch (xo) {
-        case 0: { // cmp
+        case 0: { 
             int32_t a = (int32_t)ctx.gpr[rA], b = (int32_t)ctx.gpr[rB];
             set_crf(ctx, rD >> 2, a < b, a > b, a == b);
             break;
         }
-        case 32: { // cmpl
+        case 32: { 
             uint32_t a = ctx.gpr[rA], b = ctx.gpr[rB];
             set_crf(ctx, rD >> 2, a < b, a > b, a == b);
             break;
         }
-        case 266: ctx.gpr[rD] = ctx.gpr[rA] + ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; // add
-        case 40:  ctx.gpr[rD] = ctx.gpr[rB] - ctx.gpr[rA]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; // subf
-        case 104: ctx.gpr[rD] = -(int32_t)ctx.gpr[rA]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; // neg
-        case 235: ctx.gpr[rD] = (int32_t)ctx.gpr[rA] * (int32_t)ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; // mullw
-        case 75:  ctx.gpr[rD] = (uint32_t)(((int64_t)(int32_t)ctx.gpr[rA] * (int32_t)ctx.gpr[rB]) >> 32); break; // mulhw
-        case 11:  ctx.gpr[rD] = (uint32_t)(((uint64_t)ctx.gpr[rA] * ctx.gpr[rB]) >> 32); break; // mulhwu
-        case 491: ctx.gpr[rD] = ctx.gpr[rB] ? (uint32_t)((int32_t)ctx.gpr[rA] / (int32_t)ctx.gpr[rB]) : 0; break; // divw
-        case 459: ctx.gpr[rD] = ctx.gpr[rB] ? ctx.gpr[rA] / ctx.gpr[rB] : 0; break; // divwu
-        case 28:  ctx.gpr[rA] = ctx.gpr[rD] & ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // and
-        case 60:  ctx.gpr[rA] = ctx.gpr[rD] & ~ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // andc
-        case 444: ctx.gpr[rA] = ctx.gpr[rD] | ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // or
-        case 412: ctx.gpr[rA] = ctx.gpr[rD] | ~ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // orc
-        case 316: ctx.gpr[rA] = ctx.gpr[rD] ^ ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // xor
-        case 476: ctx.gpr[rA] = ~(ctx.gpr[rD] & ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // nand
-        case 124: ctx.gpr[rA] = ~(ctx.gpr[rD] | ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // nor
-        case 284: ctx.gpr[rA] = ~(ctx.gpr[rD] ^ ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // eqv
-        case 954: ctx.gpr[rA] = (int32_t)(int8_t)ctx.gpr[rD]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // extsb
-        case 922: ctx.gpr[rA] = (int32_t)(int16_t)ctx.gpr[rD]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; // extsh
-        case 26: { // cntlzw
+        case 266: ctx.gpr[rD] = ctx.gpr[rA] + ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; 
+        case 40:  ctx.gpr[rD] = ctx.gpr[rB] - ctx.gpr[rA]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; 
+        case 104: ctx.gpr[rD] = -(int32_t)ctx.gpr[rA]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; 
+        case 235: ctx.gpr[rD] = (int32_t)ctx.gpr[rA] * (int32_t)ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rD]); break; 
+        case 75:  ctx.gpr[rD] = (uint32_t)(((int64_t)(int32_t)ctx.gpr[rA] * (int32_t)ctx.gpr[rB]) >> 32); break; 
+        case 11:  ctx.gpr[rD] = (uint32_t)(((uint64_t)ctx.gpr[rA] * ctx.gpr[rB]) >> 32); break; 
+        case 491: ctx.gpr[rD] = ctx.gpr[rB] ? (uint32_t)((int32_t)ctx.gpr[rA] / (int32_t)ctx.gpr[rB]) : 0; break; 
+        case 459: ctx.gpr[rD] = ctx.gpr[rB] ? ctx.gpr[rA] / ctx.gpr[rB] : 0; break; 
+        case 28:  ctx.gpr[rA] = ctx.gpr[rD] & ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 60:  ctx.gpr[rA] = ctx.gpr[rD] & ~ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 444: ctx.gpr[rA] = ctx.gpr[rD] | ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 412: ctx.gpr[rA] = ctx.gpr[rD] | ~ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 316: ctx.gpr[rA] = ctx.gpr[rD] ^ ctx.gpr[rB]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 476: ctx.gpr[rA] = ~(ctx.gpr[rD] & ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 124: ctx.gpr[rA] = ~(ctx.gpr[rD] | ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 284: ctx.gpr[rA] = ~(ctx.gpr[rD] ^ ctx.gpr[rB]); if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 954: ctx.gpr[rA] = (int32_t)(int8_t)ctx.gpr[rD]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 922: ctx.gpr[rA] = (int32_t)(int16_t)ctx.gpr[rD]; if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]); break; 
+        case 26: { 
             uint32_t v = ctx.gpr[rD];
             ctx.gpr[rA] = std::countl_zero(v);
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
-        case 24: { // slw
+        case 24: { 
             uint32_t sh = ctx.gpr[rB] & 0x3F;
             ctx.gpr[rA] = sh > 31 ? 0 : ctx.gpr[rD] << sh;
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
-        case 536: { // srw
+        case 536: { 
             uint32_t sh = ctx.gpr[rB] & 0x3F;
             ctx.gpr[rA] = sh > 31 ? 0 : ctx.gpr[rD] >> sh;
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
-        case 792: { // sraw
+        case 792: { 
             uint32_t sh = ctx.gpr[rB] & 0x3F;
             int32_t v = (int32_t)ctx.gpr[rD];
             uint32_t ca;
@@ -285,7 +280,7 @@ bool interpret_one(CPUContext& ctx) {
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
-        case 824: { // srawi
+        case 824: { 
             uint32_t sh = rB;
             int32_t v = (int32_t)ctx.gpr[rD];
             ctx.gpr[rA] = (uint32_t)(v >> sh);
@@ -294,7 +289,7 @@ bool interpret_one(CPUContext& ctx) {
             if (rc) set_cr0(ctx, (int32_t)ctx.gpr[rA]);
             break;
         }
-        case 339: { // mfspr
+        case 339: { 
             uint32_t spr = ((insn >> 16) & 0x1F) | (((insn >> 11) & 0x1F) << 5);
             if (spr == 8) ctx.gpr[rD] = ctx.lr;
             else if (spr == 9) ctx.gpr[rD] = ctx.ctr;
@@ -306,7 +301,7 @@ bool interpret_one(CPUContext& ctx) {
             else ctx.gpr[rD] = 0;
             break;
         }
-        case 467: { // mtspr
+        case 467: { 
             uint32_t spr = ((insn >> 16) & 0x1F) | (((insn >> 11) & 0x1F) << 5);
             if (spr == 8) ctx.lr = ctx.gpr[rD];
             else if (spr == 9) ctx.ctr = ctx.gpr[rD];
@@ -317,15 +312,15 @@ bool interpret_one(CPUContext& ctx) {
             else if (spr >= 912 && spr <= 919) ctx.gqr[spr - 912] = ctx.gpr[rD];
             break;
         }
-        case 371: { // mftb (wall-clock time base)
+        case 371: { 
             uint32_t spr = ((insn >> 16) & 0x1F) | (((insn >> 11) & 0x1F) << 5);
             uint64_t tb = ctx.read_timebase();
             ctx.gpr[rD] = (spr == 269) ? (uint32_t)(tb >> 32) : (uint32_t)tb;
             break;
         }
-        case 83:  ctx.gpr[rD] = ctx.msr; break;  // mfmsr
-        case 146: ctx.msr = ctx.gpr[rD]; break;  // mtmsr
-        case 19: { // mfcr
+        case 83:  ctx.gpr[rD] = ctx.msr; break;  
+        case 146: ctx.msr = ctx.gpr[rD]; break;  
+        case 19: { 
             uint32_t v = 0;
             for (int i = 0; i < 8; i++) {
                 v |= (ctx.cr[i].lt ? 8u : 0) << (28 - i * 4);
@@ -336,7 +331,7 @@ bool interpret_one(CPUContext& ctx) {
             ctx.gpr[rD] = v;
             break;
         }
-        case 144: { // mtcrf
+        case 144: { 
             uint32_t crm = (insn >> 12) & 0xFF;
             uint32_t v = ctx.gpr[rD];
             for (int i = 0; i < 8; i++) {
@@ -350,45 +345,45 @@ bool interpret_one(CPUContext& ctx) {
             }
             break;
         }
-        case 23:  ctx.gpr[rD] = ctx.mmu.read32(ea_ra0(0) + ctx.gpr[rB]); break;  // lwzx
-        case 87:  ctx.gpr[rD] = ctx.mmu.read8(ea_ra0(0) + ctx.gpr[rB]); break;   // lbzx
-        case 279: ctx.gpr[rD] = ctx.mmu.read16(ea_ra0(0) + ctx.gpr[rB]); break;  // lhzx
-        case 343: ctx.gpr[rD] = (int32_t)(int16_t)ctx.mmu.read16(ea_ra0(0) + ctx.gpr[rB]); break; // lhax
-        case 151: ctx.mmu.write32(ea_ra0(0) + ctx.gpr[rB], ctx.gpr[rD]); break;  // stwx
-        case 215: ctx.mmu.write8(ea_ra0(0) + ctx.gpr[rB], (uint8_t)ctx.gpr[rD]); break; // stbx
-        case 407: ctx.mmu.write16(ea_ra0(0) + ctx.gpr[rB], (uint16_t)ctx.gpr[rD]); break; // sthx
-        case 20: { // lwarx
+        case 23:  ctx.gpr[rD] = ctx.mmu.read32(ea_ra0(0) + ctx.gpr[rB]); break;  
+        case 87:  ctx.gpr[rD] = ctx.mmu.read8(ea_ra0(0) + ctx.gpr[rB]); break;   
+        case 279: ctx.gpr[rD] = ctx.mmu.read16(ea_ra0(0) + ctx.gpr[rB]); break;  
+        case 343: ctx.gpr[rD] = (int32_t)(int16_t)ctx.mmu.read16(ea_ra0(0) + ctx.gpr[rB]); break; 
+        case 151: ctx.mmu.write32(ea_ra0(0) + ctx.gpr[rB], ctx.gpr[rD]); break;  
+        case 215: ctx.mmu.write8(ea_ra0(0) + ctx.gpr[rB], (uint8_t)ctx.gpr[rD]); break; 
+        case 407: ctx.mmu.write16(ea_ra0(0) + ctx.gpr[rB], (uint16_t)ctx.gpr[rD]); break; 
+        case 20: { 
             ctx.gpr[rD] = ctx.mmu.read32(ea_ra0(0) + ctx.gpr[rB]);
             ctx.reservation_addr = ea_ra0(0) + ctx.gpr[rB];
             break;
         }
-        case 150: { // stwcx.
+        case 150: { 
             ctx.mmu.write32(ea_ra0(0) + ctx.gpr[rB], ctx.gpr[rD]);
             ctx.cr[0].lt = ctx.cr[0].gt = false;
             ctx.cr[0].eq = true;
             ctx.cr[0].so = (ctx.xer >> 31) & 1;
             break;
         }
-        case 1014: { // dcbz: zero the 32-byte cache line
+        case 1014: { 
             uint32_t ea = (ea_ra0(0) + ctx.gpr[rB]) & ~31u;
             for (int i = 0; i < 32; i += 4) ctx.mmu.write32(ea + i, 0);
             break;
         }
-        // Indexed FP loads/stores (overlay code uses these heavily)
-        case 535: ctx.fpr[rD] = ctx.mmu.read_f32(ea_ra0(0) + ctx.gpr[rB]); break; // lfsx
-        case 567: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f32(ea); ctx.gpr[rA] = ea; break; } // lfsux
-        case 599: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(0) + ctx.gpr[rB]); break; // lfdx
-        case 631: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f64(ea); ctx.gpr[rA] = ea; break; } // lfdux
-        case 663: ctx.mmu.write_f32(ea_ra0(0) + ctx.gpr[rB], (float)ctx.fpr[rD]); break; // stfsx
-        case 695: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f32(ea, (float)ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } // stfsux
-        case 727: ctx.mmu.write_f64(ea_ra0(0) + ctx.gpr[rB], ctx.fpr[rD]); break; // stfdx
-        case 759: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f64(ea, ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } // stfdux
-        case 983: { // stfiwx: store the low 32 bits of the FPR's raw image
+        
+        case 535: ctx.fpr[rD] = ctx.mmu.read_f32(ea_ra0(0) + ctx.gpr[rB]); break; 
+        case 567: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f32(ea); ctx.gpr[rA] = ea; break; } 
+        case 599: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(0) + ctx.gpr[rB]); break; 
+        case 631: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.fpr[rD] = ctx.mmu.read_f64(ea); ctx.gpr[rA] = ea; break; } 
+        case 663: ctx.mmu.write_f32(ea_ra0(0) + ctx.gpr[rB], (float)ctx.fpr[rD]); break; 
+        case 695: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f32(ea, (float)ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } 
+        case 727: ctx.mmu.write_f64(ea_ra0(0) + ctx.gpr[rB], ctx.fpr[rD]); break; 
+        case 759: { uint32_t ea = ctx.gpr[rA] + ctx.gpr[rB]; ctx.mmu.write_f64(ea, ctx.fpr[rD]); ctx.gpr[rA] = ea; break; } 
+        case 983: { 
             uint64_t bits; std::memcpy(&bits, &ctx.fpr[rD], 8);
             ctx.mmu.write32(ea_ra0(0) + ctx.gpr[rB], (uint32_t)bits);
             break;
         }
-        // Cache/sync: no-ops in HLE
+        
         case 54: case 86: case 246: case 470: case 598: case 982: case 854:
             break;
         default:
@@ -398,61 +393,60 @@ bool interpret_one(CPUContext& ctx) {
         }
         break;
     }
-    case 32: ctx.gpr[rD] = ctx.mmu.read32(ea_ra0(simm)); break;           // lwz
-    case 33: ctx.gpr[rD] = ctx.mmu.read32(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break; // lwzu
-    case 34: ctx.gpr[rD] = ctx.mmu.read8(ea_ra0(simm)); break;            // lbz
-    case 35: ctx.gpr[rD] = ctx.mmu.read8(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break;  // lbzu
-    case 36: ctx.mmu.write32(ea_ra0(simm), ctx.gpr[rD]); break;           // stw
-    case 37: ctx.mmu.write32(ctx.gpr[rA] + simm, ctx.gpr[rD]); ctx.gpr[rA] += simm; break; // stwu
-    case 38: ctx.mmu.write8(ea_ra0(simm), (uint8_t)ctx.gpr[rD]); break;   // stb
-    case 39: ctx.mmu.write8(ctx.gpr[rA] + simm, (uint8_t)ctx.gpr[rD]); ctx.gpr[rA] += simm; break; // stbu
-    case 40: ctx.gpr[rD] = ctx.mmu.read16(ea_ra0(simm)); break;           // lhz
-    case 41: ctx.gpr[rD] = ctx.mmu.read16(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break; // lhzu
-    case 42: ctx.gpr[rD] = (int32_t)(int16_t)ctx.mmu.read16(ea_ra0(simm)); break; // lha
-    case 44: ctx.mmu.write16(ea_ra0(simm), (uint16_t)ctx.gpr[rD]); break; // sth
-    case 45: ctx.mmu.write16(ctx.gpr[rA] + simm, (uint16_t)ctx.gpr[rD]); ctx.gpr[rA] += simm; break; // sthu
-    case 46: { // lmw
+    case 32: ctx.gpr[rD] = ctx.mmu.read32(ea_ra0(simm)); break;           
+    case 33: ctx.gpr[rD] = ctx.mmu.read32(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break; 
+    case 34: ctx.gpr[rD] = ctx.mmu.read8(ea_ra0(simm)); break;            
+    case 35: ctx.gpr[rD] = ctx.mmu.read8(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break;  
+    case 36: ctx.mmu.write32(ea_ra0(simm), ctx.gpr[rD]); break;           
+    case 37: ctx.mmu.write32(ctx.gpr[rA] + simm, ctx.gpr[rD]); ctx.gpr[rA] += simm; break; 
+    case 38: ctx.mmu.write8(ea_ra0(simm), (uint8_t)ctx.gpr[rD]); break;   
+    case 39: ctx.mmu.write8(ctx.gpr[rA] + simm, (uint8_t)ctx.gpr[rD]); ctx.gpr[rA] += simm; break; 
+    case 40: ctx.gpr[rD] = ctx.mmu.read16(ea_ra0(simm)); break;           
+    case 41: ctx.gpr[rD] = ctx.mmu.read16(ctx.gpr[rA] + simm); ctx.gpr[rA] += simm; break; 
+    case 42: ctx.gpr[rD] = (int32_t)(int16_t)ctx.mmu.read16(ea_ra0(simm)); break; 
+    case 44: ctx.mmu.write16(ea_ra0(simm), (uint16_t)ctx.gpr[rD]); break; 
+    case 45: ctx.mmu.write16(ctx.gpr[rA] + simm, (uint16_t)ctx.gpr[rD]); ctx.gpr[rA] += simm; break; 
+    case 46: { 
         uint32_t ea = ea_ra0(simm);
         for (uint32_t r = rD; r < 32; r++, ea += 4) ctx.gpr[r] = ctx.mmu.read32(ea);
         break;
     }
-    case 47: { // stmw
+    case 47: { 
         uint32_t ea = ea_ra0(simm);
         for (uint32_t r = rD; r < 32; r++, ea += 4) ctx.mmu.write32(ea, ctx.gpr[r]);
         break;
     }
-    case 48: ctx.fpr[rD] = ctx.ps1[rD] = ctx.mmu.read_f32(ea_ra0(simm)); break; // lfs (both PS lanes)
-    case 49: { // lfsu: load float single with update
+    case 48: ctx.fpr[rD] = ctx.ps1[rD] = ctx.mmu.read_f32(ea_ra0(simm)); break; 
+    case 49: { 
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.fpr[rD] = ctx.mmu.read_f32(ea);
         ctx.gpr[rA] = ea;
         break;
     }
-    case 50: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(simm)); break;         // lfd
-    case 51: { // lfdu: load float double with update
+    case 50: ctx.fpr[rD] = ctx.mmu.read_f64(ea_ra0(simm)); break;         
+    case 51: { 
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.fpr[rD] = ctx.mmu.read_f64(ea);
         ctx.gpr[rA] = ea;
         break;
     }
-    case 52: ctx.mmu.write_f32(ea_ra0(simm), (float)ctx.fpr[rD]); break;  // stfs
-    case 53: { // stfsu: store float single with update
+    case 52: ctx.mmu.write_f32(ea_ra0(simm), (float)ctx.fpr[rD]); break;  
+    case 53: { 
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.mmu.write_f32(ea, (float)ctx.fpr[rD]);
         ctx.gpr[rA] = ea;
         break;
     }
-    case 54: ctx.mmu.write_f64(ea_ra0(simm), ctx.fpr[rD]); break;         // stfd
-    case 55: { // stfdu: store float double with update
+    case 54: ctx.mmu.write_f64(ea_ra0(simm), ctx.fpr[rD]); break;         
+    case 55: { 
         uint32_t ea = ctx.gpr[rA] + simm;
         ctx.mmu.write_f64(ea, ctx.fpr[rD]);
         ctx.gpr[rA] = ea;
         break;
     }
-    // Paired-single quantized load/store (D-form: 12-bit displacement,
-    // W bit 15, GQR index bits 12-14).
+
     case 56: case 57: case 60: case 61: {
-        int32_t d = (int32_t)(insn << 20) >> 20; // sign-extend low 12 bits
+        int32_t d = (int32_t)(insn << 20) >> 20; 
         uint32_t W = (insn >> 15) & 1;
         uint32_t I = (insn >> 12) & 7;
         uint32_t ea = (op == 57 || op == 61) ? ctx.gpr[rA] + d : ea_ra0(d);
@@ -461,21 +455,21 @@ bool interpret_one(CPUContext& ctx) {
         if (op == 57 || op == 61) ctx.gpr[rA] = ea;
         break;
     }
-    case 59: { // single-precision FP arithmetic (A-form)
+    case 59: { 
         uint32_t xo5 = (insn >> 1) & 0x1F;
         uint32_t fC = (insn >> 6) & 0x1F;
         double a = ctx.fpr[rA], b = ctx.fpr[rB], c = ctx.fpr[fC];
         switch (xo5) {
-        case 18: ctx.fpr[rD] = (float)(a / b); break;                  // fdivs
-        case 20: ctx.fpr[rD] = (float)(a - b); break;                  // fsubs
-        case 21: ctx.fpr[rD] = (float)(a + b); break;                  // fadds
-        case 22: ctx.fpr[rD] = (float)std::sqrt(b); break;             // fsqrts
-        case 24: ctx.fpr[rD] = (float)(1.0 / b); break;                // fres
-        case 25: ctx.fpr[rD] = (float)(a * c); break;                  // fmuls
-        case 28: ctx.fpr[rD] = (float)std::fma(a, c, -b); break;       // fmsubs
-        case 29: ctx.fpr[rD] = (float)std::fma(a, c, b); break;        // fmadds
-        case 30: ctx.fpr[rD] = (float)-std::fma(a, c, -b); break;      // fnmsubs
-        case 31: ctx.fpr[rD] = (float)-std::fma(a, c, b); break;       // fnmadds
+        case 18: ctx.fpr[rD] = (float)(a / b); break;                  
+        case 20: ctx.fpr[rD] = (float)(a - b); break;                  
+        case 21: ctx.fpr[rD] = (float)(a + b); break;                  
+        case 22: ctx.fpr[rD] = (float)std::sqrt(b); break;             
+        case 24: ctx.fpr[rD] = (float)(1.0 / b); break;                
+        case 25: ctx.fpr[rD] = (float)(a * c); break;                  
+        case 28: ctx.fpr[rD] = (float)std::fma(a, c, -b); break;       
+        case 29: ctx.fpr[rD] = (float)std::fma(a, c, b); break;        
+        case 30: ctx.fpr[rD] = (float)-std::fma(a, c, -b); break;      
+        case 31: ctx.fpr[rD] = (float)-std::fma(a, c, b); break;       
         default:
             std::cerr << "[Interp] Unhandled op59 xo=" << xo5 << " at 0x"
                       << std::hex << pc << std::dec << " (nop)\n";
@@ -483,30 +477,30 @@ bool interpret_one(CPUContext& ctx) {
         }
         break;
     }
-    case 63: { // double-precision FP arithmetic / moves / compares
+    case 63: { 
         uint32_t xo5 = (insn >> 1) & 0x1F;
         uint32_t xo10 = (insn >> 1) & 0x3FF;
         uint32_t fC = (insn >> 6) & 0x1F;
         double a = ctx.fpr[rA], b = ctx.fpr[rB], c = ctx.fpr[fC];
-        // A-form arithmetic first (its xo is only 5 bits wide).
+        
         bool aform = true;
         switch (xo5) {
-        case 18: ctx.fpr[rD] = a / b; break;                           // fdiv
-        case 20: ctx.fpr[rD] = a - b; break;                           // fsub
-        case 21: ctx.fpr[rD] = a + b; break;                           // fadd
-        case 22: ctx.fpr[rD] = std::sqrt(b); break;                    // fsqrt
-        case 25: ctx.fpr[rD] = a * c; break;                           // fmul
-        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(b); break;              // frsqrte
-        case 28: ctx.fpr[rD] = std::fma(a, c, -b); break;              // fmsub
-        case 29: ctx.fpr[rD] = std::fma(a, c, b); break;               // fmadd
-        case 30: ctx.fpr[rD] = -std::fma(a, c, -b); break;             // fnmsub
-        case 31: ctx.fpr[rD] = -std::fma(a, c, b); break;              // fnmadd
-        case 23: ctx.fpr[rD] = (a >= -0.0) ? c : b; break;             // fsel
+        case 18: ctx.fpr[rD] = a / b; break;                           
+        case 20: ctx.fpr[rD] = a - b; break;                           
+        case 21: ctx.fpr[rD] = a + b; break;                           
+        case 22: ctx.fpr[rD] = std::sqrt(b); break;                    
+        case 25: ctx.fpr[rD] = a * c; break;                           
+        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(b); break;              
+        case 28: ctx.fpr[rD] = std::fma(a, c, -b); break;              
+        case 29: ctx.fpr[rD] = std::fma(a, c, b); break;               
+        case 30: ctx.fpr[rD] = -std::fma(a, c, -b); break;             
+        case 31: ctx.fpr[rD] = -std::fma(a, c, b); break;              
+        case 23: ctx.fpr[rD] = (a >= -0.0) ? c : b; break;             
         default: aform = false; break;
         }
         if (aform) break;
         switch (xo10) {
-        case 0: case 32: { // fcmpu / fcmpo
+        case 0: case 32: { 
             uint32_t crf = rD >> 2;
             bool un = std::isnan(a) || std::isnan(b);
             ctx.cr[crf].lt = !un && a < b;
@@ -515,23 +509,23 @@ bool interpret_one(CPUContext& ctx) {
             ctx.cr[crf].so = un;
             break;
         }
-        case 12: ctx.fpr[rD] = (float)b; break;                        // frsp
-        case 14: { // fctiw: convert to int32, current rounding
+        case 12: ctx.fpr[rD] = (float)b; break;                        
+        case 14: { 
             uint64_t bits = (uint32_t)(int32_t)std::nearbyint(b);
             std::memcpy(&ctx.fpr[rD], &bits, 8);
             break;
         }
-        case 15: { // fctiwz: convert to int32 toward zero
+        case 15: { 
             uint64_t bits = (uint32_t)(int32_t)b;
             std::memcpy(&ctx.fpr[rD], &bits, 8);
             break;
         }
-        case 40:  ctx.fpr[rD] = -b; break;                             // fneg
-        case 72:  ctx.fpr[rD] = b; break;                              // fmr
-        case 136: ctx.fpr[rD] = -std::fabs(b); break;                  // fnabs
-        case 264: ctx.fpr[rD] = std::fabs(b); break;                   // fabs
-        case 38: case 70: case 134: case 711: break; // mtfsb1/mtfsb0/mtfsfi/mtfsf: FPSCR ignored
-        case 583: { uint64_t z = ctx.fpscr; std::memcpy(&ctx.fpr[rD], &z, 8); break; } // mffs
+        case 40:  ctx.fpr[rD] = -b; break;                             
+        case 72:  ctx.fpr[rD] = b; break;                              
+        case 136: ctx.fpr[rD] = -std::fabs(b); break;                  
+        case 264: ctx.fpr[rD] = std::fabs(b); break;                   
+        case 38: case 70: case 134: case 711: break; 
+        case 583: { uint64_t z = ctx.fpscr; std::memcpy(&ctx.fpr[rD], &z, 8); break; } 
         default:
             std::cerr << "[Interp] Unhandled op63 xo=" << xo10 << " at 0x"
                       << std::hex << pc << std::dec << " (nop)\n";
@@ -539,12 +533,12 @@ bool interpret_one(CPUContext& ctx) {
         }
         break;
     }
-    case 4: { // Gekko paired singles
+    case 4: { 
         uint32_t xo5 = (insn >> 1) & 0x1F;
         uint32_t xo6 = (insn >> 1) & 0x3F;
         uint32_t xo10 = (insn >> 1) & 0x3FF;
         uint32_t fC = (insn >> 6) & 0x1F;
-        // Quantized indexed load/store use a 6-bit xo (W bit 10, GQR bits 7-9).
+        
         if (xo6 == 6 || xo6 == 7 || xo6 == 38 || xo6 == 39) {
             uint32_t W = (insn >> 10) & 1;
             uint32_t I = (insn >> 7) & 7;
@@ -566,9 +560,9 @@ bool interpret_one(CPUContext& ctx) {
         case 20: ctx.ps_sub(rD, rA, rB); break;
         case 21: ctx.ps_add(rD, rA, rB); break;
         case 23: ctx.ps_sel(rD, rA, fC, rB); break;
-        case 24: ctx.fpr[rD] = 1.0 / ctx.fpr[rB]; ctx.ps1[rD] = 1.0 / ctx.ps1[rB]; break; // ps_res
+        case 24: ctx.fpr[rD] = 1.0 / ctx.fpr[rB]; ctx.ps1[rD] = 1.0 / ctx.ps1[rB]; break; 
         case 25: ctx.ps_mul(rD, rA, fC); break;
-        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(ctx.fpr[rB]); ctx.ps1[rD] = 1.0 / std::sqrt(ctx.ps1[rB]); break; // ps_rsqrte
+        case 26: ctx.fpr[rD] = 1.0 / std::sqrt(ctx.fpr[rB]); ctx.ps1[rD] = 1.0 / std::sqrt(ctx.ps1[rB]); break; 
         case 28: ctx.ps_msub(rD, rA, fC, rB); break;
         case 29: ctx.ps_madd(rD, rA, fC, rB); break;
         case 30: ctx.ps_nmsub(rD, rA, fC, rB); break;
@@ -589,7 +583,7 @@ bool interpret_one(CPUContext& ctx) {
         case 560: ctx.ps_merge01(rD, rA, rB); break;
         case 592: ctx.ps_merge10(rD, rA, rB); break;
         case 624: ctx.ps_merge11(rD, rA, rB); break;
-        case 1014: break; // dcbz_l: locked-cache line zero, no-op in HLE
+        case 1014: break; 
         default:
             std::cerr << "[Interp] Unhandled op4 xo=" << xo10 << " at 0x"
                       << std::hex << pc << std::dec << " (nop)\n";
@@ -608,21 +602,18 @@ bool interpret_one(CPUContext& ctx) {
     return true;
 }
 
-// Native fast-path for the CodeWarrior/SDK low-memory memcpy and memset
-// helpers. The game calls them constantly (object construction, string
-// copies); interpreting a byte-copy loop one instruction at a time is
-// ~100x slower than the C library. We recognise the helper by its fixed
-// entry-code signature (position-independent, so it works for any game
-// that links the same runtime) and execute it natively, then return.
+
+
+
+
 static bool try_native_helper(CPUContext& ctx) {
     static bool enabled = std::getenv("NWII_NO_FASTMEM") == nullptr;
     if (!enabled)
         return false;
     uint32_t pc = ctx.pc;
-    // memcpy(dst=r3, src=r4, n=r5). Exact CodeWarrior/SDK prologue:
-    //   cmplw r4,r3 ; blt ; addi r4,r4,-1 ; addi r6,r3,-1 ; addi r5,r5,1
-    // (an overlap-safe byte copy). Matching all five words makes a false
-    // positive effectively impossible while staying game-independent.
+
+    
+    
     if (ctx.mmu.read32(pc)      == 0x7C041840 &&
         ctx.mmu.read32(pc + 4)  == 0x41800028 &&
         ctx.mmu.read32(pc + 8)  == 0x3884FFFF &&
@@ -645,14 +636,12 @@ static bool try_native_helper(CPUContext& ctx) {
             for (uint32_t i = n; i-- > 0;)
                 ctx.mmu.write8(dst + i, ctx.mmu.read8(src + i));
         }
-        ctx.pc = ctx.lr; // r3 (dst) preserved as the return value
+        ctx.pc = ctx.lr; 
         return true;
     }
 
-    // memset(dst=r3, val=r4, n=r5). CodeWarrior/SDK prologue:
-    //   cmplwi r5,0x20 ; rlwinm r4,r4,0,24,31 ; addi r6,r3,-1 ; mr r7,r4
-    // Clears BSS and initialises buffers; the count is often large (a
-    // whole section), so interpreting the byte loop stalls boot badly.
+    
+
     if (ctx.mmu.read32(pc)      == 0x28050020 &&
         ctx.mmu.read32(pc + 4)  == 0x5484063E &&
         ctx.mmu.read32(pc + 8)  == 0x38C3FFFF &&
@@ -667,11 +656,27 @@ static bool try_native_helper(CPUContext& ctx) {
     return false;
 }
 
-// Dispatcher fallback: interpret at ctx.pc. Keeps executing while control
-// stays inside the OS low-memory region (runtime-generated helpers live
-// below the 0x80004000 application base); once the code branches back to
-// the application region the dispatcher re-enters recompiled functions.
+
+
 void interpret_step(CPUContext& ctx) {
+
+    
+
+    
+    static const bool relcap = std::getenv("NWII_RELCAP") != nullptr;
+    if (relcap) {
+        static bool done = false;
+        if (!done && ctx.pc >= 0x8051de60 && ctx.pc < 0x80570000) {
+            uint16_t hi = ctx.mmu.read16(0x8051dff2);
+            uint16_t lo = ctx.mmu.read16(0x8051dff6);
+            uint32_t val = ((uint32_t)hi << 16) | lo;
+            uint32_t bss = val - 0x3c;
+            std::cout << "[RELCAP] module_base=0x8051de60 first-exec-pc=0x"
+                      << std::hex << ctx.pc << " hi=0x" << hi << " lo=0x" << lo
+                      << " => bss_base=0x" << bss << std::dec << "\n";
+            done = true;
+        }
+    }
     static int announce_budget = 200;
     if (announce_budget > 0) {
         announce_budget--;
@@ -681,10 +686,8 @@ void interpret_step(CPUContext& ctx) {
                   << " r5=0x" << ctx.gpr[5] << std::dec << "\n";
     }
 
-    // A branch to a data region (high MEM1, framebuffers, un-init pointers)
-    // means the guest jumped through a bad function pointer. Report it once
-    // with LR so the caller can be identified, instead of silently walking
-    // zeroed memory as NOPs forever.
+    
+
     if (ctx.pc >= 0x80800000) {
         static int wild_budget = 20;
         if (wild_budget > 0) {
@@ -696,10 +699,8 @@ void interpret_step(CPUContext& ctx) {
         }
     }
 
-    // Fast path is checked only at a function entry (here and after each
-    // call/branch below) — NOT per instruction: probing the 5-word
-    // signature on every interpreted step added ~10 memory reads per
-    // instruction and made a large interpreted memset crawl.
+    
+
     if (try_native_helper(ctx) && in_recompiled_code(ctx.pc))
         return;
 
@@ -708,7 +709,7 @@ void interpret_step(CPUContext& ctx) {
         if (ctx.is_running == 0) return;
         uint32_t before = ctx.pc;
         uint32_t insn = ctx.mmu.read32(before);
-        // Detect walking through zeroed data (no real code here)
+        
         if (insn == 0) {
             if (++consecutive_nops > 64) {
                 std::cout << "[Interp] Aborting: " << std::dec << consecutive_nops
@@ -724,16 +725,14 @@ void interpret_step(CPUContext& ctx) {
         ++ctx.inst_count;
         uint32_t ee_was = ctx.msr & 0x8000;
         interpret_one(ctx);
-        // Rising edge of MSR.EE: real hardware takes pending interrupts the
-        // moment they are re-enabled; sample them here too or a short EE
-        // window (SDK idle loop) never sees the pending decrementer.
+
+        
         if (!ee_was && (ctx.msr & 0x8000)) {
             if (process_pending_callbacks(ctx) && in_recompiled_code(ctx.pc))
                 return;
         }
         if (ctx.pc != before + 4) {
-            // A control transfer may land on a memcpy/memset entry — check
-            // the fast path here (only on branches, so cheap).
+
             if (try_native_helper(ctx)) {
                 if (in_recompiled_code(ctx.pc))
                     return;
@@ -745,12 +744,11 @@ void interpret_step(CPUContext& ctx) {
                           << ctx.mmu.read32(before) << " lr=0x" << ctx.lr
                           << " ctr=0x" << ctx.ctr << std::dec << "\n";
             }
-            // Control transfer back into recompiled code: let the
-            // dispatcher take over. Otherwise keep interpreting (helpers,
-            // streamed overlays, generated code).
+
+            
             if (in_recompiled_code(ctx.pc))
                 return;
-            // Give interrupts/callbacks a chance during long stretches
+            
             if ((i & 0xFFF) == 0 && process_pending_callbacks(ctx))
                 return;
         }
@@ -759,7 +757,6 @@ void interpret_step(CPUContext& ctx) {
               << std::dec << "\n";
 }
 
-// Kept for compatibility with older generated code
 void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc) {
     ctx.pc = pc;
     interpret_one(ctx);

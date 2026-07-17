@@ -16,4 +16,4 @@ std::unique_ptr<IRenderer> IRenderer::Create() {
     return CreateRendererGL();
 }
 
-} // namespace nwii::runtime::gx
+} 

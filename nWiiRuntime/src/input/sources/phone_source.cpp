@@ -69,7 +69,6 @@ void PhoneSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
     auto& cfg = nwii::runtime::Config::get();
     char buf[256];
 
-    // Drain all pending datagrams; the latest state wins
     while (true) {
 #ifdef _WIN32
         int n = recv(m_socket, buf, sizeof(buf) - 1, 0);
@@ -92,9 +91,9 @@ void PhoneSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
             m_accel_y = b;
             m_accel_z = c;
         } else if (std::sscanf(buf, "GYR %f %f %f", &a, &b, &c) == 3) {
-            // Angular rate steers the pointer like a real Wiimote
-            m_ir_x += b * 0.02f * cfg.gyro_sensitivity; // yaw
-            m_ir_y += a * 0.02f * cfg.gyro_sensitivity; // pitch
+            
+            m_ir_x += b * 0.02f * cfg.gyro_sensitivity; 
+            m_ir_y += a * 0.02f * cfg.gyro_sensitivity; 
             if (m_ir_x < 0.0f) m_ir_x = 0.0f;
             if (m_ir_x > 1.0f) m_ir_x = 1.0f;
             if (m_ir_y < 0.0f) m_ir_y = 0.0f;
@@ -110,13 +109,12 @@ void PhoneSource::update(GameCubePadState pads[4], WiimoteState motes[4]) {
     motes[0].accel_y = m_accel_y;
     motes[0].accel_z = m_accel_z;
 
-    // Mirror onto GC pad 0 so the phone drives GameCube titles too: the
-    // BTN mask passes through raw (the sender uses the GC PAD layout,
-    // e.g. START=0x1000, A=0x0100), the pointer maps to the main stick.
+    
+    
     pads[0].err = 0;
     pads[0].buttons |= (uint16_t)m_buttons;
     pads[0].stick_x = (int8_t)((m_ir_x - 0.5f) * 254.0f);
     pads[0].stick_y = (int8_t)((0.5f - m_ir_y) * 254.0f);
 }
 
-} // namespace nwii::runtime::input
+} 

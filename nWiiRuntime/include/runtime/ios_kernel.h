@@ -30,8 +30,7 @@ private:
 
     struct FdEntry {
         IDevice* device = nullptr;
-        // Device-internal handle returned by IDevice::open; passed back to
-        // the device on read/write/seek/close instead of the kernel fd.
+
         int32_t internal_fd = 0;
         bool in_use = false;
     };
@@ -42,4 +41,4 @@ private:
     FdEntry* get_entry(uint32_t fd);
 };
 
-} // namespace nwii::runtime
+} 

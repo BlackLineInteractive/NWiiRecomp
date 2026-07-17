@@ -20,9 +20,8 @@ static uint64_t ai_start_time = 0;
 void register_ai(MMIODispatcher& dispatcher) {{
     dispatcher.register_region(0xCC006C00, 0xCC006CFF,
         [](uint32_t addr) -> uint32_t {
-            // AISCNT is a free-running 48kHz sample counter while the AI is
-            // enabled (bit 0x20). The SDK audio-clock calibration polls it and
-            // waits for it to change, so it must advance with elapsed time.
+
+            
             uint32_t cur_scnt = ai_scnt;
             if (ai_cr & 0x20) {
                 uint64_t current = nwii::runtime::get_os_time();
@@ -57,7 +56,7 @@ void register_ai(MMIODispatcher& dispatcher) {{
     );
 }}
 
-} // namespace nwii::runtime::hw
+} 
 namespace nwii::runtime::hw {
 void ai_update() {
     if (ai_cr & 0x20) {

@@ -3,11 +3,9 @@
 #include <cstring>
 
 // GX texture decoding, kept bit-exact with Dolphin's TextureDecoder:
-// tile-based layouts, IIII replication for intensity formats, RGB5A3
-// dual encoding, the split AR/GB cache lines of RGBA8, TLUT-paletted
-// C4/C8/C14X2, and CMPR's DXT1-with-big-endian-words scheme. Decoding
-// runs on the CPU (like every GC emulator); only the decoded RGBA8
-// image is uploaded to the GPU.
+
+
+
 
 namespace nwii::runtime::hle {
 
@@ -56,10 +54,9 @@ GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
     uint32_t size = texture_data_size(stage.width, stage.height, stage.format);
     uint32_t stride = size > 32 * 4096 ? size / 4096 : 32;
     uint32_t hash = 2166136261u;
-    // Fingerprint over the host pointer, not per-sample mmu.read32 calls:
-    // this runs for EVERY draw's texture lookup, and the MMU path (watch
-    // checks, HW-reg tests, byte swaps) made texture hashing the single
-    // hottest item on draw-heavy screens (title screen fell to ~0.4 fps).
+
+    
+    
     if (const uint8_t* p = ctx.mmu.get_ptr(stage.base_addr)) {
         for (uint32_t off = 0; off + 4 <= size; off += stride) {
             uint32_t w;
@@ -68,21 +65,18 @@ GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
         }
     }
 
-    // For paletted formats the TLUT decides every colour, so it belongs in the
     // hash exactly like the texel data (Dolphin XORs a TLUT hash into its
-    // full_hash whenever the format has a palette). Keying only on tlut_offset
-    // meant a texture decoded before the game uploaded its palette resolved to
-    // black and stayed cached that way for the rest of the run — the palette
-    // arriving later could not change the key.
+
+    
+    
     uint32_t palette_entries = 0;
-    if (stage.format == 8)        // C4
+    if (stage.format == 8)        
         palette_entries = 16;
-    else if (stage.format == 9)   // C8
+    else if (stage.format == 9)   
         palette_entries = 256;
-    else if (stage.format == 10)  // C14X2
+    else if (stage.format == 10)  
         palette_entries = 16384;
-    // Word-stride the TLUT hash: a per-byte loop over C14X2's 32KB palette
-    // per draw was as expensive as the texel hash it accompanies.
+
     {
         uint32_t tl_bytes = palette_entries * 2;
         uint32_t tl_off = stage.tlut_offset;
@@ -152,7 +146,6 @@ Image TextureCache::decode_texture(CPUContext& ctx, const gx::TexStage& stage) {
     return img;
 }
 
-// Byte offset of texel (x,y) in a tiled GC texture image.
 static uint32_t get_tile_address(uint32_t x, uint32_t y, uint32_t bw, uint32_t bh, uint32_t bpp, uint32_t width) {
     uint32_t tiles_x = (width + bw - 1) / bw;
     uint32_t tx = x / bw;
@@ -168,8 +161,7 @@ static uint32_t get_tile_address(uint32_t x, uint32_t y, uint32_t bw, uint32_t b
 }
 
 void TextureCache::decode_i4(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 8x8 tiles, 4bpp. Intensity replicates into ALL four channels
-    // including alpha (fonts rely on I-as-alpha).
+
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x+=2) {
             uint32_t offset = get_tile_address(x, y, 8, 8, 4, width);
@@ -183,7 +175,7 @@ void TextureCache::decode_i4(CPUContext& ctx, uint32_t addr, uint32_t width, uin
 }
 
 void TextureCache::decode_i8(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 8x4 tiles, 8bpp. RGBA = IIII.
+    
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t offset = get_tile_address(x, y, 8, 4, 8, width);
@@ -194,7 +186,7 @@ void TextureCache::decode_i8(CPUContext& ctx, uint32_t addr, uint32_t width, uin
 }
 
 void TextureCache::decode_ia4(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 8x4 tiles, 8bpp: high nibble alpha, low nibble intensity.
+    
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t offset = get_tile_address(x, y, 8, 4, 8, width);
@@ -207,7 +199,7 @@ void TextureCache::decode_ia4(CPUContext& ctx, uint32_t addr, uint32_t width, ui
 }
 
 void TextureCache::decode_ia8(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 4x4 tiles, 16bpp: first byte alpha, second intensity.
+    
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t offset = get_tile_address(x, y, 4, 4, 16, width);
@@ -223,7 +215,7 @@ static inline Color unpack_rgb565(uint16_t c) {
 }
 
 static inline Color unpack_rgb5a3(uint16_t c) {
-    if (c & 0x8000) { // RGB555, opaque
+    if (c & 0x8000) { 
         return { c5to8((c >> 10) & 0x1F), c5to8((c >> 5) & 0x1F), c5to8(c & 0x1F), 255 };
     }
     return { c4to8((c >> 8) & 0xF), c4to8((c >> 4) & 0xF), c4to8(c & 0xF),
@@ -231,7 +223,7 @@ static inline Color unpack_rgb5a3(uint16_t c) {
 }
 
 void TextureCache::decode_rgb565(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 4x4 tiles, 16bpp
+    
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t offset = get_tile_address(x, y, 4, 4, 16, width);
@@ -241,7 +233,7 @@ void TextureCache::decode_rgb565(CPUContext& ctx, uint32_t addr, uint32_t width,
 }
 
 void TextureCache::decode_rgb5a3(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 4x4 tiles, 16bpp
+    
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t offset = get_tile_address(x, y, 4, 4, 16, width);
@@ -251,14 +243,14 @@ void TextureCache::decode_rgb5a3(CPUContext& ctx, uint32_t addr, uint32_t width,
 }
 
 void TextureCache::decode_rgba8(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 4x4 tiles, 32bpp (two 32-byte cache lines per tile: AR then GB)
+    
     uint32_t tiles_x = (width + 3) / 4;
     for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t tx = x / 4;
             uint32_t ty = y / 4;
             uint32_t tile_idx = ty * tiles_x + tx;
-            uint32_t tile_offset = tile_idx * 64; // 32 bytes AR + 32 bytes GB
+            uint32_t tile_offset = tile_idx * 64; 
 
             uint32_t in_tile_x = x % 4;
             uint32_t in_tile_y = y % 4;
@@ -278,15 +270,14 @@ void TextureCache::decode_rgba8(CPUContext& ctx, uint32_t addr, uint32_t width, 
 }
 
 void TextureCache::decode_paletted(CPUContext& ctx, const gx::TexStage& stage, Color* out) {
-    // C4: 8x8 tiles 4bpp; C8: 8x4 tiles 8bpp; C14X2: 4x4 tiles 16bpp.
-    // Each texel is an index into the TLUT bank; entry format per SETTLUT.
+
     uint32_t width = stage.width, height = stage.height, addr = stage.base_addr;
     auto lookup = [&](uint32_t index) -> Color {
         uint32_t off = stage.tlut_offset + index * 2;
         if (off + 1 >= sizeof(g_state.tlutMem)) return MAGENTA;
         uint16_t entry = (g_state.tlutMem[off] << 8) | g_state.tlutMem[off + 1];
         switch (stage.tlut_format) {
-            case 0: { // IA8
+            case 0: { 
                 uint8_t a = entry >> 8, i = entry & 0xFF;
                 return {i, i, i, a};
             }
@@ -310,7 +301,7 @@ void TextureCache::decode_paletted(CPUContext& ctx, const gx::TexStage& stage, C
                     index = ctx.mmu.read8(addr + offset);
                     break;
                 }
-                default: { // C14X2
+                default: { 
                     uint32_t offset = get_tile_address(x, y, 4, 4, 16, width);
                     index = ctx.mmu.read16(addr + offset) & 0x3FFF;
                     break;
@@ -322,9 +313,8 @@ void TextureCache::decode_paletted(CPUContext& ctx, const gx::TexStage& stage, C
 }
 
 void TextureCache::decode_cmpr(CPUContext& ctx, uint32_t addr, uint32_t width, uint32_t height, Color* out) {
-    // 8x8 tiles of four 4x4 DXT1 blocks (8 bytes each). Unlike PC DXT1 the
-    // u16 color words are big-endian and the 2-bit indices start at the TOP
-    // bits of the big-endian index word.
+
+    
     uint32_t tiles_x = (width + 7) / 8;
     for (uint32_t y = 0; y < height; y+=8) {
         for (uint32_t x = 0; x < width; x+=8) {
@@ -346,15 +336,14 @@ void TextureCache::decode_cmpr(CPUContext& ctx, uint32_t addr, uint32_t width, u
                         pal[2] = { (uint8_t)((2*pal[0].r + pal[1].r)/3), (uint8_t)((2*pal[0].g + pal[1].g)/3), (uint8_t)((2*pal[0].b + pal[1].b)/3), 255 };
                         pal[3] = { (uint8_t)((pal[0].r + 2*pal[1].r)/3), (uint8_t)((pal[0].g + 2*pal[1].g)/3), (uint8_t)((pal[0].b + 2*pal[1].b)/3), 255 };
                     } else {
-                        // Transparent mode: color 3 keeps the midpoint RGB with
-                        // alpha 0 so bilinear edges don't bleed to black.
+
                         pal[2] = { (uint8_t)((pal[0].r + pal[1].r)/2), (uint8_t)((pal[0].g + pal[1].g)/2), (uint8_t)((pal[0].b + pal[1].b)/2), 255 };
                         pal[3] = { pal[2].r, pal[2].g, pal[2].b, 0 };
                     }
 
                     for (int py = 0; py < 4; py++) {
                         for (int px = 0; px < 4; px++) {
-                            int shift = 30 - 2 * (py * 4 + px); // pixel 0 in the top bits
+                            int shift = 30 - 2 * (py * 4 + px); 
                             int idx = (indices >> shift) & 3;
                             uint32_t out_x = x + bx * 4 + px;
                             uint32_t out_y = y + by * 4 + py;
@@ -369,4 +358,4 @@ void TextureCache::decode_cmpr(CPUContext& ctx, uint32_t addr, uint32_t width, u
     }
 }
 
-} // namespace nwii::runtime::hle
+} 

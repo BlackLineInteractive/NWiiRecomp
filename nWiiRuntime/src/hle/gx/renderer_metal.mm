@@ -24,7 +24,7 @@ public:
     }
 
     void Render(const std::vector<GXCommand>& commands) override {
-        // TODO: Metal rendering
+        
     }
 
     void Present() override {}
@@ -39,5 +39,5 @@ std::unique_ptr<IRenderer> CreateRendererMetal() {
     return std::make_unique<RendererMetal>();
 }
 
-} // namespace nwii::runtime::gx
+} 
 #endif

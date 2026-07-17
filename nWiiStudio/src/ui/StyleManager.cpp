@@ -12,11 +12,9 @@ void SetupFonts(AppSettings& settings) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    // Validate and clamp font size
     float safeFontSize = std::clamp(settings.fontSize, 10.0f, 48.0f);
     settings.fontSize = safeFontSize;
 
-    // Clear existing fonts
     io.Fonts->Clear();
 
     std::string fontPath = "external/Font/" + settings.selectedFont;
@@ -25,12 +23,12 @@ void SetupFonts(AppSettings& settings) {
 
     if (settings.selectedFont != "Default" && std::filesystem::exists(fontPath)) {
         ImFontConfig config;
-        config.OversampleH = 3; // High quality horizontal oversampling
-        config.OversampleV = 2; // Vertical oversampling
+        config.OversampleH = 3; 
+        config.OversampleV = 2; 
         config.PixelSnapH = true;
         loadedFont = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), safeFontSize, &config);
         if (!loadedFont) {
-            // TTF loading failed, use default
+            
             config.SizePixels = safeFontSize;
             loadedFont = io.Fonts->AddFontDefault(&config);
         }
@@ -43,7 +41,6 @@ void SetupFonts(AppSettings& settings) {
         loadedFont = io.Fonts->AddFontDefault(&config);
     }
 
-    // Font atlas will be built automatically by the backend
 }
 
 void ApplyDarkTheme() {
@@ -154,18 +151,15 @@ void ApplyNintendoTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // Premium GameCube / Wii Aesthetic
-    // Deep dark indigo background with vibrant accents and clean Wii-like borders
+    
     const ImVec4 bgBase       = ImVec4(0.06f, 0.05f, 0.09f, 1.00f);
     const ImVec4 bgPanel      = ImVec4(0.10f, 0.09f, 0.14f, 1.00f);
     const ImVec4 bgInput      = ImVec4(0.14f, 0.13f, 0.19f, 1.00f);
-    
-    // GameCube Indigo (#62259E)
+
     const ImVec4 accentMain   = ImVec4(0.38f, 0.15f, 0.62f, 1.00f);
     const ImVec4 accentHover  = ImVec4(0.48f, 0.25f, 0.72f, 1.00f);
     const ImVec4 accentActive = ImVec4(0.28f, 0.05f, 0.52f, 1.00f);
-    
-    // GameCube Orange / Wii Light Blue for specific accents
+
     const ImVec4 accentSec    = ImVec4(1.00f, 0.65f, 0.00f, 1.00f);
 
     const ImVec4 textBright   = ImVec4(0.98f, 0.98f, 0.99f, 1.00f);
@@ -176,8 +170,7 @@ void ApplyNintendoTheme() {
     colors[ImGuiCol_WindowBg]               = bgBase;
     colors[ImGuiCol_ChildBg]                = bgPanel;
     colors[ImGuiCol_PopupBg]                = ImVec4(0.08f, 0.07f, 0.11f, 0.98f);
-    
-    // Clean transparent-ish borders
+
     colors[ImGuiCol_Border]                 = ImVec4(0.38f, 0.15f, 0.62f, 0.35f);
     colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.20f);
     
@@ -257,7 +250,7 @@ void ApplyTheme(ThemeMode mode, AppSettings& settings) {
     style.PopupBorderSize   = 1 * safeScale;
     style.FrameBorderSize   = 0;
     style.TabBorderSize     = 0;
-    // Add significantly more rounding for that beautiful sleek look
+    
     style.WindowRounding    = 12.0f * safeScale;
     style.ChildRounding     = 8.0f * safeScale;
     style.FrameRounding     = 6.0f * safeScale;
@@ -283,4 +276,4 @@ void ApplyTheme(ThemeMode mode, AppSettings& settings) {
     }
 }
 
-} // namespace StyleManager
+} 

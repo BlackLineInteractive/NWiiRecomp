@@ -4,7 +4,6 @@
 #include <iostream>
 #include <vector>
 
-// Forward declaration of di_read_internal_shared from ios.cpp (temporary until fully extracted)
 extern void di_read_internal_shared(nwii::runtime::MMU* mmu, uint32_t inbuf, uint32_t outbuf,
                                      uint32_t callback, uint32_t userdata, bool is_async,
                                      uint32_t out_size);
@@ -31,7 +30,7 @@ public:
         
         if (cmd == 0x01) cmd = 0x12;
 
-        if (cmd == 0x12) { // DVDLowInquiry
+        if (cmd == 0x12) { 
             uint32_t outbuf = req.out_buf;
             if (outbuf != 0 && outbuf < 0x80000000) {
                 if (outbuf < 0x01800000 || (outbuf >= 0x10000000 && outbuf < 0x14000000))
@@ -39,15 +38,15 @@ public:
             }
             if (outbuf >= 0x80000000 && outbuf < 0x94000000) {
                 for (int i = 0; i < 32; i++) ctx.mmu.write8(outbuf + i, 0);
-                ctx.mmu.write8(outbuf + 0, 0x01); // CD/DVD
+                ctx.mmu.write8(outbuf + 0, 0x01); 
                 ctx.mmu.write8(outbuf + 1, 0x00);
                 ctx.mmu.write8(outbuf + 8,  'R'); ctx.mmu.write8(outbuf + 9,  'V');
                 ctx.mmu.write8(outbuf + 10, 'L'); ctx.mmu.write8(outbuf + 11, '-');
                 ctx.mmu.write8(outbuf + 12, 'D'); ctx.mmu.write8(outbuf + 13, 'I');
                 std::cout << "[DI] DVDLowInquiry: wrote RVL-DI to 0x" << std::hex << outbuf << std::dec << std::endl;
             }
-            return 1; // DIResult::Success
-        } else if (cmd == 0x8E) { // DI_ReadDiskID
+            return 1; 
+        } else if (cmd == 0x8E) { 
             uint32_t buf = req.out_buf;
             if (buf != 0 && buf < 0x80000000) {
                 if (buf < 0x01800000 || (buf >= 0x10000000 && buf < 0x14000000))
@@ -61,16 +60,16 @@ public:
                 ctx.mmu.write8(buf + 5, '1');
                 ctx.mmu.write8(buf + 6, '0');
                 ctx.mmu.write8(buf + 7, '1');
-                ctx.mmu.write32(buf + 0x18, 0x5D1C9EA3); // Wii magic
+                ctx.mmu.write32(buf + 0x18, 0x5D1C9EA3); 
                 std::cout << "[DI] ReadDiskID: wrote " << gid << " to 0x" << std::hex << buf << std::dec << std::endl;
             }
             return 1;
-        } else if (cmd == 0x80) { // DI_Reset
+        } else if (cmd == 0x80) { 
             std::cout << "[DI] Reset acknowledged" << std::endl;
             return 1;
         } else if (cmd == 0x71 || cmd == 0x8D) {
             // DVDLowRead / DVDLowUnencryptedRead (Dolphin DI layout):
-            // in+4 = length (bytes), in+8 = offset >> 2, out = destination
+            
             uint32_t in = di_phys_to_virt(req.in_buf);
             uint32_t length = ctx.mmu.read32(in + 4);
             uint64_t offset = (uint64_t)ctx.mmu.read32(in + 8) << 2;
@@ -90,13 +89,13 @@ public:
                     for (uint32_t i = 0; i < length; ++i)
                         ctx.mmu.write8(dst + i, tmp[i]);
                 } else {
-                    // Fall back to iso/wbfs path via legacy reader
+                    
                     di_read_internal_shared(&ctx.mmu, req.in_buf, req.out_buf, 0, 0, false,
                                             req.out_size);
                 }
             }
-            return 1; // DIResult::Success
-        } else if (cmd == 0x70) { // DVDLowReadDiskID
+            return 1; 
+        } else if (cmd == 0x70) { 
             uint32_t dst = di_phys_to_virt(req.out_buf);
             auto& vd = VirtualDisc::get();
             if (!vd.valid())
@@ -113,21 +112,21 @@ public:
                 }
             }
             return 1;
-        } else if (cmd == 0x8B) { // DVDLowOpenPartition
+        } else if (cmd == 0x8B) { 
             std::cout << "[DI] OpenPartition acknowledged" << std::endl;
             return 1;
-        } else if (cmd == 0x8C) { // DVDLowClosePartition
+        } else if (cmd == 0x8C) { 
             return 1;
-        } else if (cmd == 0x20 || cmd == 0x95 || cmd == 0x96 || cmd == 0xe3) { // DI_Read, UnencryptedRead, Read, BCA
-            // Delegation to di_read_internal; clamp to the caller's out buffer
+        } else if (cmd == 0x20 || cmd == 0x95 || cmd == 0x96 || cmd == 0xe3) { 
+            
             di_read_internal_shared(&ctx.mmu, req.in_buf, req.out_buf, 0, 0, false,
                                     req.out_size);
-            return 1; // DIResult::Success
-        } else if (cmd == 0x86) { // DI_ClearCoverInterrupt
+            return 1; 
+        } else if (cmd == 0x86) { 
             return 1;
-        } else if (cmd == 0xE0) { // DVDGetCoverRegister
+        } else if (cmd == 0xE0) { 
             return 1;
-        } else if (cmd == 0x60) { // DVDGetError / StopMotor
+        } else if (cmd == 0x60) { 
             return 1;
         }
 
@@ -136,8 +135,8 @@ public:
     }
 
     int32_t ioctlv(CPUContext& ctx, const IpcRequest& req) override {
-        if (req.ioctl_cmd == 0x8B) { // DVDLowOpenPartition (ioctlv form)
-            // Zero the TMD output vector; ES already provides ticket views
+        if (req.ioctl_cmd == 0x8B) { 
+            
             for (uint32_t i = req.arg_cnt_in; i < req.arg_cnt_in + req.arg_cnt_out
                  && i < req.ioctlv_vecs.size(); ++i) {
                 uint32_t addr = di_phys_to_virt(req.ioctlv_vecs[i].addr);
@@ -159,4 +158,4 @@ std::unique_ptr<IDevice> create_di_device() {
     return std::make_unique<DIDevice>();
 }
 
-} // namespace nwii::runtime::devices
+} 

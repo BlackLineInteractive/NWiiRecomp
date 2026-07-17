@@ -35,11 +35,9 @@ struct AppSettings {
     int windowHeight = 720;
     bool maximized = true;
 
-    // Custom theme colors
     float customBgBase[4] = {0.08f, 0.08f, 0.08f, 1.00f};
     float customAccent[4] = {0.00f, 0.48f, 0.80f, 1.00f};
 
-    // UI Features
     bool showTooltips = true;
     bool isFirstLaunch = true;
 };
@@ -70,8 +68,7 @@ struct UIState {
     std::string outputPath = "output";
     std::string customOutputPath;
     std::string configTomlContent;
-    
-    // Loaded DOL Data for Hex View
+
     std::vector<uint8_t> rawExecutableData;
     
     std::map<uint32_t, OverrideStatus> funcOverrides;
@@ -85,8 +82,7 @@ class StudioState {
 public:
     UIState data;
     AppSettings settings;
-    
-    // Address of the selected function
+
     uint32_t selectedFuncAddress = 0;
     
     std::atomic<bool> isBusy = false;
@@ -186,7 +182,7 @@ public:
                 settings.showTooltips = tbl["show_tooltips"].value_or(settings.isFirstLaunch);
 
                 if (settings.isFirstLaunch) {
-                    settings.isFirstLaunch = false; // Next time it won't be the first launch
+                    settings.isFirstLaunch = false; 
                 }
             } else {
                 settings.isFirstLaunch = true;
@@ -208,7 +204,7 @@ public:
             tbl.insert("window_width", settings.windowWidth);
             tbl.insert("window_height", settings.windowHeight);
             tbl.insert("maximized", settings.maximized);
-            tbl.insert("is_first_launch", false); // Save false for subsequent launches
+            tbl.insert("is_first_launch", false); 
             tbl.insert("show_tooltips", settings.showTooltips);
 
             std::ofstream ofs("studio_settings.toml");
@@ -232,8 +228,7 @@ public:
             auto exec = std::make_unique<nwii::loader::Executable>();
             if (exec->load_unpacked_game(path)) {
                 data.executable = std::move(exec);
-                
-                // Load DOL file into raw data for the Hex Viewer
+
                 std::string dol_path = path + "/sys/main.dol";
                 std::ifstream file(dol_path, std::ios::binary);
                 if (!file.good()) {
@@ -352,8 +347,7 @@ public:
                     std::stringstream buffer;
                     buffer << ifs.rdbuf();
                     data.configTomlContent = buffer.str();
-                    
-                    // Also populate paths from TOML
+
                     auto tbl = toml::parse(data.configTomlContent);
                     data.unpackedGamePath = tbl["input_game_dir"].value_or("");
                     data.customOutputPath = tbl["output_dir"].value_or("");

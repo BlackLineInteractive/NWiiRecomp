@@ -12,8 +12,8 @@ namespace nwii::runtime::hw {
 
 extern std::atomic<uint32_t> pi_intsr;
 extern std::atomic<uint32_t> pi_intmr;
-extern std::atomic<uint32_t> g_pe_sr;       // PE status register (TOKEN/FINISH bits), W1C
-extern int g_di_interrupt_delay; // countdown to DI completion interrupt
+extern std::atomic<uint32_t> g_pe_sr;       
+extern int g_di_interrupt_delay; 
 
 inline void trigger_pi_interrupt(uint32_t mask) {
   pi_intsr.fetch_or(mask, std::memory_order_relaxed);
@@ -23,25 +23,22 @@ inline void clear_pi_interrupt(uint32_t mask) {
 }
 
 void vi_trigger_interrupt();
-void ipc_post_reply(uint32_t req_addr); // complete a deferred (IPC_NO_REPLY) request
+void ipc_post_reply(uint32_t req_addr); 
 void ai_update();
 void dsp_trigger_interrupt();
-// Maps the pending DSPCSR sub-cause to its __OSInterruptTable index:
-// 5 = AID (audio DMA), 6 = ARAM DMA, 7 = DSP mailbox.
+
 int dsp_pending_os_interrupt();
-void di_tick();  // counts down g_di_interrupt_delay, raises the DI IRQ at zero
-// Audio DMA output: pulls up to `frames` stereo s16 frames (32kHz) for the
-// host audio backend; pads with silence when the game is behind.
+void di_tick();  
+
 size_t dsp_audio_pull(int16_t* out, size_t frames);
-void pe_signal_token(uint32_t token, bool raise_interrupt); // GX stream saw BP 0x47/0x48
-void pe_signal_finish();                                    // GX stream saw draw-done (BP 0x45)
+void pe_signal_token(uint32_t token, bool raise_interrupt); 
+void pe_signal_finish();                                    
 
 void register_pi(MMIODispatcher &dispatcher);
-// PI CPU-fifo (write-gather destination) registers; see hw_pi.cpp.
+
 void pi_fifo_get(uint32_t &base, uint32_t &end, uint32_t &wptr);
 void pi_fifo_set_wptr(uint32_t wptr);
-// GP fifo base as programmed via CP MMIO; used to detect whether the CPU
-// fifo is GP-linked (live rendering) or standalone (display-list record).
+
 uint32_t cp_fifo_base_reg();
 void register_pe(MMIODispatcher &dispatcher);
 void register_vi(MMIODispatcher &dispatcher);
@@ -55,4 +52,4 @@ void register_mi(MMIODispatcher &dispatcher);
 
 void register_all_hw(MMIODispatcher &dispatcher);
 
-} // namespace nwii::runtime::hw
+} 

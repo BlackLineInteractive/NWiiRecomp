@@ -6,10 +6,9 @@ namespace nwii::runtime {
 
 void MMIODispatcher::register_region(uint32_t start, uint32_t end, MMIORegionReadCallback read_cb, MMIORegionWriteCallback write_cb) {
     m_regions.push_back({start, end, std::move(read_cb), std::move(write_cb), nullptr, nullptr});
-    // Optional: Sort regions for faster lookup (binary search)
-    // std::sort(m_regions.begin(), m_regions.end(), [](const MMIORegion& a, const MMIORegion& b) {
-    //     return a.start_addr < b.start_addr;
-    // });
+
+    
+    
 }
 
 void MMIODispatcher::register_region(uint32_t start, uint32_t end, MMIORegionReadCallback read_cb, MMIORegionWriteCallback write_cb,
@@ -68,4 +67,4 @@ void MMIODispatcher::clear() {
     m_regions.clear();
 }
 
-} // namespace nwii::runtime
+} 

@@ -9,7 +9,7 @@ namespace analyzer {
 
 // Loader/matcher for Dolphin signature databases (Sys/totaldb.dsy).
 // The checksum algorithm is a faithful port of Dolphin's
-// HashSignatureDB::ComputeCodeChecksum, so any database produced by or
+
 // for Dolphin identifies SDK functions in our analyzed DOLs too.
 class DolphinSigDB {
 public:
@@ -18,14 +18,12 @@ public:
         uint32_t size;
     };
 
-    // Load a .dsy file: u32 count, then {u32 checksum, u32 size,
     // char name[128]} records (native little-endian, as Dolphin writes).
     bool load_dsy(const std::string& path);
 
     // Dolphin-compatible checksum over a function's opcodes.
     static uint32_t checksum(const std::vector<uint32_t>& opcodes);
 
-    // Returns the entry matching this checksum, or nullptr.
     const Entry* match(uint32_t checksum) const;
 
     size_t size() const { return db_.size(); }
@@ -34,5 +32,5 @@ private:
     std::map<uint32_t, Entry> db_;
 };
 
-} // namespace analyzer
-} // namespace nwii
+} 
+} 

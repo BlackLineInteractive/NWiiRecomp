@@ -80,7 +80,6 @@ void Config::load(const std::string& filepath) {
         auto pport = tbl["input"]["phone_port"].value<int>();
         if (pport) phone_port = *pport;
 
-        // [hle] section in main config.toml — per-game overrides without assets/
         auto eid = tbl["hle"]["ext_interrupt_dispatch"].value<int64_t>();
         if (eid && *eid != 0) {
             game_profile.ext_interrupt_dispatch = (uint32_t)*eid;
@@ -104,7 +103,7 @@ void Config::load(const std::string& filepath) {
 }
 
 void Config::load_game_profile() {
-    // Look for assets/games/<game_id>.toml relative to executable location
+    
     std::vector<std::string> search_paths = {
         "assets/games/" + game_id + ".toml",
         game_dir + "/../assets/games/" + game_id + ".toml",
@@ -151,7 +150,6 @@ void Config::load_game_profile() {
                       << std::dec << std::endl;
         }
 
-
         std::cout << "[Config] Loaded game profile: " << found_path << std::endl;
 
     } catch (const toml::parse_error& err) {
@@ -160,5 +158,5 @@ void Config::load_game_profile() {
     }
 }
 
-} // namespace runtime
-} // namespace nwii
+} 
+} 

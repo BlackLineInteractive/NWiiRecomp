@@ -35,7 +35,7 @@ struct GLShader {
     GLint uProjMtx;
 };
 static std::unordered_map<uint64_t, GLShader> s_shader_cache;
-// Reported in the [STAT] line: see the note at the GetShaderHash call site.
+
 uint64_t g_stat_hash0 = 0;
 uint64_t g_stat_shaders = 0;
 
@@ -122,12 +122,12 @@ static void ApplyProjection(GLint uProj) {
     
     if (!g_state.projSet) {
         p[0]=1; p[5]=1; p[10]=1; p[15]=1;
-    } else if (g_state.projType == 0) { // GX_PERSPECTIVE
+    } else if (g_state.projType == 0) { 
         p[0] = sp[0]; p[4] = 0; p[8] = sp[1]; p[12] = 0;
         p[1] = 0; p[5] = sp[2]; p[9] = sp[3]; p[13] = 0;
         p[2] = 0; p[6] = 0; p[10] = 2.0f * sp[4] - 1.0f; p[14] = 2.0f * sp[5];
         p[3] = 0; p[7] = 0; p[11] = -1.0f; p[15] = 0;
-    } else { // GX_ORTHOGRAPHIC
+    } else { 
         p[0] = sp[0]; p[4] = 0; p[8] = 0; p[12] = sp[1];
         p[1] = 0; p[5] = sp[2]; p[9] = 0; p[13] = sp[3];
         p[2] = 0; p[6] = 0; p[10] = sp[4]; p[14] = sp[5];
@@ -144,21 +144,18 @@ static void ApplyProjection(GLint uProj) {
     glUniformMatrix4fv(uProj, 1, GL_FALSE, p);
 }
 
-// True when the current projection is perspective — i.e. a real 3D scene, not
-// a 2D/UI pass. Perspective draws need a depth buffer to sort geometry; 2D
-// passes submit in painter order and must NOT depth-test.
+
+
 static bool CurrentIsPerspective() {
     static const bool flatz = std::getenv("NWII_FLATZ") != nullptr;
-    if (flatz) return false; // force the old flatten-everything behaviour
+    if (flatz) return false; 
     return g_state.projSet && g_state.projType == 0;
 }
 
 static void ApplyZMode() {
-    // 2D/UI draws submit in painter order and don't depth-test. Perspective 3D
-    // (the intro scene) needs the depth buffer, or its polygons draw in FIFO
-    // order and near geometry vanishes behind far — the "coloured quads over
-    // everything" the intro showed. The zMode.enable flag is unreliable until
-    // BP 0x40 is first written, so key off the projection type instead.
+
+    
+
     if (CurrentIsPerspective()) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -192,10 +189,9 @@ static void EmitVertex(const VertexData &vtx) {
     } else {
         bv.x = x; bv.y = y; bv.z = z;
     }
-    // 2D/UI draws (orthographic) use a near-far range too narrow for whatever
-    // Z the position matrix produces; forcing z_view = 0 keeps them inside
-    // clip space and is correct for a flat pass. Perspective 3D keeps its real
-    // transformed Z so the depth buffer can sort the scene.
+
+    
+    
     if (!CurrentIsPerspective())
         bv.z = 0.0f;
     static const bool s_vtxtrace_v = std::getenv("NWII_VTXTRACE") != nullptr;
@@ -210,11 +206,9 @@ static void EmitVertex(const VertexData &vtx) {
     s_batch.push_back(bv);
 }
 
-// A run of consecutive DrawPrimitive commands shares ALL GL state: anything
-// that could change it (BP/XF register loads) arrives as its own command and
-// closes the batch. Setting up program/uniforms/textures once per run instead
-// of once per draw call collapsed the title screen's ~5000 tiny draws from one
-// glDrawArrays + ~12 uniform uploads each into a handful of real GL calls.
+
+
+
 static bool s_batch_open = false;
 static uint8_t s_batch_prim = 0;
 
@@ -226,16 +220,13 @@ static void DrawPrimitive(const GXCommand &cmd) {
     const size_t n = v.size();
     if (n == 0) return;
 
-    // NWII_DRAWLOG=1: one line per draw for the first N draws, so a good and a
-    // bad run can be diffed directly. Every aggregate (shader hash, TEV regs,
-    // projection, viewport) is identical between them, so the divergence has to
-    // be per-draw.
+    
+
     static const bool s_drawlog = std::getenv("NWII_DRAWLOG") != nullptr;
     if (s_drawlog) {
         static int dn = 0;
         if (dn < 40) {
-            // Everything else about a draw matches between a good and a bad
-            // run, so print exactly what feeds the hash.
+
             printf("[DRAW %02d] prim=0x%02X verts=%zu hash=%llx tex0=%dx%d fmt=%d map=%d "
                    "| bp00=%06X F3=%06X C0=%06X C1=%06X C2=%06X C3=%06X 28=%06X cp50=%08X\n",
                    dn, cmd.prim_type, n,
@@ -245,9 +236,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
                    g_state.bp[0x00], g_state.bp[0xF3], g_state.bp[0xC0],
                    g_state.bp[0xC1], g_state.bp[0xC2], g_state.bp[0xC3],
                    g_state.bp[0x28], g_state.cp[0x50]);
-            // The palette is what colours a C8 texture, and it is copied out of
-            // guest RAM once, at render time. Print it: a zeroed TLUT means we
-            // captured it before the game's DMA landed, and nothing re-captures.
+
+            
             uint32_t th = 2166136261u, nz = 0;
             uint32_t off = g_state.texStages[0].tlut_offset;
             for (uint32_t i = 0; i < 512 && off + i < sizeof(g_state.tlutMem); ++i) {
@@ -255,8 +245,7 @@ static void DrawPrimitive(const GXCommand &cmd) {
                 th = (th ^ b) * 16777619u;
                 if (b) ++nz;
             }
-            // The texel data itself: the last input to a draw never compared
-            // between a good and a bad run.
+
             uint32_t dh = 2166136261u, dnz = 0;
             uint32_t base = g_state.texStages[0].base_addr;
             if (g_ctx_ptr) {
@@ -287,8 +276,7 @@ static void SetupDrawState(const GXCommand &cmd) {
     if (!use_shader) return;
 
     uint64_t hash = g_state.GetShaderHash(cmd.prim_type);
-    // Diagnostics: a shader compiled from the wrong state is cached for the
-    // whole run, so the FIRST hash decides how the run looks. Reported in [STAT].
+
     if (!g_stat_hash0)
         g_stat_hash0 = hash;
     g_stat_shaders = (uint64_t)s_shader_cache.size();
@@ -378,7 +366,7 @@ static void SetupDrawState(const GXCommand &cmd) {
     
     auto decode11 = [](uint32_t val, int shift) -> float {
         int v = (val >> shift) & 0x7FF;
-        if (v & 0x400) v |= ~0x7FF; // sign extend 11-bit
+        if (v & 0x400) v |= ~0x7FF; 
         return (float)v / 255.0f;
     };
     
@@ -419,29 +407,28 @@ static void EmitPrimitive(const GXCommand &cmd) {
     const size_t n = v.size();
 
     switch (cmd.prim_type) {
-        case 0x80: // GX_QUADS
+        case 0x80: 
             for (size_t i = 0; i + 3 < n; i += 4) {
                 EmitVertex(v[i]); EmitVertex(v[i+1]); EmitVertex(v[i+2]);
                 EmitVertex(v[i+2]); EmitVertex(v[i+3]); EmitVertex(v[i]);
             }
             break;
-        case 0x90: // GX_TRIANGLES
+        case 0x90: 
             for (const auto &vtx : v) EmitVertex(vtx);
             break;
-        case 0x98: // GX_TRIANGLESTRIP
+        case 0x98: 
             for (size_t i = 2; i < n; i++) {
                 if (i & 1) { EmitVertex(v[i - 1]); EmitVertex(v[i - 2]); EmitVertex(v[i]); }
                 else { EmitVertex(v[i - 2]); EmitVertex(v[i - 1]); EmitVertex(v[i]); }
             }
             break;
-        case 0xA0: // GX_TRIANGLEFAN
+        case 0xA0: 
             for (size_t i = 2; i < n; i++) {
                 EmitVertex(v[0]); EmitVertex(v[i - 1]); EmitVertex(v[i]);
             }
             break;
     }
-    // No flush here: the batch stays open across consecutive draws and is
-    // flushed when a state-changing command or the end of the frame arrives.
+
 }
 
 class RendererGL : public IRenderer {
@@ -454,13 +441,11 @@ public:
     }
 
     void Render(const std::vector<GXCommand> &commands) override {
-    // We render one complete guest frame per call, so the depth buffer must
-    // start fresh every frame or geometry z-fights against the previous
-    // frame's depth — with the depth test now enabled for perspective scenes
-    // that stale depth was the "disco" flicker. Depth clear is unconditional;
-    // clearing depth is harmless for 2D frames (depth test off there). Colour
-    // still follows the game's own EFB clear so 2D overlays composite right.
-    glDepthMask(GL_TRUE); // depth writes must be enabled for the clear to land
+
+    
+
+    
+    glDepthMask(GL_TRUE); 
     glClear(GL_DEPTH_BUFFER_BIT);
     if (g_state.pe_clear_pending) {
         g_state.pe_clear_pending = false;
@@ -471,9 +456,8 @@ public:
     }
 
     for (const auto &cmd : commands) {
-        // Any non-draw command can change draw state: close the running
-        // vertex batch first so pending geometry draws with the state it
-        // was submitted under.
+
+        
         if (cmd.type != GXCommandType::DrawPrimitive && s_batch_open) {
             FlushBatch();
             s_batch_open = false;
@@ -506,9 +490,8 @@ public:
                 ApplyZMode();
             }
         } else if (cmd.type == GXCommandType::DrawPrimitive) {
-            // Texture lookups (hash of texel data + TLUT) are per-run, not
-            // per-draw: nothing between two consecutive draws can retarget
-            // a texture stage.
+
+            
             if (!s_batch_open && g_ctx_ptr) {
                 for (int i = 0; i < 8; ++i) {
                     const auto &stage = g_state.texStages[i];
@@ -533,18 +516,17 @@ public:
 private:
     void* m_window = nullptr;
 
-}; // class RendererGL
+}; 
 
 std::unique_ptr<IRenderer> CreateRendererGL() {
     return std::make_unique<RendererGL>();
 }
 
-} // namespace nwii::runtime::gx
+} 
 
-// Accessors for the [STAT] diagnostics line in main.cpp.
 uint64_t nwii_stat_hash0() { return nwii::runtime::gx::g_stat_hash0; }
 uint64_t nwii_stat_shaders() { return nwii::runtime::gx::g_stat_shaders; }
 
 namespace nwii::runtime::gx {
 
-} // namespace nwii::runtime::gx
+} 

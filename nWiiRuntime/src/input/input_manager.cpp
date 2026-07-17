@@ -29,11 +29,9 @@ void InputManager::set_mode(InputMode mode) {
 }
 
 void InputManager::update() {
-    // Check for hotkeys to swap modes (kept for legacy/debugging if needed, 
-    // but actual input mapping depends on the sources now)
-    // Removed legacy raylib hotkey polling
 
-    // Reset state before polling
+    
+
     for (int i = 0; i < 4; ++i) {
         gc_pads[i].buttons = 0;
         gc_pads[i].stick_x = 0;
@@ -44,13 +42,12 @@ void InputManager::update() {
         gc_pads[i].trigger_r = 0;
         gc_pads[i].analog_a = 0;
         gc_pads[i].analog_b = 0;
-        gc_pads[i].err = -1; // disconnected by default
+        gc_pads[i].err = -1; 
 
         wii_motes[i].buttons = 0;
-        wii_motes[i].err = -1; // disconnected by default
+        wii_motes[i].err = -1; 
     }
 
-    // Accumulate inputs from all sources
     for (auto& source : sources) {
         source->update(gc_pads, wii_motes);
     }
@@ -66,4 +63,4 @@ WiimoteState InputManager::get_wiimote_state(int index) {
     return {0,0.5f,0.5f,0,0,0,0,0,0,-1};
 }
 
-} // namespace nwii::runtime::input
+} 

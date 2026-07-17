@@ -8,21 +8,17 @@ namespace nwii::runtime::gx {
 
 GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     GeneratedShader shader;
+
     
-    // VERTEX SHADER
-    // rlgl's immediate-mode batch binds vertex attributes by NAME
-    // (vertexPosition/vertexTexCoord/vertexNormal/vertexColor) and supplies
-    // exactly one of each. Using different names left every attribute
-    // unbound, so the draw read undefined vertex data — the "scattered
-    // pixels" symptom. The extra GX texcoords/colour1 have no source in this
-    // batch, so they alias the ones rlgl does provide until the renderer
-    // uploads its own vertex buffers.
+
+    
+
+    
     std::stringstream vs;
     vs << "#version 330 core\n";
-    // Locations must match renderer_gl's glVertexAttribPointer calls exactly
-    // (0 = position, 1 = colour, 2 = texcoord). Without explicit layout
-    // qualifiers GL assigns them in declaration order, so colour/texcoord
-    // arrived in each other's slots and vertexColor got nothing at all.
+
+    
+    
     vs << "layout(location = 0) in vec3 vertexPosition;\n";
     vs << "layout(location = 1) in vec4 vertexColor;\n";
     vs << "layout(location = 2) in vec2 vertexTexCoord;\n";
@@ -44,8 +40,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
            << "] * vec4(vertexTexCoord, 0.0, 1.0)).xy;\n";
     vs << "}\n";
     shader.vertex_source = vs.str();
-    
-    // FRAGMENT SHADER
+
     std::stringstream fs;
     fs << "#version 330 core\n";
     fs << "in vec4 vColor0;\n";
@@ -66,7 +61,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     fs << "uniform vec4 uTevColor[4];\n";
     fs << "uniform vec4 uTevKColor[4];\n";
     
-    fs << "vec4 tevReg[4];\n"; // 0=prev, 1=reg0, 2=reg1, 3=reg2
+    fs << "vec4 tevReg[4];\n"; 
     fs << "vec4 texColor;\n";
     fs << "vec4 rasColor;\n";
     
@@ -82,13 +77,11 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     for (int i = 0; i < numTevs; ++i) {
         const auto& stage = state.tevStages[i];
         fs << "    // TEV Stage " << i << "\n";
-        
-        // Rasterized color selection
+
         if (stage.colorChan == 0) fs << "    rasColor = vColor0;\n";
         else if (stage.colorChan == 1) fs << "    rasColor = vColor1;\n";
         else fs << "    rasColor = vec4(0.0, 0.0, 0.0, 1.0);\n";
-        
-        // Texture selection
+
         if (stage.texMap != 0xFF) {
             fs << "    texColor = texture(uTex" << (int)stage.texMap << ", vTex" << (int)stage.texCoord << ");\n";
         } else {
@@ -107,7 +100,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         
         auto get_konst_color = [&](int kc) -> std::string {
             if (kc <= 0x07) {
-                // KCSEL 0-7 are the constant fractions (8-k)/8: 1, 7/8 ... 1/8.
+                
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "vec3(%.6f)", (8 - kc) / 8.0f);
                 return std::string(buf);
@@ -124,7 +117,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
 
         auto get_konst_alpha = [&](int ka) -> std::string {
             if (ka <= 0x07) {
-                // KASEL 0-7: same (8-k)/8 constant fractions as KCSEL.
+                
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "%.6f", (8 - ka) / 8.0f);
                 return std::string(buf);
@@ -156,7 +149,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 11: fs << "    cIn[" << in_idx << "] = vec3(rasColor.a);\n"; break;
                 case 12: fs << "    cIn[" << in_idx << "] = vec3(1.0);\n"; break;
                 case 13: fs << "    cIn[" << in_idx << "] = vec3(0.5);\n"; break;
-                case 14: fs << "    cIn[" << in_idx << "] = " << kc_str << ";\n"; break; // Konst
+                case 14: fs << "    cIn[" << in_idx << "] = " << kc_str << ";\n"; break; 
                 case 15: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
                 default: fs << "    cIn[" << in_idx << "] = vec3(0.0);\n"; break;
             }
@@ -172,9 +165,9 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         else fs << "    cBias = vec3(0.0);\n";
 
         fs << "    vec3 cOut;\n";
-        if (stage.colorOp == 0) { // Add
+        if (stage.colorOp == 0) { 
             fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
-        } else if (stage.colorOp == 1) { // Sub
+        } else if (stage.colorOp == 1) { 
             fs << "    cOut = cIn[3] - mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
         } else {
             fs << "    cOut = cIn[3] + mix(cIn[0], cIn[1], cIn[2]) + cBias;\n";
@@ -197,7 +190,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
                 case 3: fs << "    aIn[" << in_idx << "] = tevReg[3].a;\n"; break;
                 case 4: fs << "    aIn[" << in_idx << "] = texColor.a;\n"; break;
                 case 5: fs << "    aIn[" << in_idx << "] = rasColor.a;\n"; break;
-                case 6: fs << "    aIn[" << in_idx << "] = " << ka_str << ";\n"; break; // Konst
+                case 6: fs << "    aIn[" << in_idx << "] = " << ka_str << ";\n"; break; 
                 case 7: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
                 default: fs << "    aIn[" << in_idx << "] = 0.0;\n"; break;
             }
@@ -213,9 +206,9 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
         else fs << "    aBias = 0.0;\n";
 
         fs << "    float aOut;\n";
-        if (stage.alphaOp == 0) { // Add
+        if (stage.alphaOp == 0) { 
             fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
-        } else if (stage.alphaOp == 1) { // Sub
+        } else if (stage.alphaOp == 1) { 
             fs << "    aOut = aIn[3] - mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
         } else {
             fs << "    aOut = aIn[3] + mix(aIn[0], aIn[1], aIn[2]) + aBias;\n";
@@ -231,16 +224,13 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     }
     
     fs << "    FragColor = tevReg[0];\n";
-    // NWII_FLATCOLOR=1: bypass the whole TEV result and emit solid red. If the
-    // screen turns red the raster/geometry path is fine and the bug is in TEV;
-    // if it stays black the pixels never reach the framebuffer at all.
+
+    
     if (std::getenv("NWII_FLATCOLOR"))
         fs << "    FragColor = vec4(1.0, 0.0, 0.0, 1.0);\n";
 
-    // Alpha test (BP 0xF3): two comparisons against 8-bit references joined
-    // by a logic op. A failing pixel is discarded before blending — this is
-    // how games cut out fonts, foliage and UI edges. comp 7 (always) on both
-    // sides with an AND collapses to "no test", so emit nothing for it.
+    
+
     {
         const auto& at = state.alphaTest;
         auto cmp = [&](uint8_t comp, uint8_t ref) -> std::string {
@@ -280,4 +270,4 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     return shader;
 }
 
-} // namespace nwii::runtime::gx
+} 

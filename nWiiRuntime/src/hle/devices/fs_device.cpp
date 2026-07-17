@@ -7,7 +7,6 @@
 
 namespace nwii::runtime::devices {
 
-// SYSCONF logic
 struct VNandFile {
     std::string path;
     std::vector<uint8_t> data;
@@ -62,10 +61,9 @@ class FSDevice : public IDevice {
 public:
     const char* get_name() const override { return "/dev/fs"; }
     bool matches_path(const std::string& path) const override {
-        // Matches /dev/fs AND any absolute path on NAND (like /shared2/...), 
-        // but exclude other /dev/ devices.
+
         if (path == "/dev/fs") return true;
-        if (path.find("/dev/") == 0) return false; // Let other dev nodes handle themselves
+        if (path.find("/dev/") == 0) return false; 
         return path.find("/") == 0;
     }
     
@@ -79,13 +77,13 @@ public:
                         return VNAND_FD_BASE + s;
                     }
                 }
-                return -106; // out of handles
+                return -106; 
             }
         }
         if (path == "/dev/fs")
-            return IPC_OK; // /dev/fs itself, no per-handle state
+            return IPC_OK; 
         std::cout << "[FS] open: no such file " << path << std::endl;
-        return IPC_ENOENT; // unknown NAND file: let the game create/skip it
+        return IPC_ENOENT; 
     }
     
     int32_t close(CPUContext& ctx, uint32_t fd) override {
@@ -104,8 +102,7 @@ public:
             auto& f = g_vnand_files[h.file_idx];
             uint32_t avail = f.data.size() - h.pos;
             uint32_t to_read = std::min(len, avail);
-            
-            // Convert physical to virtual. Assuming buf is physical here.
+
             uint32_t virt_ptr = buf;
             if (virt_ptr < 0x01800000 || (virt_ptr >= 0x10000000 && virt_ptr < 0x14000000))
                 virt_ptr |= 0x80000000;
@@ -118,7 +115,7 @@ public:
             h.pos += to_read;
             return to_read;
         }
-        return 0; // no vnand handle: nothing read
+        return 0; 
     }
     
     int32_t write(CPUContext& ctx, uint32_t fd, uint32_t buf, uint32_t len) override {
@@ -149,9 +146,9 @@ public:
         if (slot >= 0 && slot < VNAND_FD_MAX && g_vnand_handles[slot].open) {
             auto& h = g_vnand_handles[slot];
             auto& f = g_vnand_files[h.file_idx];
-            if (whence == 0) h.pos = offset; // SEEK_SET
-            else if (whence == 1) h.pos += offset; // SEEK_CUR
-            else if (whence == 2) h.pos = f.data.size() + offset; // SEEK_END
+            if (whence == 0) h.pos = offset; 
+            else if (whence == 1) h.pos += offset; 
+            else if (whence == 2) h.pos = f.data.size() + offset; 
             return h.pos;
         }
         return IPC_OK;
@@ -162,4 +159,4 @@ std::unique_ptr<IDevice> create_fs_device() {
     return std::make_unique<FSDevice>();
 }
 
-} // namespace nwii::runtime::devices
+} 

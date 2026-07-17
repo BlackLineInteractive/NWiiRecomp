@@ -9,7 +9,6 @@ namespace nwii::runtime {
 
 namespace nwii::runtime::platform {
 
-// Helper functions that might be needed
 
 
 static const int32_t IPC_OK = 0;
@@ -175,8 +174,8 @@ void WiiPlatform::ios_write_async(CPUContext& ctx) {
 void WiiPlatform::ios_ioctl(CPUContext& ctx) {
 
   int32_t fd = (int32_t)ctx.gpr[3];
-  uint32_t arg1 = ctx.gpr[4]; // cmd
-  uint32_t arg2 = ctx.gpr[5]; // inbuf
+  uint32_t arg1 = ctx.gpr[4]; 
+  uint32_t arg2 = ctx.gpr[5]; 
 
   std::cout << "[HLE IOS] IOS_Ioctl: fd=" << fd << " cmd=0x" << std::hex << arg1
             << std::dec << std::endl;
@@ -194,8 +193,7 @@ void WiiPlatform::ios_ioctl(CPUContext& ctx) {
 }
 
 void WiiPlatform::ios_ioctl_async(CPUContext& ctx) {
-  // Real IOS_IoctlAsync: fd=r3, cmd=r4, inbuf=r5, inlen=r6, outbuf=r7,
-  // outlen=r8, cb=r9, ud=r10
+
   int32_t fd = (int32_t)ctx.gpr[3];
   uint32_t cmd = ctx.gpr[4];
   uint32_t inbuf = ctx.gpr[5];
@@ -254,8 +252,7 @@ void WiiPlatform::ios_ioctlv_async(CPUContext& ctx) {
   req.fd = fd;
   req.ioctl_cmd = cmd;
 
-  // We need to parse the vectors here, similar to ios_ioctlv, but using the HLE calling convention
-  // Real IOS_IoctlvAsync: fd=r3, cmd=r4, incnt=r5, outcnt=r6, vecs=r7, cb=r8, ud=r9
+  
   uint32_t arg_in = ctx.gpr[5];
   uint32_t arg_out = ctx.gpr[6];
   uint32_t arg_array = ctx.gpr[7];
@@ -280,4 +277,4 @@ void WiiPlatform::ios_ioctlv_async(CPUContext& ctx) {
   ctx.pc = ctx.lr;
 }
 
-} // namespace nwii::runtime::platform
+} 

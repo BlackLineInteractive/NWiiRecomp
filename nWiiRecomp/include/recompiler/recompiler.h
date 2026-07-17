@@ -18,24 +18,24 @@ struct RecompilerConfig {
     bool split_output = false;
     int instructions_per_file = 20000;
 
-    // Per-game HLE hook overrides from [hle_hooks] in the config TOML:
-    // guest function address -> runtime HLE function name. Replaces the
-    // recompiled body with a call into the runtime. No game addresses
-    // are built into the recompiler itself.
+    
+
     std::map<uint32_t, std::string> hle_hooks;
+
+    
+
+    struct RelAot { std::string path; uint32_t module_base; uint32_t bss_base; };
+    std::vector<RelAot> rel_aot;
 };
 
 class Recompiler {
 public:
     Recompiler(const analyzer::Analyzer& analyzer, const SymbolTable* symbols = nullptr, const RecompilerConfig& config = RecompilerConfig());
 
-    // Generates the C++ output and returns a list of generated .cpp filenames
     std::vector<std::string> generate_cpp(uint32_t entry_point);
-    
-    // Generates a standalone CMake project containing the C++ output and the runtime
+
     bool generate_cmake_project(uint32_t entry_point);
-    
-    // Generates C++ output for a single function
+
     std::string generate_function_cpp(const analyzer::Function& func);
 
 private:
@@ -47,5 +47,5 @@ private:
     RecompilerConfig config_;
 };
 
-} // namespace recomp
-} // namespace nwii
+} 
+} 

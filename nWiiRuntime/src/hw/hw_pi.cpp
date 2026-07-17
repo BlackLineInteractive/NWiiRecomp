@@ -12,10 +12,8 @@ namespace nwii::runtime::hw {
 std::atomic<uint32_t> pi_intsr = 0;
 std::atomic<uint32_t> pi_intmr = 0;
 
-// PI CPU-fifo registers (0xCC00300C base / 0x3010 end / 0x3014 wptr).
-// GXSetCPUFifo programs these; the write-gather pipe appends at WPTR.
-// When the CPU fifo is NOT the GP-linked fifo (display-list recording),
-// gathered bytes go only into this buffer in RAM — never to the GPU.
+
+
 static uint32_t pi_fifo_base = 0;
 static uint32_t pi_fifo_end = 0;
 static uint32_t pi_fifo_wptr = 0;
@@ -35,9 +33,9 @@ void register_pi(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC003014) return pi_fifo_wptr;
             if (addr == 0xCC00302C) {
                 if (nwii::runtime::Config::get().platform == nwii::runtime::Platform::GameCube)
-                    return 0x00000001; // GC chip
+                    return 0x00000001; 
                 else
-                    return 0x00000023; // Hollywood retail chip revision
+                    return 0x00000023; 
             }
             return 0;
         },
@@ -56,4 +54,4 @@ void register_pi(MMIODispatcher& dispatcher) {{
     );
 }}
 
-} // namespace nwii::runtime::hw
+} 

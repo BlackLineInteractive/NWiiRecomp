@@ -12,4 +12,4 @@ std::unique_ptr<IDevice> create_es_device();
 
 void register_all();
 
-} // namespace nwii::runtime::devices
+} 

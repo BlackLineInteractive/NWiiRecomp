@@ -10,7 +10,6 @@ public:
 
     virtual void init() = 0;
 
-    // IOS HLE Interface
     virtual void ios_open(CPUContext& ctx) = 0;
     virtual void ios_open_async(CPUContext& ctx) = 0;
     virtual void ios_close(CPUContext& ctx) = 0;
@@ -28,4 +27,4 @@ public:
     static IPlatform& get();
 };
 
-} // namespace nwii::runtime::platform
+} 

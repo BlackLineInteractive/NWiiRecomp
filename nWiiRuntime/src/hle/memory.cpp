@@ -3,9 +3,7 @@
 
 using namespace nwii::runtime;
 
-// RVL_SDK OSHeap uses a strict 32-byte header.
-// Offset 0x18: Magic/Flags (0x7373 = used, 0x4652 = free)
-// Offset 0x1C: Payload Size
+
 
 #define MAX_HEAPS 32
 
@@ -28,10 +26,9 @@ void OSInitAlloc(CPUContext& ctx) {
     for (int i = 0; i < MAX_HEAPS; i++) {
         g_heaps[i].active = false;
     }
+
     
-    // SDK allocates OSHeapDescriptors array at arena_lo.
-    // We HLE the heaps entirely, but we must shift arena_lo to prevent overlap.
-    // 0x20 is a safe size for an SDK OSHeapDescriptor.
+    
     uint32_t array_size = max_heaps * 0x20;
     
     std::cout << "[HLE Memory] OSInitAlloc arena_lo: 0x" << std::hex << arena_lo << " -> 0x" << (arena_lo + array_size) << " max_heaps: " << std::dec << max_heaps << "\n";
@@ -45,7 +42,7 @@ void OSCreateHeap(CPUContext& ctx) {
 
     uint32_t aligned_start = (start_addr + 31) & ~31;
     
-    ctx.mmu.write32(aligned_start + 0x18, 0x46520000); // FR
+    ctx.mmu.write32(aligned_start + 0x18, 0x46520000); 
     ctx.mmu.write32(aligned_start + 0x1C, size - 32);
     
     int handle = -1;
@@ -60,7 +57,7 @@ void OSCreateHeap(CPUContext& ctx) {
     }
 
     std::cout << "[HLE Memory] OSCreateHeap at 0x" << std::hex << aligned_start << " (Size: " << std::dec << size << ") -> Handle: " << handle << "\n";
-    // Important: SDK returns a heap handle (index), NOT a memory pointer.
+    
     ctx.gpr[3] = handle; 
 }
 
@@ -105,8 +102,7 @@ void OSAllocFromHeap(CPUContext& ctx) {
         uint32_t size  = ctx.mmu.read32(current_block + 0x1C);
         
         if (magic == 0) break;
-        
-        // Coalesce adjacent free blocks
+
         if ((magic >> 16) == 0x4652) {
             uint32_t next_block = current_block + 32 + size;
             while (next_block < heap_end) {
@@ -131,7 +127,7 @@ void OSAllocFromHeap(CPUContext& ctx) {
                 alloc_size = size;
             }
             
-            ctx.mmu.write32(current_block + 0x18, 0x73730000); // ss
+            ctx.mmu.write32(current_block + 0x18, 0x73730000); 
             ctx.mmu.write32(current_block + 0x1C, alloc_size);
             
             uint32_t payload_ptr = current_block + 32;
@@ -178,5 +174,5 @@ void OSCheckHeap(CPUContext& ctx) {
     ctx.gpr[3] = 0;
 }
 
-} // extern "C"
+} 
 

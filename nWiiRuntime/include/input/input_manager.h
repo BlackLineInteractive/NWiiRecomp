@@ -7,11 +7,11 @@
 namespace nwii::runtime::input {
 
 enum class InputMode {
-    GamepadClassic, // Gamepad acting as GC/Classic controller
-    GamepadWiimote, // Gamepad + Right Stick for IR
-    MouseKeyboard,  // Mouse & Keyboard for IR and buttons
-    Touch,          // Touchscreen
-    Remote          // Smartphone remote
+    GamepadClassic, 
+    GamepadWiimote, 
+    MouseKeyboard,  
+    Touch,          
+    Remote          
 };
 
 class InputManager {
@@ -39,5 +39,5 @@ private:
     std::vector<std::unique_ptr<IInputSource>> sources;
 };
 
-} // namespace nwii::runtime::input
+} 
 

@@ -51,4 +51,4 @@ using be32_t = be_t<uint32_t>;
 using be16_t = be_t<uint16_t>;
 using be64_t = be_t<uint64_t>;
 
-} // namespace nwii
+} 

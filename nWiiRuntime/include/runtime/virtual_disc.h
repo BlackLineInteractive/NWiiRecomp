@@ -6,19 +6,16 @@
 namespace nwii::runtime {
 
 // Serves disc reads from an extracted game directory (wit/Dolphin layout):
-//   sys/boot.bin, sys/bi2.bin, sys/apploader.img, sys/main.dol, sys/fst.bin
-//   files/<fst paths>
-// Offsets are partition-data byte offsets. On Wii the FST/boot.bin store
-// file offsets >> 2; on GameCube they are raw byte offsets.
+
+
+
 class VirtualDisc {
 public:
     static VirtualDisc& get();
 
-    // Idempotent; returns true when the extracted layout was found.
     bool init(const std::string& game_dir);
     bool valid() const { return m_valid; }
 
-    // Read `len` bytes at partition byte offset into dst. Gaps read as zero.
     size_t read(uint64_t offset, uint32_t len, uint8_t* dst);
 
     uint32_t fst_size() const { return (uint32_t)m_fst_data.size(); }
@@ -46,9 +43,8 @@ private:
     std::vector<uint8_t> m_fst_data;
     std::vector<Region> m_regions;
 
-    // File caching
     std::string m_cached_path;
     FILE* m_cached_file = nullptr;
 };
 
-} // namespace nwii::runtime
+} 

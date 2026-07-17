@@ -15,4 +15,4 @@ public:
     static std::unique_ptr<IRenderer> Create();
 };
 
-} // namespace nwii::runtime::gx
+} 

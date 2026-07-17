@@ -22,7 +22,7 @@ static MemoryEditor mem_edit;
 static TextEditor code_editor;
 static TextEditor config_editor;
 static TextEditor ghidra_editor;
-static TextEditor log_editor;  // TextEditor for logs - supports text selection
+static TextEditor log_editor;  
 static TextEditor runtime_log_editor;
 static std::string last_runtime_log;
 static bool editors_initialized = false;
@@ -31,7 +31,6 @@ static bool config_editor_needs_sync = false;
 static size_t last_log_version = 0;
 static bool s_wantsQuit = false;
 
-// HEX view color highlighting
 struct HexHighlightRange {
     size_t start;
     size_t end;
@@ -40,7 +39,6 @@ struct HexHighlightRange {
 };
 static std::vector<HexHighlightRange> hex_highlight_ranges;
 
-// Global pointer for BgColorFn callback
 static std::vector<HexHighlightRange>* g_hex_highlights = &hex_highlight_ranges;
 
 std::string FormatHex(uint32_t val) {
@@ -49,8 +47,7 @@ std::string FormatHex(uint32_t val) {
     return ss.str();
 }
 
-// BgColorFn callback for MemoryEditor - provides per-byte background color
-static ImU32 HexBgColorCallback(const ImU8* /*mem*/, size_t off, void* /*user_data*/) {
+static ImU32 HexBgColorCallback(const ImU8* , size_t off, void* ) {
     if (g_hex_highlights) {
         for (const auto& hl : *g_hex_highlights) {
             if (off >= hl.start && off < hl.end) {
@@ -58,7 +55,7 @@ static ImU32 HexBgColorCallback(const ImU8* /*mem*/, size_t off, void* /*user_da
             }
         }
     }
-    return 0; // no color (transparent)
+    return 0; 
 }
 
 void GUI::ApplySettings(StudioState& state) {
@@ -80,7 +77,6 @@ bool GUI::WantsQuit() {
     return s_wantsQuit;
 }
 
-// ---- Settings Window ----
 static void DrawSettingsWindow(StudioState& state) {
     if (!show_settings_window) return;
 
@@ -188,7 +184,6 @@ static void DrawSettingsWindow(StudioState& state) {
     ImGui::End();
 }
 
-// ---- Main Draw ----
 void GUI::DrawStudio(StudioState& state) {
     if (!editors_initialized) {
         code_editor.SetLanguageDefinition(TextEditor::LanguageDefinition::CPlusPlus());
@@ -304,7 +299,6 @@ void GUI::DrawStudio(StudioState& state) {
         ImGuiFileDialog::Instance()->Close();
     }
 
-    // ---- Main Menu Bar ----
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open Unpacked Game...", "Ctrl+O")) {
@@ -380,7 +374,6 @@ void GUI::DrawStudio(StudioState& state) {
 
     DrawSettingsWindow(state);
 
-    // ---- Explorer Panel ----
     ImGui::Begin("Explorer");
     ImGui::SetNextItemWidth(-1);
     static char filterBuf[128] = "";
@@ -477,7 +470,6 @@ void GUI::DrawStudio(StudioState& state) {
     }
     ImGui::End();
 
-    // ---- Inspector Panel ----
     ImGui::Begin("Inspector");
     if (state.data.analyzer && state.selectedFuncAddress != 0) {
         auto& funcsMap = state.data.analyzer->get_functions();
@@ -538,7 +530,6 @@ void GUI::DrawStudio(StudioState& state) {
     }
     ImGui::End();
 
-    // ---- Workspace Panel (Tabs) ----
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.08f, 1.00f));
     ImGui::Begin("Workspace", nullptr, ImGuiWindowFlags_NoTitleBar);
 
@@ -629,7 +620,7 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::Spacing();
             if (ImGui::Button("Build & Launch Game", ImVec2(250, 40))) {
                 state.Log("Starting Recompiled Game in background...");
-                // Launch the game and pipe output to a file that we can read.
+                
                 std::system("cd export/build && cmake .. && make -j8 && ./RecompiledGame \"../../NO_GitHub/Recomp_game(NO_PUBLIK)/SHSM-Extract\" > output.log 2>&1 &");
             }
             ShowTooltip("Compiles the generated C++ project and starts the game engine natively.", state);
@@ -639,7 +630,6 @@ void GUI::DrawStudio(StudioState& state) {
             ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.4f, 1.0f), "Runtime Output Logs:");
             ImGui::Spacing();
 
-            // Auto-refresh the runtime log
             static float timer = 0.0f;
             timer += ImGui::GetIO().DeltaTime;
             if (timer > 1.0f) {
@@ -652,7 +642,7 @@ void GUI::DrawStudio(StudioState& state) {
                     if (content != last_runtime_log) {
                         last_runtime_log = content;
                         runtime_log_editor.SetText(content);
-                        // Auto-scroll to bottom functionality could go here if the TextEditor supported it easily.
+                        
                     }
                 }
             }
@@ -667,7 +657,6 @@ void GUI::DrawStudio(StudioState& state) {
     ImGui::End();
     ImGui::PopStyleColor();
 
-    // ---- Logs Panel ----
     ImGui::Begin("Logs");
 
     {
@@ -707,7 +696,6 @@ void GUI::DrawStudio(StudioState& state) {
 
     ImGui::End();
 
-    // Stylish Watermark
     ImVec2 w_pos = ImVec2(ImGui::GetIO().DisplaySize.x - 260, ImGui::GetIO().DisplaySize.y - 35);
     ImGui::GetForegroundDrawList()->AddText(ImVec2(w_pos.x+1, w_pos.y+1), IM_COL32(0, 0, 0, 200), "Made by Blackline Interactive");
     ImGui::GetForegroundDrawList()->AddText(w_pos, IM_COL32(200, 200, 200, 150), "Made by Blackline Interactive");

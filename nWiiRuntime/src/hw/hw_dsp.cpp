@@ -10,7 +10,7 @@
 namespace nwii::runtime {
     extern MMU* g_mmu;
     extern CPUContext *g_ctx_ptr;
-    extern uint64_t get_os_time(); // wall-clock microseconds
+    extern uint64_t get_os_time(); 
 }
 
 #include "runtime/event_scheduler.h"
@@ -25,27 +25,21 @@ static uint32_t ar_mmaddr = 0;
 static uint32_t ar_araddr = 0;
 static uint32_t ar_cnt = 0;
 // DSPCSR bit layout (Dolphin UDSPControl): RES=0x0001, PIINT=0x0002,
-// HALT=0x0004(HW)/0x0800(SDK view kept as before), and three interrupt
-// pairs where the mask sits directly left of the status bit:
-//   AID  (audio DMA done) status 0x0008 / mask 0x0010
-//   ARAM (ARAM DMA done)  status 0x0020 / mask 0x0040
-//   DSP  (mailbox)        status 0x0080 / mask 0x0100
-static constexpr uint16_t CSR_INT_BITS = 0x00A8; // AID|ARAM|DSP statuses
-static uint16_t dsp_control = 0x0800; // HW boots with DSP HALTED
-static uint16_t ar_size = 0;    // 0xCC005012 AR_INFO/AR_SIZE
-static uint16_t ar_mode = 0;    // 0xCC005016 AR_MODE
-static uint16_t ar_refresh = 0; // 0xCC00501A AR_REFRESH
-// Wall-clock deadline for the deferred DSP-mail acknowledge (see the mail
-// write handler). A real DSP mixes one 5ms audio frame per command list;
-// acking faster makes the game immediately prepare the next frame, and the
-// audio pump then eats nearly all guest CPU time (observed: ~500 mails/s
-// and 0.13 game-frames/s on MP7 with a backedge-tick countdown).
+
+
+
+static constexpr uint16_t CSR_INT_BITS = 0x00A8; 
+static uint16_t dsp_control = 0x0800; 
+static uint16_t ar_size = 0;    
+static uint16_t ar_mode = 0;    
+static uint16_t ar_refresh = 0; 
+
+
+
 static void dsp_update_pi();
 
-// Runs the ARAM<->RAM copy latched in AR_DMA_MMADDR/ARADDR/CNT. Triggered by
-// the CNT low-half write (16-bit path, as on hardware) or a full 32-bit CNT
-// store. CNT bit 31 selects direction: 1 = ARAM -> RAM. MEM2 doubles as the
-// 16MB ARAM backing store on GC.
+
+
 static void ar_dma_execute() {
     bool dir = (ar_cnt & 0x80000000) != 0;
     uint32_t count = ar_cnt & 0x7FFFFFFF;
@@ -62,13 +56,11 @@ static void ar_dma_execute() {
             else std::memcpy(mem1 + mm, mem2 + ar_a, copy_count);
         }
     }
-    // The copy is done above, but the COMPLETION must not be synchronous:
-    // real ARAM DMA moves ~81MB/s, and raising the done interrupt inside
-    // this same MMIO store re-enters the guest ARQ before it has finished
-    // updating its queue state (observed on MP7's titlemp7.bin stream:
-    // ARAM offsets ended up programmed into DIMAR and the archive landed
-    // on top of the game's globals). ar_cnt stays nonzero while "in
-    // flight" so polls see a busy DMA.
+
+    
+
+    
+    
     EventScheduler::get().schedule_after(
         (uint64_t)count / 2 + 64, [](CPUContext&, uint64_t) {
             ar_cnt = 0;
@@ -77,20 +69,17 @@ static void ar_dma_execute() {
         });
 }
 
-// ---- Audio DMA (0xCC005030-0xCC00503A) ----
-// The final mixed output of the console: the game points this DMA at a
-// PCM buffer in main RAM (s16 big-endian, interleaved stereo, 32kHz) and
-// the hardware streams it to the DAC, raising the AID interrupt each time
-// a buffer finishes so the mixer refills it. We pace it with wall-clock
-// time and hand the samples to the host audio output through a ring.
-static uint32_t adma_addr = 0;      // source address in main RAM
-static uint16_t adma_control = 0;   // bit15 = enable, bits 0-14 = 32-byte blocks
+
+
+
+
+static uint32_t adma_addr = 0;      
+static uint16_t adma_control = 0;   
 static uint64_t s_adma_event_id = 0;
 static std::mutex adma_mutex;
-static std::vector<int16_t> adma_ring; // interleaved L,R host-endian
+static std::vector<int16_t> adma_ring; 
 
-// Pulls up to `frames` stereo frames for the host audio backend; pads
-// with silence when the game hasn't produced enough.
+
 size_t dsp_audio_pull(int16_t* out, size_t frames) {
     std::lock_guard<std::mutex> lock(adma_mutex);
     size_t have = adma_ring.size() / 2;
@@ -109,7 +98,7 @@ static void adma_event_cb(CPUContext& ctx, uint64_t late) {
     uint32_t bytes = blocks * 32;
     if (g_mmu && bytes > 0) {
         std::lock_guard<std::mutex> lock(adma_mutex);
-        // Cap the ring at ~1 second so a paused host doesn't grow it.
+        
         if (adma_ring.size() < 32000 * 2) {
             uint32_t va = adma_addr | 0x80000000;
             for (uint32_t i = 0; i + 3 < bytes; i += 4) {
@@ -118,12 +107,11 @@ static void adma_event_cb(CPUContext& ctx, uint64_t late) {
             }
         }
     }
-    // Buffer consumed: AID interrupt tells the mixer to refill/flip.
+    
     dsp_control |= 0x0008;
     dsp_update_pi();
 }
 
-// PI cause bit 6 (0x40) follows the OR of (status & its mask) across the
 // three DSP subsystem sources — Dolphin's (csr >> 1) & csr trick.
 static void dsp_update_pi() {
     if ((dsp_control >> 1) & dsp_control & CSR_INT_BITS)
@@ -132,20 +120,17 @@ static void dsp_update_pi() {
         clear_pi_interrupt(0x40);
 }
 
-// Which __OSInterruptTable index the pending DSPCSR sub-cause maps to.
-// The guest __OSDispatchInterrupt fans PI cause bit 6 out into OS
-// interrupts 5 (DSP_AI), 6 (DSP_ARAM), 7 (DSP_DSP mailbox) by reading
-// DSPCSR; our leaf dispatch must do the same or an ARAM completion would
-// invoke __DSPHandler, which treats any stale mail as a task resume and
-// calls an unregistered callback (observed WILD JUMP to 0x81800000).
+
+
+
+
 int dsp_pending_os_interrupt() {
     uint16_t pending = (dsp_control >> 1) & dsp_control & CSR_INT_BITS;
-    if (pending & 0x0080) return 7; // DSP mailbox
-    if (pending & 0x0020) return 6; // ARAM DMA
-    if (pending & 0x0008) return 5; // AID (audio DMA)
+    if (pending & 0x0080) return 7; 
+    if (pending & 0x0020) return 6; 
+    if (pending & 0x0008) return 5; 
     return 7;
 }
-
 
 
 
@@ -157,10 +142,9 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC005006) {
                 uint16_t val = dsp_mbox_dsp_lo;
                 dsp_mbox_dsp_hi &= ~0x8000;
-                // Mail consumed: drop the mailbox interrupt status with it.
-                // Leaving it set let any later CSR write (mask bits) re-raise
-                // PI 0x40 with an empty mailbox, parking __DSPHandler forever
-                // in its entry mail-poll with EE off.
+
+                
+                
                 dsp_control &= ~0x0080;
                 dsp_update_pi();
                 if (std::getenv("NWII_DSPTRACE"))
@@ -171,9 +155,8 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             }
             if (addr == 0xCC005008 || addr == 0xCC00500A) return dsp_control;
             if (addr == 0xCC005012) return ar_size;
-            // AR_MODE bit 0 is the ARAM controller "ready" handshake the SDK
-            // ARAM-init/size-detect routine polls for. Our ARAM has no init
-            // latency, so it is always ready.
+
+            
             if (addr == 0xCC005016) return ar_mode | 0x0001;
             if (addr == 0xCC00501A) return ar_refresh;
             if (addr == 0xCC005020) return ar_mmaddr;
@@ -183,10 +166,9 @@ void register_dsp(MMIODispatcher& dispatcher) {{
             if (addr == 0xCC005032) return adma_addr & 0xFFFF;
             if (addr == 0xCC005036) return adma_control;
             if (addr == 0xCC00503A) {
-                // AUDIO_DMA_BLOCKS_LEFT: approximate from the time left in
-                // the current buffer (some SDKs poll it for sync).
+
                 if (!(adma_control & 0x8000)) return 0;
-                return 0; // Scheduler paces it perfectly, can return 0
+                return 0; 
             }
             return 0;
         },
@@ -196,20 +178,17 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 std::cout << "[ARw] 0x" << std::hex << (addr & 0xFFFF)
                           << " = 0x" << val << std::dec << "\n";
             if (addr == 0xCC005000 || addr == 0xCC005002) {
-                // Assemble full 32-bit CPU->DSP mails (hi @5000, lo @5002)
+                
                 // and speak the AX ucode protocol (Dolphin AXUCode::HandleMail):
-                //   0xBABExxxx  = command list of xxxx words follows
-                //   <address>   = the list; ucode processes the frame and
-                //                 acknowledges with DSP_YIELD 0xDCD10002 + int
-                //   0xCDD10001  = resume request -> DSP_RESUME 0xDCD10001
-                // Anything else keeps the old generic resume ack (the ROM
-                // ucode boot mails 0x80F3xxxx rely on it). Blanket-acking
-                // every mail with 0xDCD10000 left the game's audio frame
-                // loop unacknowledged forever: the audio thread never woke,
-                // and MP7's intro reloaded its task table over the word the
-                // eternally-sleeping worker was parked on.
+
+                
+
+                
+
+                
+                
                 static uint16_t s_cpu_mail_hi = 0;
-                static int s_ax_state = 0; // 0=want size, 1=want addr, 2=want task
+                static int s_ax_state = 0; 
                 bool completed = (addr == 0xCC005002);
                 if (addr == 0xCC005000)
                     s_cpu_mail_hi = val & 0xFFFF;
@@ -227,20 +206,19 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                             });
                     };
                     if (s_ax_state == 1) {
-                        // Command list address: "process" the frame.
-                        reply(0x0002); // DSP_YIELD
+                        
+                        reply(0x0002); 
                         s_ax_state = 2;
                     } else if ((mail & 0xFFFF0000u) == 0xBABE0000u) {
                         s_ax_state = 1;
                     } else if (mail == 0xCDD10001u) {
-                        reply(0x0001); // DSP_RESUME
+                        reply(0x0001); 
                         s_ax_state = 0;
                     } else if ((mail & 0xFFFF0000u) == 0xCDD10000u) {
-                        s_ax_state = 0; // new-ucode / reset requests
+                        s_ax_state = 0; 
                         reply(0x0000);
                     } else {
-                        // ROM/boot mails: generic delayed resume ack, one per
-                        // completed mail (was: one per 16-bit write).
+
                         reply(0x0000);
                     }
                 }
@@ -256,20 +234,17 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                     std::cout << "[DSPm] csr write val=0x" << std::hex
                               << (val & 0xFFFF) << " csr=0x" << dsp_control
                               << std::dec << "\n";
-                // Interrupt statuses are write-1-to-clear; everything else
-                // (masks, halt, init flags) comes from the written value.
-                // RES (0x0001) self-clears and is never stored.
+
+                
                 uint16_t kept_ints = dsp_control & CSR_INT_BITS & ~val16;
                 bool was_halted = (dsp_control & 0x0800) != 0;
                 bool is_halted = (val16 & 0x0800) != 0;
                 dsp_control = kept_ints | (val16 & ~(CSR_INT_BITS | 0x0001));
-                // DSP reset/boot: post the 0xDCD10000 "init done" mail so the
-                // game can POLL for it. We deliberately do NOT raise the DSP
-                // mail interrupt here: __DSPHandler would dispatch the current
-                // DSP task's callback, which is uninitialised until the game
-                // uploads a real task (observed: NFS HP2 jumped to a garbage
-                // 0x81800000 callback). Mail-driven audio comes online once a
-                // task is registered; boot only needs the polled ack.
+
+                
+
+                
+                
                 if ((val16 & 0x0001) || (was_halted && !is_halted)) {
                     dsp_mbox_dsp_hi = 0xDCD1;
                     dsp_mbox_dsp_lo = 0x0000;
@@ -308,14 +283,12 @@ void register_dsp(MMIODispatcher& dispatcher) {{
                 ar_dma_execute();
             }
         },
-        // 16-bit access handlers: the AR DMA registers are 16-bit pairs
+        
         // (Dolphin DSP.cpp: MMADDR_H/L, ARADDR_H/L, CNT_H/L) and the SDK's
-        // __ARStartDMA programs them with six sth stores. Folding those into
-        // the 32-bit handler treated each HIGH half as a whole register and
-        // started the transfer on CNT_H with a garbage count and direction
-        // (observed on MP7: entry reads from ARAM never copied, the game
-        // decompressed stale heap bytes and wild-jumped). The DMA fires on
-        // the CNT_L write, as on hardware.
+
+        
+
+        
         [](uint32_t addr) -> uint16_t {
             if (addr == 0xCC005020) return (uint16_t)(ar_mmaddr >> 16);
             if (addr == 0xCC005022) return (uint16_t)ar_mmaddr;
@@ -351,4 +324,4 @@ void dsp_trigger_interrupt() {
     }
 }
 
-} // namespace nwii::runtime::hw
+} 

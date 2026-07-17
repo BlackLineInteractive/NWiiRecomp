@@ -62,4 +62,4 @@ void GCPlatform::ios_ioctlv_async(CPUContext& ctx) {
     ctx.pc = ctx.lr;
 }
 
-} // namespace nwii::runtime::platform
+} 

@@ -24,7 +24,6 @@ int main(int argc, char** argv) {
         config.split_output = tbl["split_output"].value_or(false);
         config.instructions_per_file = tbl["instructions_per_file"].value_or(20000);
 
-        // [hle_hooks]: "80242550" = "IOS_Open" (per-game, optional)
         if (auto hooks = tbl["hle_hooks"].as_table()) {
             for (const auto& [key, val] : *hooks) {
                 uint32_t addr = (uint32_t)std::stoul(std::string(key.str()), nullptr, 16);
@@ -34,6 +33,24 @@ int main(int argc, char** argv) {
                 }
             }
             std::cout << "Loaded " << config.hle_hooks.size() << " HLE hooks from config.\n";
+        }
+
+        
+        if (auto arr = tbl["rel_aot"].as_array()) {
+            for (auto& node : *arr) {
+                if (auto t = node.as_table()) {
+                    nwii::recomp::RecompilerConfig::RelAot r;
+                    r.path = (*t)["path"].value_or(std::string());
+                    // 0x8051de60 overflows a signed 32-bit int, so read the
+                    // bases as int64 before narrowing or value_or returns 0.
+                    r.module_base = (uint32_t)(*t)["module_base"].value_or((int64_t)0);
+                    r.bss_base = (uint32_t)(*t)["bss_base"].value_or((int64_t)0);
+                    if (!r.path.empty() && r.module_base)
+                        config.rel_aot.push_back(r);
+                }
+            }
+            std::cout << "Loaded " << config.rel_aot.size()
+                      << " REL(s) for AOT recompilation.\n";
         }
         std::cout << "Loaded config from " << config_path << "\n";
     } catch (const toml::parse_error& err) {
@@ -51,6 +68,18 @@ int main(int argc, char** argv) {
     std::cout << "Successfully loaded DOL.\n";
     std::cout << "Entry point: 0x" << std::hex << (uint32_t)exec.entry_point << std::dec << "\n";
     std::cout << "Sections loaded: " << exec.sections.size() << "\n";
+
+    
+    for (const auto& r : config.rel_aot) {
+        std::string p = r.path;
+        if (!p.empty() && p[0] != '/')
+            p = config.input_game_dir + "/" + p;
+        if (exec.load_rel(p, r.module_base, r.bss_base))
+            std::cout << "[REL] AOT-loaded " << p << " @0x" << std::hex
+                      << r.module_base << " bss 0x" << r.bss_base << std::dec << "\n";
+        else
+            std::cerr << "[REL] failed to load " << p << "\n";
+    }
 
     nwii::recomp::SymbolTable symbols;
     bool has_symbols = false;
@@ -77,7 +106,7 @@ int main(int argc, char** argv) {
     std::cout << "Analysis complete. Discovered " << functions.size() << " functions.\n";
 
     // Optional Dolphin signature database (totaldb.dsy): recovers SDK
-    // function names for any game. Configured via sdk_sigdb in the TOML.
+    
     std::string sigdb_path;
     try {
         auto tbl = toml::parse_file(config_path);
@@ -95,9 +124,8 @@ int main(int argc, char** argv) {
                 std::snprintf(line, sizeof(line), "\"%s\",%08X,%u\n",
                               func.sdk_name.c_str(), addr, size);
                 sdk_report += line;
-                // Readable, collision-free symbol: Name_ADDR. The suffix
-                // keeps auto-HLE name matching out of the loop; hooking
-                // stays an explicit per-game [hle_hooks] decision.
+
+                
                 std::string ident = func.sdk_name;
                 for (char& c : ident)
                     if (!std::isalnum((unsigned char)c) && c != '_')

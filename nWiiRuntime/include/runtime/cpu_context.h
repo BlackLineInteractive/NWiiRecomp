@@ -16,10 +16,10 @@ namespace nwii {
 namespace runtime {
 
 struct ConditionField {
-  bool lt; // Less Than
-  bool gt; // Greater Than
-  bool eq; // Equal
-  bool so; // Summary Overflow
+  bool lt; 
+  bool gt; 
+  bool eq; 
+  bool so; 
 
   ConditionField() : lt(false), gt(false), eq(false), so(false) {}
 };
@@ -47,9 +47,8 @@ struct CallbackInfo {
     bool is_irq;
 };
 
-// Removed CallbackInterrupt in favor of setjmp/longjmp for exception unwinding
 
-// Debug watchpoint: NWII_WATCH=80369b20 (hex) logs writes to that word
+
 void watch_hit(uint32_t addr, uint32_t value, int width);
 extern uint32_t g_watch_addr;
 
@@ -59,11 +58,10 @@ struct MMU {
   std::vector<uint8_t> mem2;
 
   MMU() {
-    mem1.resize(24 * 1024 * 1024 + 8, 0); // 24MB MEM1 + 8 bytes padding for unaligned access
-    mem2.resize(64 * 1024 * 1024 + 8, 0); // 64MB MEM2 + 8 bytes padding for unaligned access
+    mem1.resize(24 * 1024 * 1024 + 8, 0); 
+    mem2.resize(64 * 1024 * 1024 + 8, 0); 
   }
 
-  // Translates Virtual (EA) to Physical (PA) pointer based on RVL standard BAT mappings
   inline uint8_t *get_ptr(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF; 
     if (paddr < mem1.size() - 8) {
@@ -83,7 +81,7 @@ struct MMU {
     uint32_t paddr = addr & 0x3FFFFFFF;
 
     if (is_hw_reg(paddr)) {
-        // HW registers are typically 32-bit/16-bit, 8-bit reads are rare but happen
+        
         uint32_t val = HW_Reg_Read32(paddr & ~3);
         int shift = 24 - ((paddr & 3) * 8);
         return (val >> shift) & 0xFF;
@@ -101,11 +99,10 @@ struct MMU {
       watch_hit(addr, value, 8);
 
     // The whole 0x0C008xxx page mirrors the write-gather pipe (Dolphin
-    // GATHER_PIPE): psq_st and misaligned burst stores land at +4/+8 etc.
-    // Matching only the exact base dropped every second element of paired
-    // stores and desynced the GX FIFO stream.
-    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write8(value); return; } // FIFO Strict Physical
-    if (is_hw_reg(paddr)) return; // 8-bit HW writes are generally ignored/unsupported
+
+    
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write8(value); return; } 
+    if (is_hw_reg(paddr)) return; 
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) *ptr = value;
@@ -127,7 +124,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 16);
 
-    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write16(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_Write16(value); return; } 
     if (is_hw_reg(paddr)) { HW_Reg_Write16(paddr, value); return; }
 
     uint8_t *ptr = get_ptr(addr);
@@ -136,9 +133,8 @@ struct MMU {
 
   uint32_t read32(uint32_t addr) {
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x0000000C) return 0; // Fix allocator bug by faking 0 here
+    if (paddr == 0x0000000C) return 0; 
 
-    
     if (is_hw_reg(paddr)) return HW_Reg_Read32(paddr);
 
     uint8_t *ptr = get_ptr(addr);
@@ -151,7 +147,7 @@ struct MMU {
   void write32(uint32_t addr, uint32_t value) {
     custom_watch(addr, value, 32);
     uint32_t paddr = addr & 0x3FFFFFFF;
-    if (paddr == 0x0000000C) return; // Prevent OSInit from writing here, fixing allocator bug
+    if (paddr == 0x0000000C) return; 
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, value, 32);
 
@@ -171,7 +167,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~3u) == (g_watch_addr & 0x3FFFFFFC))
       watch_hit(addr, v, 32);
 
-    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF32(value); return; } 
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {
@@ -187,7 +183,7 @@ struct MMU {
     if (g_watch_addr && (paddr & ~7u) == (g_watch_addr & 0x3FFFFFF8))
       watch_hit(addr, v >> 32, 64);
 
-    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } // FIFO Strict Physical
+    if ((paddr & 0xFFFFF000u) == 0x0C008000) { GX_WGPIPE_WriteF64(value); return; } 
 
     uint8_t *ptr = get_ptr(addr);
     if (ptr) {
@@ -225,33 +221,27 @@ struct MMU {
 };
 
 struct CPUContext {
-  // General Purpose Registers (r0-r31)
+  
   std::array<uint32_t, 32> gpr;
 
-  // Floating Point Registers (f0-f31, which act as ps0 for Paired Singles)
   std::array<double, 32> fpr;
 
-  // Paired Single 1 Registers (ps1) - second half of the 64-bit paired single
   std::array<double, 32> ps1;
 
-  // Condition Registers (cr0-cr7)
   std::array<ConditionField, 8> cr;
 
-  // Special Purpose Registers
-  uint32_t pc;    // Program Counter
-  uint32_t lr;    // Link Register
-  uint32_t ctr;   // Count Register
-  uint32_t xer;   // Fixed-Point Exception Register
-  uint32_t msr;   // Machine State Register
-  uint32_t fpscr; // Floating-Point Status and Control Register
-  uint32_t srr0;  // Save/Restore Register 0
-  uint32_t srr1;  // Save/Restore Register 1
+  uint32_t pc;    
+  uint32_t lr;    
+  uint32_t ctr;   
+  uint32_t xer;   
+  uint32_t msr;   
+  uint32_t fpscr; 
+  uint32_t srr0;  
+  uint32_t srr1;  
 
-  // Graphics Quantization Registers (GQR0-GQR7) for Paired Singles Load/Store
   std::array<uint32_t, 8> gqr;
-  std::array<uint32_t, 4> sprg; // SPRG0-3
+  std::array<uint32_t, 4> sprg; 
 
-  // Backup state for HLE callbacks (nested-safe via stack)
   struct BackupState {
     std::array<uint32_t, 32> gpr;
     std::array<double, 32> fpr;
@@ -272,10 +262,8 @@ struct CPUContext {
   bool in_callback = false;
   int callback_depth = 0;
 
-  // Memory Management Unit
   MMU mmu;
-  
-  // Exception handling for control flow
+
   uint32_t exception_pc;
   uint64_t inst_count = 0;
   
@@ -283,57 +271,46 @@ struct CPUContext {
   std::atomic<bool> vblank_pending;
   std::mutex cb_mutex;
   std::queue<CallbackInfo> pending_callbacks;
-  // Mirrors pending_callbacks.size() for a lock-free emptiness check
+  
   std::atomic<int> pending_cb_count{0};
   jmp_buf exception_jmp_buf;
 
-  // Reservation address for lwarx/stwcx atomic instructions (multiprocessing)
   uint32_t reservation_addr = 0xFFFFFFFF;
 
-  // Context address saved by the last interrupt/callback dispatch.
-  // __OSDispatchInterrupt (whose role our sentinel plays) restores the
-  // context IT saved, not whatever the handler left in __OSCurrentContext:
-  // SDK handlers legitimately leave their own exception context installed.
+  
+
   uint32_t dispatch_saved_ctx = 0;
 
-  // Set when an external-interrupt leaf handler is dispatched, so the sentinel
-  // return can model the post-ISR reschedule __OSDispatchInterrupt performs.
+  
   bool ext_resched_pending = false;
 
-  // Set when HLE has jumped into the guest __OSDispatchInterrupt (new path).
-  // Prevents the HLE VI timer from re-asserting VI while the dispatcher is
-  // running its internal interrupt-draining poll loop, which would create an
-  // infinite interrupt delivery cycle.
+  
 
-  // Time base / decrementer run off the WALL CLOCK, not inst_count. The
-  // guest's OSGetTime/OSGetTick and every alarm/timeout compare against
-  // the time base; tying it to inst_count made a second of guest time take
-  // many real minutes, so timer-driven waits (the game idling until an
-  // alarm fires) effectively never completed. TB frequency is the console
-  // bus-clock/4 (GC 40.5 MHz, Wii 60.75 MHz), set from main.cpp.
+
+
+  
+
+  
   uint64_t tb_freq = 40500000;
   std::chrono::steady_clock::time_point tb_start =
       std::chrono::steady_clock::now();
 
-  // Time base. Default: inst_count (a monotonic proxy for guest cycles) —
-  // safe, but guest time then advances at the emulation speed, so
-  // timer-paced logic (frame limiters, intro sequencing) crawls.
-  // NWII_WALLTB=1 switches to the hardware model: the TB ticks at
-  // bus-clock/4 in real time regardless of how fast instructions retire.
+  
+
+  
   uint64_t read_timebase() const {
     static const bool wall = std::getenv("NWII_WALLTB") != nullptr;
     if (wall) {
       uint64_t us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - tb_start)
                         .count();
-      // Split to avoid us*tb_freq overflowing 64 bits.
+      
       return us / 1000000 * tb_freq + us % 1000000 * tb_freq / 1000000;
     }
     return inst_count;
   }
 
-  // Decrementer (SPR 22): counts down from its written value at the TB
-  // rate. Shares read_timebase() so DEC and TB can never diverge.
+  
   uint64_t dec_value = 0xFFFFFFFF;
   uint64_t dec_written_tb = 0;
   bool dec_irq_pending = false;
@@ -372,7 +349,6 @@ struct CPUContext {
     pending_cb_count.fetch_add(1, std::memory_order_relaxed);
   }
 
-  // Paired Single Quantized Load
   void psq_load(uint32_t frD, uint32_t addr, uint32_t W, uint32_t I) {
     uint32_t gqr_val = gqr[I];
     uint32_t ld_type = (gqr_val >> 16) & 0x7;
@@ -400,14 +376,13 @@ struct CPUContext {
         (ld_type == 0) ? 4 : ((ld_type == 4 || ld_type == 6) ? 1 : 2);
 
     fpr[frD] = load_element(addr);
-    if (W == 0) { // W=0 means 2 elements
+    if (W == 0) { 
       ps1[frD] = load_element(addr + elem_size);
-    } else { // W=1 means 1 element, ps1 gets 1.0
+    } else { 
       ps1[frD] = 1.0;
     }
   }
 
-  // Paired Single Quantized Store
   void psq_store(uint32_t frS, uint32_t addr, uint32_t W, uint32_t I) {
     uint32_t gqr_val = gqr[I];
     uint32_t st_type = gqr_val & 0x7;
@@ -443,7 +418,6 @@ struct CPUContext {
     }
   }
 
-  // SIMD Paired Singles Math
   inline void ps_add(uint32_t D, uint32_t A, uint32_t B) {
     fpr[D] = fpr[A] + fpr[B];
     ps1[D] = ps1[A] + ps1[B];
@@ -477,16 +451,15 @@ struct CPUContext {
     ps1[D] = ps1[A] / ps1[B];
   }
   inline void ps_sum0(uint32_t D, uint32_t A, uint32_t C, uint32_t B) {
-    // ps_sum0: D[0] = A[0] + B[1]; D[1] = C[1] (a copy, NOT an add).
-    // This is the cross-lane add MTXConcat is built on — getting either
-    // lane wrong corrupts every computed matrix.
+
+    
     double s = fpr[A] + ps1[B];
     double t = ps1[C];
     fpr[D] = (float)s;
     ps1[D] = (float)t;
   }
   inline void ps_sum1(uint32_t D, uint32_t A, uint32_t C, uint32_t B) {
-    // ps_sum1: D[0] = C[0] (a copy); D[1] = A[0] + B[1].
+    
     double s = fpr[C];
     double t = fpr[A] + ps1[B];
     fpr[D] = (float)s;
@@ -528,9 +501,8 @@ struct CPUContext {
     fpr[D] = -std::abs(fpr[B]);
     ps1[D] = -std::abs(ps1[B]);
   }
-  // Both lanes must be read before either is written: D commonly aliases A
-  // or B in the SDK's matrix routines, and writing lane 0 first then reading
-  // the other operand returned the value just overwritten.
+
+  
   inline void ps_merge00(uint32_t D, uint32_t A, uint32_t B) {
     double a = fpr[A], b = fpr[B];
     fpr[D] = a; ps1[D] = b;
@@ -579,22 +551,19 @@ struct CPUContext {
 
 void hle_set_ipc_arm_msg(uint32_t req_addr);
 void micro_interpret(CPUContext& ctx, uint32_t opcode, uint32_t pc);
-// Dispatcher fallback for runtime-generated code (not present in the DOL)
+
 bool interpret_one(CPUContext& ctx);
 void interpret_step(CPUContext& ctx);
 void add_recompiled_range(uint32_t start, uint32_t end);
 bool in_recompiled_code(uint32_t pc);
 
-// Call tracing for recompiled functions, enabled with NWII_TRACE_CALLS=1
 extern bool g_trace_calls;
 void trace_call(uint32_t func_addr, CPUContext& ctx);
 
-// An indirect call (bcctrl) through a null pointer means the guest invoked an
-// unregistered callback slot. Real hardware would fault; we instead treat it
-// as a no-op return (the callee "does nothing") so early-boot code that prints
-// through a not-yet-registered putchar, etc., keeps running. Logged (throttled)
-// so the divergence is visible.
+
+
+
 void note_null_call(uint32_t site, uint32_t lr);
 
-} // namespace runtime
-} // namespace nwii
+} 
+} 

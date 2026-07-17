@@ -161,8 +161,8 @@ NWII_TRACE_CALLS=1   # print every recompiled function entry
 - [PS2Recomp](https://github.com/ran-j/PS2Recomp) — Project structure and early inspiration from friend Ran-J; the foundation this recompiler is built on.
 - [N64Recomp](https://github.com/N64Recomp/N64Recomp) — Inspiration for the static recompilation approach
 
-- [Dolphin Emulator](https://github.com/dolphin-emu/dolphin) — Huge thanks for the endless hardware documentation, GX/DSP accuracy, and HLE inspiration!
-- [Cemu](https://github.com/cemu-project/Cemu.git) — Reference for Cafe OS RPL imports, hardware emulation, and GX2 to Vulkan translation.
+- [Dolphin Emulator](https://github.com/dolphin-emu/dolphin) — Huge thanks for the endless hardware documentation, GX/DSP accuracy, and HLE inspiration! 
+  - **Disclaimer:** The NWiiRecomp runtime code is fully custom. Code from Dolphin is not copied 1:1; any logic based on Dolphin is explicitly marked in comments. The `totaldb.dsy` file is an exception—it is taken directly from Dolphin and is subject to Dolphin's license.
 - [Decaf-emu](https://github.com/decaf-emu/decaf-emu.git) — Great resource for RPX/RPL loaders and Cafe OS kernel/syscalls.
 - [WiiUBrew](https://wiiubrew.org/wiki/Hardware/GX2) — Excellent Wii U GX2 and Cafe OS documentation.
 - [CafeGLSL](https://github.com/Exzap/CafeGLSL.git) — Open-source shader compiler alternative, crucial for understanding GX2 shaders.

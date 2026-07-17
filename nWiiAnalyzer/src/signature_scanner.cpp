@@ -13,14 +13,11 @@ SignatureScanner::SignatureScanner() {
         { "IOS_Ioctl", { "9421FFD0", "7C0802A6", "9001????", "3961????", "48??????", "34010008", "7C791B78" } },
         { "IOS_IoctlvAsync", { "9421FF90", "7C0802A6", "9001????", "93E1????", "7CBF2B78", "93C1????", "7C9E2378" } },
         { "IOS_Ioctlv", { "9421FF90", "7C0802A6", "9001????", "3961????", "48??????", "7C7B1B78", "7C9C2378", "7CBD2B78" } }
-        // Removed overly generic patterns that hijacked real game code:
-        // - DVD_Callback / VIInit / VIConfigure / VIConfigurePan: matched
-        //   the SHSM DVD state machine (0x80211060) and VI init, replacing
-        //   them with no-op stubs and killing the boot chain.
-        // - iosAlloc / iosFree / IOS_OpenAsync / IOS_Close / IOS_Read:
-        //   plain-prologue patterns, matched 11 unrelated functions in the
-        //   NFS HP2 (GameCube) build. Per-game [hle_hooks] in the config
-        //   TOML covers these precisely where needed.
+
+        
+
+        
+
     };
 }
 
@@ -53,5 +50,5 @@ std::string SignatureScanner::match(const std::vector<uint32_t>& instructions) c
     return "";
 }
 
-} // namespace analyzer
-} // namespace nwii
+} 
+} 
