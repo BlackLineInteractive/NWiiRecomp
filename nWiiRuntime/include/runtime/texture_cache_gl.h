@@ -77,12 +77,20 @@ public:
 
     GLuint get_texture(CPUContext& ctx, const gx::TexStage& stage);
 
+    // EFB copy-to-texture: the renderer registers the GL texture holding an
+    // EFB copy under the guest RAM address the game targeted; a texture stage
+    // whose base_addr matches samples that copy directly (guest RAM was never
+    // written, decoding it would show garbage).
+    void register_efb_texture(uint32_t addr, GLuint tex);
+    GLuint find_efb_texture(uint32_t addr) const;
+
     void clear();
 
 private:
     TextureCache() = default;
 
     std::unordered_map<TextureKey, GLuint, TextureKeyHash> cache;
+    std::unordered_map<uint32_t, GLuint> efb_textures;
 
     Image decode_texture(CPUContext& ctx, const gx::TexStage& stage);
 

@@ -21,6 +21,17 @@ void TextureCache::clear() {
         glDeleteTextures(1, &pair.second);
     }
     cache.clear();
+    // efb_textures deliberately survive: their GL objects are owned by the
+    // renderer's copy path and re-filled every EFB copy.
+}
+
+void TextureCache::register_efb_texture(uint32_t addr, GLuint tex) {
+    efb_textures[addr & 0x01FFFFFF] = tex;
+}
+
+GLuint TextureCache::find_efb_texture(uint32_t addr) const {
+    auto it = efb_textures.find(addr & 0x01FFFFFF);
+    return it == efb_textures.end() ? 0 : it->second;
 }
 
 // 5/6/4/3-bit channel expansion, matching Dolphin's ConvertNTo8 tables.
@@ -51,6 +62,8 @@ uint32_t texture_data_size(uint32_t width, uint32_t height, uint32_t format) {
 }
 
 GLuint TextureCache::get_texture(CPUContext& ctx, const gx::TexStage& stage) {
+    if (GLuint efb = find_efb_texture(stage.base_addr))
+        return efb;
     uint32_t size = texture_data_size(stage.width, stage.height, stage.format);
     uint32_t stride = size > 32 * 4096 ? size / 4096 : 32;
     uint32_t hash = 2166136261u;

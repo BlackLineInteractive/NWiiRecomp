@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 namespace nwii::runtime::gx {
 
@@ -26,6 +27,11 @@ struct VertexData {
     uint8_t texMtxIdx[8] = {0};
 };
 
+// Deferred draw payload: raw vertex bytes plus the parse-time state needed to
+// decode them later. Most draws are frame-skipped and never decoded, so the
+// parser only snapshots; FifoParser::DecodeDraw() decodes survivors.
+struct DrawRaw;
+
 struct GXCommand {
     GXCommandType type;
 
@@ -34,9 +40,10 @@ struct GXCommand {
 
     uint16_t length;
 
-    
+
     uint8_t prim_type;
     std::vector<VertexData> vertices;
+    std::shared_ptr<DrawRaw> raw;
 
     std::vector<float> payload;
 };

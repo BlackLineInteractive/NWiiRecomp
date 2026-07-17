@@ -170,6 +170,13 @@ bool interpret_one(CPUContext& ctx) {
             ctx.pc = cond_ok ? target : pc + 4;
             return true;
         }
+        if (xo == 0) { // mcrf
+            uint32_t crfD = rD >> 2;
+            uint32_t crfS = rA >> 2;
+            ctx.cr[crfD] = ctx.cr[crfS];
+            ctx.pc = pc + 4;
+            return true;
+        }
         if (xo == 50) { 
             uint32_t ee_was = ctx.msr & 0x8000;
             ctx.msr = ctx.srr1;

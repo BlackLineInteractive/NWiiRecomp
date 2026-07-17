@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
@@ -293,7 +294,7 @@ namespace {
     
     bool ReadVectorAttr(const std::vector<uint8_t>& fifo, size_t& fifo_offset, size_t fifo_size,
                         VtxAttrMask mask, VtxAttrType type, uint8_t shift,
-                        uint32_t array_idx, int ncomp, float* out) {
+                        uint32_t array_base, uint32_t array_stride, int ncomp, float* out) {
         for (int i = 0; i < ncomp; i++) out[i] = 0.0f;
         if (mask == VtxAttrMask::None) return true;
 
@@ -316,7 +317,7 @@ namespace {
             fifo_offset += 2;
         }
         if (!nwii::runtime::g_mmu) return true;
-        uint32_t base = g_state.arrayBase[array_idx] + index * g_state.arrayStride[array_idx];
+        uint32_t base = array_base + index * array_stride;
 
         
 
@@ -395,7 +396,8 @@ namespace {
 
     
     bool ReadColorAttr(const std::vector<uint8_t>& fifo, size_t& fifo_offset, size_t fifo_size,
-                       VtxAttrMask mask, VtxAttrType clrType, int chan, float out[4]) {
+                       VtxAttrMask mask, VtxAttrType clrType,
+                       uint32_t array_base, uint32_t array_stride, float out[4]) {
         out[0] = out[1] = out[2] = out[3] = 1.0f;
         if (mask == VtxAttrMask::None) return true;
 
@@ -417,7 +419,7 @@ namespace {
             fifo_offset += 2;
         }
         if (!nwii::runtime::g_mmu) return true;
-        uint32_t base = g_state.arrayBase[2 + chan] + index * g_state.arrayStride[2 + chan];
+        uint32_t base = array_base + index * array_stride;
         const uint8_t* p = nwii::runtime::g_mmu->get_ptr(base);
         if (!p) return true;
         DecodeColor(p, clrType, out);
@@ -447,8 +449,115 @@ static void ExpandDisplayList(uint32_t addr, uint32_t size,
         for (uint32_t i = 0; i < size; i++)
             dl[i] = nwii::runtime::g_mmu->read8(addr + i);
     }
+    g_prof_dl_calls++;
+    g_prof_dl_bytes += size;
+    auto dl0 = std::chrono::steady_clock::now();
     size_t off = 0;
     ParseStream(dl, off, commands, depth + 1);
+    auto dl1 = std::chrono::steady_clock::now();
+    g_prof_dl_us += std::chrono::duration_cast<std::chrono::microseconds>(dl1 - dl0).count();
+}
+
+// Drain-path profiling counters, reported by ProcessGXFifo's [GXPROF] line.
+// The 3D-scene drain still burns seconds somewhere after deferred decode;
+// these split the cost by cause instead of guessing.
+uint64_t g_prof_draws = 0;        // draws snapshotted
+uint64_t g_prof_draw_bytes = 0;   // raw vertex bytes copied
+uint64_t g_prof_dl_calls = 0;     // display-list expansions
+uint64_t g_prof_dl_bytes = 0;     // display-list bytes copied+parsed
+uint64_t g_prof_cmds = 0;         // commands emitted
+uint64_t g_prof_unknown = 0;
+uint64_t g_prof_dl_us = 0;      // time inside display-list expansion
+uint64_t g_prof_snap_us = 0;    // time snapshotting draws      // unknown-opcode single-byte skips
+
+namespace {
+    // Byte width of one attribute in the vertex stream.
+    inline size_t AttrBytes(VtxAttrMask mask, VtxAttrType type, int ncomp,
+                            bool is_color) {
+        switch (mask) {
+        case VtxAttrMask::None:    return 0;
+        case VtxAttrMask::Index8:  return 1;
+        case VtxAttrMask::Index16: return 2;
+        default:
+            return is_color ? (size_t)ColorBytes(type)
+                            : (size_t)TypeSize(type) * ncomp;
+        }
+    }
+
+    size_t VertexSize(const VATSlot& vat) {
+        size_t sz = vat.posMatIdx ? 1 : 0;
+        for (int t = 0; t < 8; t++)
+            if (vat.texMatIdx[t]) sz++;
+        sz += AttrBytes(vat.posMask, vat.posType, vat.posElements ? 3 : 2, false);
+        sz += AttrBytes(vat.nrmMask, vat.nrmType, vat.nrmElements ? 9 : 3, false);
+        for (int ci = 0; ci < 2; ci++)
+            sz += AttrBytes(vat.clrMask[ci], vat.clrType[ci], 1, true);
+        for (int t = 0; t < 8; t++)
+            sz += AttrBytes(vat.texMask[t], vat.texType[t],
+                            vat.texElements[t] ? 2 : 1, false);
+        return sz;
+    }
+} // namespace
+
+void FifoParser::DecodeDraw(GXCommand& c) {
+    if (c.type != GXCommandType::DrawPrimitive || !c.raw || !c.vertices.empty())
+        return;
+    const DrawRaw& r = *c.raw;
+    const std::vector<uint8_t>& buf = r.bytes;
+    const size_t buf_size = buf.size();
+    size_t off = 0;
+    c.vertices.reserve(r.count);
+    for (uint32_t i = 0; i < r.count; i++) {
+        VertexData vtx;
+        vtx.posMtxIdx = r.defPosMtxIdx;
+        if (r.vat.posMatIdx) {
+            if (off + 1 > buf_size) return;
+            vtx.posMtxIdx = buf[off++];
+        }
+        for (int t = 0; t < 8; t++) {
+            if (r.vat.texMatIdx[t]) {
+                if (off + 1 > buf_size) return;
+                vtx.texMtxIdx[t] = buf[off++];
+            }
+        }
+        vtx.has_pos = (r.vat.posMask != VtxAttrMask::None);
+        if (!ReadVectorAttr(buf, off, buf_size, r.vat.posMask, r.vat.posType,
+                            r.vat.posShift, r.arrayBase[0], r.arrayStride[0],
+                            r.vat.posElements ? 3 : 2, vtx.pos))
+            return;
+        // Normals, CLR1 and tex1-7 are parsed for stream position only — the
+        // renderer consumes pos/clr0/tex0 exclusively (no lighting yet, one
+        // UV set). Skipping their conversion (array fetches, colour decode)
+        // roughly halves decode cost on skinned scenes.
+        off += AttrBytes(r.vat.nrmMask, r.vat.nrmType,
+                         r.vat.nrmElements ? 9 : 3, false);
+        if (r.vat.clrMask[0] != VtxAttrMask::None) {
+            float col[4];
+            if (!ReadColorAttr(buf, off, buf_size, r.vat.clrMask[0],
+                               r.vat.clrType[0], r.arrayBase[2],
+                               r.arrayStride[2], col))
+                return;
+            vtx.has_color = true;
+            vtx.color[0] = col[0]; vtx.color[1] = col[1];
+            vtx.color[2] = col[2]; vtx.color[3] = col[3];
+        }
+        off += AttrBytes(r.vat.clrMask[1], r.vat.clrType[1], 1, true);
+        if (r.vat.texMask[0] != VtxAttrMask::None) {
+            vtx.has_tex[0] = true;
+            if (!ReadVectorAttr(buf, off, buf_size, r.vat.texMask[0],
+                                r.vat.texType[0], r.vat.texShift[0],
+                                r.arrayBase[4], r.arrayStride[4],
+                                r.vat.texElements[0] ? 2 : 1, vtx.tex[0]))
+                return;
+        }
+        for (int t = 1; t < 8; t++)
+            off += AttrBytes(r.vat.texMask[t], r.vat.texType[t],
+                             r.vat.texElements[t] ? 2 : 1, false);
+        if (off > buf_size)
+            return;
+        c.vertices.push_back(vtx);
+    }
+    c.raw.reset(); // decoded: drop the raw copy
 }
 
 void FifoParser::Parse(std::vector<uint8_t>& fifo, std::vector<GXCommand>& commands) {
@@ -581,89 +690,36 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             uint8_t vat_idx = cmd & 0x07;
 
             VATSlot& vat = g_state.vat[vat_idx];
-            size_t curr_offset = offset + 3;
 
+            // Vertex size is constant for a draw (every attribute is either
+            // direct with a fixed byte width or a fixed 1/2-byte index), so
+            // the payload length is known without touching the vertices.
+            // Decode is deferred: frame-skip drops most draws, and decoding
+            // only survivors is what keeps parse cost off the drain path.
+            size_t vsize = VertexSize(vat);
+            size_t need = 3 + (size_t)vtx_count * vsize;
+            if (offset + need > fifo_size) break; // incomplete: wait for more
+
+            auto sn0 = std::chrono::steady_clock::now();
             GXCommand c;
             c.type = GXCommandType::DrawPrimitive;
             c.prim_type = cmd & 0xF8;
-
-            bool parse_ok = true;
-            for (int i = 0; i < vtx_count && parse_ok; i++) {
-                VertexData vtx;
-
-                
-                vtx.posMtxIdx = g_state.defPosMtxIdx;
-                {
-                    int midx_offset = 0;
-                    if (vat.posMatIdx) {
-                        if (curr_offset + midx_offset + 1 > fifo_size) { parse_ok = false; break; }
-                        vtx.posMtxIdx = fifo[curr_offset + midx_offset];
-                        midx_offset++;
-                    }
-                    for (int t = 0; t < 8; t++) {
-                        if (vat.texMatIdx[t]) {
-                            if (curr_offset + midx_offset + 1 > fifo_size) { parse_ok = false; break; }
-                            vtx.texMtxIdx[t] = fifo[curr_offset + midx_offset];
-                            midx_offset++;
-                        }
-                    }
-                    curr_offset += midx_offset;
-                }
-
-                vtx.has_pos = (vat.posMask != VtxAttrMask::None);
-                if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.posMask, vat.posType,
-                                    vat.posShift, 0, vat.posElements ? 3 : 2, vtx.pos)) {
-                    parse_ok = false; break;
-                }
-
-                if (vat.nrmMask != VtxAttrMask::None) {
-                    vtx.has_norm = true;
-
-                    float nbt[9];
-                    if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.nrmMask, vat.nrmType,
-                                        0, 1, vat.nrmElements ? 9 : 3, nbt)) {
-                        parse_ok = false; break;
-                    }
-                    vtx.norm[0] = nbt[0]; vtx.norm[1] = nbt[1]; vtx.norm[2] = nbt[2];
-                }
-
-                
-                for (int ci = 0; ci < 2 && parse_ok; ci++) {
-                    if (vat.clrMask[ci] == VtxAttrMask::None) continue;
-                    float col[4];
-                    if (!ReadColorAttr(fifo, curr_offset, fifo_size, vat.clrMask[ci],
-                                       vat.clrType[ci], ci, col)) {
-                        parse_ok = false; break;
-                    }
-                    if (ci == 0) {
-                        vtx.has_color = true;
-                        vtx.color[0] = col[0]; vtx.color[1] = col[1];
-                        vtx.color[2] = col[2]; vtx.color[3] = col[3];
-                    }
-                }
-                if (!parse_ok) break;
-
-                for (int t = 0; t < 8 && parse_ok; t++) {
-                    if (vat.texMask[t] != VtxAttrMask::None) {
-                        vtx.has_tex[t] = true;
-                        if (!ReadVectorAttr(fifo, curr_offset, fifo_size, vat.texMask[t],
-                                            vat.texType[t], vat.texShift[t], 4 + t,
-                                            vat.texElements[t] ? 2 : 1, vtx.tex[t])) {
-                            parse_ok = false; break;
-                        }
-                    }
-                }
-
-                c.vertices.push_back(vtx);
-            }
-
-            
-            if (!parse_ok || curr_offset > fifo_size) break;
+            c.raw = std::make_shared<DrawRaw>();
+            c.raw->vat = vat;
+            c.raw->defPosMtxIdx = g_state.defPosMtxIdx;
+            std::memcpy(c.raw->arrayBase, g_state.arrayBase, sizeof(c.raw->arrayBase));
+            std::memcpy(c.raw->arrayStride, g_state.arrayStride, sizeof(c.raw->arrayStride));
+            c.raw->count = vtx_count;
+            c.raw->bytes.assign(fifo.begin() + offset + 3, fifo.begin() + offset + need);
+            g_prof_draws++;
+            g_prof_draw_bytes += need;
 
             commands.push_back(std::move(c));
-            offset = curr_offset;
+            offset += need;
+            g_prof_snap_us += std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - sn0).count();
         } else {
-            
+            g_prof_unknown++;
             offset++;
         }
     }

@@ -145,9 +145,52 @@ void ProcessGXFifo() {
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
 
     ++g_stat_frames;
-    for (const auto &c : frame)
-        if (c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive)
+    // Decode only the surviving frame's draws (stale frames' draws were
+    // dropped above and their vertices are never built).
+    auto d0 = std::chrono::steady_clock::now();
+    for (auto &c : frame) {
+        if (c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive) {
+            nwii::runtime::gx::FifoParser::DecodeDraw(c);
             ++g_stat_draws;
+        }
+    }
+    auto d1 = std::chrono::steady_clock::now();
+    uint64_t decode_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(d1 - d0).count();
+    g_stat_parse_us += decode_us;
+
+    // [GXPROF]: once a second, split the drain cost by cause. Prints in
+    // headless too (the [STAT] line is window-only), so the 3D-scene
+    // bottleneck can be measured without a display.
+    {
+        namespace fp = nwii::runtime::gx;
+        extern uint64_t g_prof_decode_us_accum;
+        g_prof_decode_us_accum += decode_us;
+        static auto last = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last).count() >= 2) {
+            last = now;
+            std::cout << "[GXPROF] parse+decode_ms=" << g_stat_parse_us / 1000
+                      << " (decode_ms=" << g_prof_decode_us_accum / 1000 << ")"
+                      << " draws_snap=" << fp::g_prof_draws
+                      << " draw_bytes=" << fp::g_prof_draw_bytes
+                      << " dl_calls=" << fp::g_prof_dl_calls
+                      << " dl_bytes=" << fp::g_prof_dl_bytes
+                      << " dl_ms=" << fp::g_prof_dl_us / 1000
+                      << " snap_ms=" << fp::g_prof_snap_us / 1000
+                      << " unknown=" << fp::g_prof_unknown
+                      << " carry=" << s_carry.size()
+                      << " buf=" << s_parse_buf.size() << "\n";
+            g_prof_decode_us_accum = 0;
+            fp::g_prof_draws = 0;
+            fp::g_prof_draw_bytes = 0;
+            fp::g_prof_dl_calls = 0;
+            fp::g_prof_dl_bytes = 0;
+            fp::g_prof_unknown = 0;
+            fp::g_prof_dl_us = 0;
+            fp::g_prof_snap_us = 0;
+        }
+    }
 
     if (g_window) {
         if (!g_renderer) {
@@ -305,3 +348,4 @@ void GX_WGPIPE_WriteF64(double val) {
 }
 
 } 
+uint64_t g_prof_decode_us_accum = 0;

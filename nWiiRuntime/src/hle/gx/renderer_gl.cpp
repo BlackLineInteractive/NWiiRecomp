@@ -589,6 +589,35 @@ public:
         if (cmd.reg == 0x40) {
           ApplyZMode();
         }
+        // EFB copy WITHOUT bit14 = copy to a texture in guest RAM. Grab the
+        // just-rendered pixels into a GL texture keyed by the destination
+        // address; texture lookups on that address sample it directly
+        // (render-to-texture: title backgrounds, portraits, effects).
+        if (cmd.reg == 0x52 && !(cmd.val & 0x4000)) {
+          uint32_t dest = g_state.efbCopyDest;
+          uint32_t w = g_state.efbW, h = g_state.efbH;
+          if (dest && w > 0 && h > 0 && w <= 1024 && h <= 1024) {
+            GLuint tex =
+                nwii::runtime::hle::TextureCache::get().find_efb_texture(dest);
+            if (!tex)
+              glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_state.efbSrcX,
+                             g_state.efbSrcY, w, h, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            nwii::runtime::hle::TextureCache::get().register_efb_texture(dest,
+                                                                         tex);
+            if (cmd.val & 0x800) {
+              unsigned char cc[4];
+              ::GX_GetClearColor(cc);
+              glClearColor(cc[0] / 255.f, cc[1] / 255.f, cc[2] / 255.f,
+                           cc[3] / 255.f);
+              glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+              g_state.pe_clear_pending = false;
+            }
+          }
+        }
       } else if (cmd.type == GXCommandType::DrawPrimitive) {
 
         if (!s_batch_open && g_ctx_ptr) {

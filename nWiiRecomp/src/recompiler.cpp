@@ -1486,6 +1486,10 @@ void Recompiler::emit_instruction(std::ostream &out,
         op = get_cr_bit_str(crbA) + " ^ " + get_cr_bit_str(crbB); 
 
       out << "    " << get_cr_bit_str(crbD) << " = " << op << ";\n";
+    } else if (xo == 0) {
+      uint32_t crfD = ppc_inst.rd() >> 2;
+      uint32_t crfS = ppc_inst.ra() >> 2;
+      out << "    ctx.cr[" << crfD << "] = ctx.cr[" << crfS << "]; // mcrf\n";
     } else {
       out << "    std::cerr << \"UNIMPLEMENTED OPCODE 19 XO \" << " << xo
           << " << \" at 0x" << std::hex << inst.address << std::dec
@@ -2308,6 +2312,8 @@ void Recompiler::emit_instruction(std::ostream &out,
       out << "            }\n";
       out << "        }\n";
       out << "    }\n";
+    } else if (xo == 566) { 
+      out << "    // tlbsync (no-op)\n";
     } else {
       out << "    std::cerr << \"UNIMPLEMENTED Opcode 31 XO \" << " << xo
           << " << \" at 0x\" << std::hex << ctx.pc << std::dec << \"\\n\"; "
@@ -2458,6 +2464,8 @@ void Recompiler::emit_instruction(std::ostream &out,
     } else if (xo_10 == 96) {
       out << "    ctx.ps_cmpo1(" << (frD >> 2) << ", " << frA << ", " << frB
           << ");\n";
+    } else if (xo_10 == 1014) {
+      out << "    // dcbz_l (no-op)\n";
     } else {
       out << "    std::cerr << \"UNIMPLEMENTED Opcode 4 (ps_*) XO \" << " << xo
           << " << \" XO_10 \" << " << xo_10
