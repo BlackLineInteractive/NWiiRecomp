@@ -33,6 +33,8 @@ struct GLShader {
   GLint uTevKColor;
   GLint uTevColor;
   GLint uProjMtx;
+  GLint uMatColor, uAmbColor, uChanCtrl;
+  GLint uLightCol, uLightPos, uLightDir, uLightCosAtt, uLightDistAtt;
 };
 static std::unordered_map<uint64_t, GLShader> s_shader_cache;
 
@@ -43,6 +45,7 @@ struct BatchVertex {
   float x, y, z;
   float r, g, b, a;
   float u, v;
+  float nx, ny, nz;
 };
 
 static std::vector<BatchVertex> s_batch;
@@ -80,12 +83,15 @@ static void FlushBatch() {
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
+    glEnableVertexAttribArray(3);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(BatchVertex),
                           (void *)offsetof(BatchVertex, x));
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(BatchVertex),
                           (void *)offsetof(BatchVertex, r));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(BatchVertex),
                           (void *)offsetof(BatchVertex, u));
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(BatchVertex),
+                          (void *)offsetof(BatchVertex, nx));
   }
 
   glBindVertexArray(s_vao);
@@ -231,11 +237,23 @@ static void EmitVertex(const VertexData &vtx) {
     bv.b = vtx.color[2];
     bv.a = vtx.color[3];
   } else {
-    uint32_t mat0 = g_state.xf[12];
-    bv.r = ((mat0 >> 24) & 0xFF) / 255.f;
-    bv.g = ((mat0 >> 16) & 0xFF) / 255.f;
-    bv.b = ((mat0 >> 8) & 0xFF) / 255.f;
-    bv.a = (mat0 & 0xFF) / 255.f;
+    bv.r = bv.g = bv.b = bv.a = 1.f;
+  }
+  if (vtx.has_norm) {
+    // Normal matrix for a position matrix index: 3 * (idx & 31), three rows
+    // of three (Dolphin VertexShaderManager).
+    int nb = 3 * (vtx.posMtxIdx & 31);
+    const float *nm = g_state.normalMatrices;
+    if (nb + 9 <= 96) {
+      bv.nx = vtx.norm[0] * nm[nb + 0] + vtx.norm[1] * nm[nb + 1] +
+              vtx.norm[2] * nm[nb + 2];
+      bv.ny = vtx.norm[0] * nm[nb + 3] + vtx.norm[1] * nm[nb + 4] +
+              vtx.norm[2] * nm[nb + 5];
+      bv.nz = vtx.norm[0] * nm[nb + 6] + vtx.norm[1] * nm[nb + 7] +
+              vtx.norm[2] * nm[nb + 8];
+    } else {
+      bv.nx = vtx.norm[0]; bv.ny = vtx.norm[1]; bv.nz = vtx.norm[2];
+    }
   }
   if (vtx.has_tex[0]) {
     bv.u = vtx.tex[0][0];
@@ -422,6 +440,14 @@ static void SetupDrawState(const GXCommand &cmd) {
                sh.uProjMtx, sh.uTevColor, sh.uTevKColor);
     }
     sh.uProjMtx = glGetUniformLocation(sh.id, "mvp");
+    sh.uMatColor = glGetUniformLocation(sh.id, "uMatColor[0]");
+    sh.uAmbColor = glGetUniformLocation(sh.id, "uAmbColor[0]");
+    sh.uChanCtrl = glGetUniformLocation(sh.id, "uChanCtrl[0]");
+    sh.uLightCol = glGetUniformLocation(sh.id, "uLightCol[0]");
+    sh.uLightPos = glGetUniformLocation(sh.id, "uLightPos[0]");
+    sh.uLightDir = glGetUniformLocation(sh.id, "uLightDir[0]");
+    sh.uLightCosAtt = glGetUniformLocation(sh.id, "uLightCosAtt[0]");
+    sh.uLightDistAtt = glGetUniformLocation(sh.id, "uLightDistAtt[0]");
 
     s_shader_cache[hash] = sh;
     s_active_shader = sh;
@@ -439,6 +465,56 @@ static void SetupDrawState(const GXCommand &cmd) {
     if (g_state.texStages[i].base_addr != 0 && s_active_shader.uTex[i] >= 0) {
       glUniform1i(s_active_shader.uTex[i], i);
     }
+  }
+
+  // XF channel state changes every frame (material fades, light motion), so
+  // it is uploaded per draw run rather than baked into the shader.
+  {
+    auto unpack = [](uint32_t c, float *o) {
+      o[0] = ((c >> 24) & 0xFF) / 255.f;
+      o[1] = ((c >> 16) & 0xFF) / 255.f;
+      o[2] = ((c >> 8) & 0xFF) / 255.f;
+      o[3] = (c & 0xFF) / 255.f;
+    };
+    float mat[8], amb[8];
+    unpack(g_state.xf[0x00C], mat);
+    unpack(g_state.xf[0x00D], mat + 4);
+    unpack(g_state.xf[0x00A], amb);
+    unpack(g_state.xf[0x00B], amb + 4);
+    if (s_active_shader.uMatColor >= 0)
+      glUniform4fv(s_active_shader.uMatColor, 2, mat);
+    if (s_active_shader.uAmbColor >= 0)
+      glUniform4fv(s_active_shader.uAmbColor, 2, amb);
+    if (s_active_shader.uChanCtrl >= 0) {
+      GLint cc[4] = {(GLint)g_state.xf[0x00E], (GLint)g_state.xf[0x00F],
+                     (GLint)g_state.xf[0x010], (GLint)g_state.xf[0x011]};
+      glUniform1iv(s_active_shader.uChanCtrl, 4, cc);
+    }
+    float lcol[32], lpos[32], ldir[32], lcos[32], ldist[32];
+    for (int i = 0; i < 8; i++) {
+      const float *L = g_state.lights[i];
+      uint32_t c;
+      std::memcpy(&c, &L[3], 4);
+      unpack(c, lcol + i * 4);
+      lcos[i * 4 + 0] = L[4]; lcos[i * 4 + 1] = L[5]; lcos[i * 4 + 2] = L[6];
+      lcos[i * 4 + 3] = 0.f;
+      ldist[i * 4 + 0] = L[7]; ldist[i * 4 + 1] = L[8]; ldist[i * 4 + 2] = L[9];
+      ldist[i * 4 + 3] = 0.f;
+      lpos[i * 4 + 0] = L[10]; lpos[i * 4 + 1] = L[11]; lpos[i * 4 + 2] = L[12];
+      lpos[i * 4 + 3] = 0.f;
+      ldir[i * 4 + 0] = L[13]; ldir[i * 4 + 1] = L[14]; ldir[i * 4 + 2] = L[15];
+      ldir[i * 4 + 3] = 0.f;
+    }
+    if (s_active_shader.uLightCol >= 0)
+      glUniform4fv(s_active_shader.uLightCol, 8, lcol);
+    if (s_active_shader.uLightPos >= 0)
+      glUniform4fv(s_active_shader.uLightPos, 8, lpos);
+    if (s_active_shader.uLightDir >= 0)
+      glUniform4fv(s_active_shader.uLightDir, 8, ldir);
+    if (s_active_shader.uLightCosAtt >= 0)
+      glUniform4fv(s_active_shader.uLightCosAtt, 8, lcos);
+    if (s_active_shader.uLightDistAtt >= 0)
+      glUniform4fv(s_active_shader.uLightDistAtt, 8, ldist);
   }
 
   float kcolor[16] = {0};
@@ -572,6 +648,11 @@ public:
           }
           if (current_addr >= 0x0000 && current_addr <= 0x00FF) {
             g_state.posMatrices[current_addr] = cmd.payload[i];
+          } else if (current_addr >= 0x0400 && current_addr <= 0x045F) {
+            g_state.normalMatrices[current_addr - 0x0400] = cmd.payload[i];
+          } else if (current_addr >= 0x0600 && current_addr <= 0x067F) {
+            int li = (current_addr - 0x0600) / 16;
+            g_state.lights[li][(current_addr - 0x0600) % 16] = cmd.payload[i];
           } else if (current_addr >= 0x1020 && current_addr <= 0x1026) {
             g_state.projection[current_addr - 0x1020] = cmd.payload[i];
             if (current_addr == 0x1026) {

@@ -20,6 +20,7 @@ struct DrawRaw {
     uint32_t arrayBase[16];
     uint32_t arrayStride[16];
     uint8_t defPosMtxIdx;
+    bool need_normal;   // lighting enabled at snapshot time
     uint16_t count;
     std::vector<uint8_t> bytes;
 };

@@ -144,6 +144,33 @@ void ProcessGXFifo() {
     }
     s_carry.erase(s_carry.begin(), s_carry.begin() + last_frame_end + 1);
 
+    // NWII_FRAMESIG: per-frame signature (draw count + TEV colour/konst regs
+    // + alpha test). If the WARNING "press" blink exists in our command
+    // stream, some field here must alternate between frames.
+    static const bool framesig = std::getenv("NWII_FRAMESIG") != nullptr;
+    if (framesig && g_stat_frames < 240) {
+        size_t draws = 0, verts = 0;
+        for (const auto &c : frame)
+            if (c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive) {
+                draws++;
+                verts += c.raw ? c.raw->count : c.vertices.size();
+            }
+        // Sampled hash of guest MEM1: distinguishes "game logic frozen" from
+        // "logic running but the screen is legitimately static".
+        uint32_t ramsig = 0;
+        if (nwii::runtime::g_mmu) {
+            for (uint32_t a = 0x80003000; a < 0x81800000; a += 4096)
+                ramsig = ramsig * 33 + nwii::runtime::g_mmu->read32(a);
+        }
+        uint32_t tevsig = 0;
+        for (int r = 0xE0; r <= 0xE7; r++) tevsig = tevsig * 33 + g_state.bp[r];
+        std::cout << "[FRAMESIG] f=" << g_stat_frames << " draws=" << draws
+                  << " verts=" << verts << " tev=" << std::hex << tevsig
+                  << " ram=" << ramsig
+                  << " alpha=" << g_state.bp[0xF3] << " cmode=" << g_state.bp[0x41]
+                  << std::dec << "\n";
+    }
+
     ++g_stat_frames;
     // Decode only the surviving frame's draws (stale frames' draws were
     // dropped above and their vertices are never built).

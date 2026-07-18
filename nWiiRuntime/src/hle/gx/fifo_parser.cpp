@@ -7,6 +7,8 @@
 #include <cstring>
 #include <cstdio>
 #include <chrono>
+#include <map>
+#include <algorithm>
 
 namespace nwii::runtime {
     extern MMU* g_mmu;
@@ -525,12 +527,20 @@ void FifoParser::DecodeDraw(GXCommand& c) {
                             r.vat.posShift, r.arrayBase[0], r.arrayStride[0],
                             r.vat.posElements ? 3 : 2, vtx.pos))
             return;
-        // Normals, CLR1 and tex1-7 are parsed for stream position only — the
-        // renderer consumes pos/clr0/tex0 exclusively (no lighting yet, one
-        // UV set). Skipping their conversion (array fetches, colour decode)
-        // roughly halves decode cost on skinned scenes.
-        off += AttrBytes(r.vat.nrmMask, r.vat.nrmType,
-                         r.vat.nrmElements ? 9 : 3, false);
+        // CLR1 and tex1-7 are parsed for stream position only (the renderer
+        // uses clr0/tex0). Normals are decoded only for lit draws.
+        if (r.vat.nrmMask != VtxAttrMask::None && r.need_normal) {
+            vtx.has_norm = true;
+            float nbt[9];
+            if (!ReadVectorAttr(buf, off, buf_size, r.vat.nrmMask, r.vat.nrmType,
+                                0, r.arrayBase[1], r.arrayStride[1],
+                                r.vat.nrmElements ? 9 : 3, nbt))
+                return;
+            vtx.norm[0] = nbt[0]; vtx.norm[1] = nbt[1]; vtx.norm[2] = nbt[2];
+        } else {
+            off += AttrBytes(r.vat.nrmMask, r.vat.nrmType,
+                             r.vat.nrmElements ? 9 : 3, false);
+        }
         if (r.vat.clrMask[0] != VtxAttrMask::None) {
             float col[4];
             if (!ReadColorAttr(buf, off, buf_size, r.vat.clrMask[0],
@@ -582,6 +592,26 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             if (offset + 9 > fifo_size) break;
             uint32_t dl_addr = Read32(fifo, offset + 1);
             uint32_t dl_size = Read32(fifo, offset + 5);
+            // NWII_DLDBG: are we expanding the same lists over and over?
+            static const bool dldbg = std::getenv("NWII_DLDBG") != nullptr;
+            if (dldbg) {
+                static std::map<uint64_t, uint32_t> hits;
+                static auto t0 = std::chrono::steady_clock::now();
+                hits[((uint64_t)dl_addr << 32) | dl_size]++;
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() >= 2) {
+                    t0 = now;
+                    std::vector<std::pair<uint32_t, uint64_t>> top;
+                    for (auto &kv : hits) top.push_back({kv.second, kv.first});
+                    std::sort(top.rbegin(), top.rend());
+                    printf("[DLDBG] distinct=%zu top:", hits.size());
+                    for (size_t i = 0; i < top.size() && i < 5; i++)
+                        printf(" %08X/%uB x%u", (uint32_t)(top[i].second >> 32),
+                               (uint32_t)top[i].second, top[i].first);
+                    printf("\n");
+                    hits.clear();
+                }
+            }
             ExpandDisplayList(dl_addr, dl_size, commands, depth);
             offset += 9;
         } else if (cmd == 0x48) {
@@ -672,6 +702,35 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                     printf("[GXTRACE] XF direct mtx: reg=0x%03X len=%d\n", c.reg, length + 1);
             }
 
+            // NWII_XFDBG: is the game actually animating the colour-channel
+            // material/ambient registers? (0x100a-0x1011). Runs in the parser
+            // so it works headless, where the renderer never runs.
+            static const bool xfdbg = std::getenv("NWII_XFDBG") != nullptr;
+            if (xfdbg && c.reg >= 0x1009 && c.reg <= 0x1011) {
+                static uint32_t last[9] = {0};
+                static uint32_t changes[9] = {0};
+                static uint64_t writes[9] = {0};
+                static auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i <= length; i++) {
+                    int r = c.reg + i - 0x1009;
+                    if (r < 0 || r > 8) continue;
+                    uint32_t v = Read32(fifo, offset + 5 + i * 4);
+                    writes[r]++;
+                    if (v != last[r]) { changes[r]++; last[r] = v; }
+                }
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() >= 1) {
+                    t0 = now;
+                    printf("[XFDBG] chan/mat regs (reg: writes/changes last):");
+                    static const char* nm[9] = {"numchan","amb0","amb1","mat0","mat1",
+                                                "cc0","cc1","ac0","ac1"};
+                    for (int r = 0; r < 9; r++)
+                        printf(" %s:%llu/%u=%08X", nm[r],
+                               (unsigned long long)writes[r], changes[r], last[r]);
+                    printf("\n");
+                }
+            }
+
             int num_floats = length + 1;
             c.payload.resize(num_floats);
             for (int i = 0; i < num_floats; ++i) {
@@ -707,6 +766,10 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             c.raw = std::make_shared<DrawRaw>();
             c.raw->vat = vat;
             c.raw->defPosMtxIdx = g_state.defPosMtxIdx;
+            // Normals only matter when a colour channel is lit (XF 0x100e/0x100f
+            // bit1); decoding them otherwise is pure cost.
+            c.raw->need_normal = ((g_state.xf[0x00E] >> 1) & 1) ||
+                                 ((g_state.xf[0x00F] >> 1) & 1);
             std::memcpy(c.raw->arrayBase, g_state.arrayBase, sizeof(c.raw->arrayBase));
             std::memcpy(c.raw->arrayStride, g_state.arrayStride, sizeof(c.raw->arrayStride));
             c.raw->count = vtx_count;

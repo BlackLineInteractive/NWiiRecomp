@@ -22,6 +22,7 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
     vs << "layout(location = 0) in vec3 vertexPosition;\n";
     vs << "layout(location = 1) in vec4 vertexColor;\n";
     vs << "layout(location = 2) in vec2 vertexTexCoord;\n";
+    vs << "layout(location = 3) in vec3 vertexNormal;\n";
 
     vs << "out vec4 vColor0;\n";
     vs << "out vec4 vColor1;\n";
@@ -30,11 +31,82 @@ GeneratedShader GenerateTEVShader(const GXState& state, uint8_t prim_type) {
 
     vs << "uniform mat4 uTexMtx[8];\n";
     vs << "uniform mat4 mvp;\n";
+    // XF colour-channel state (0x100a-0x1011) and the 8 lights (0x600).
+    vs << "uniform vec4 uMatColor[2];\n";
+    vs << "uniform vec4 uAmbColor[2];\n";
+    vs << "uniform int uChanCtrl[4];\n"; // 0,1 = colour chans; 2,3 = alpha chans
+    vs << "uniform vec4 uLightCol[8];\n";
+    vs << "uniform vec4 uLightPos[8];\n";
+    vs << "uniform vec4 uLightDir[8];\n";
+    vs << "uniform vec4 uLightCosAtt[8];\n";
+    vs << "uniform vec4 uLightDistAtt[8];\n";
+
+    // GX colour channel: the rasterised colour is NOT the vertex colour —
+    // it is material (register or vertex) modulated by ambient + lights,
+    // per XF channel control. Games animate the material register (fades,
+    // the WARNING "press" blink); ignoring it makes those effects vanish.
+    vs << R"(
+vec4 dolphin_chan(int chan, vec3 pos, vec3 nrm, vec4 vcol) {
+    int ctrl = uChanCtrl[chan];
+    int actrl = uChanCtrl[chan + 2];
+    bool matsrc_vtx  = (ctrl & 1) != 0;
+    bool lit         = (ctrl & 2) != 0;
+    bool ambsrc_vtx  = (ctrl & 0x40) != 0;
+    int  diffusefunc = (ctrl >> 7) & 3;
+    int  attnfunc    = (ctrl >> 9) & 3;
+    int  lightmask   = ((ctrl >> 2) & 0xF) | (((ctrl >> 11) & 0xF) << 4);
+    bool amatsrc_vtx = (actrl & 1) != 0;
+    bool alit        = (actrl & 2) != 0;
+    bool aambsrc_vtx = (actrl & 0x40) != 0;
+
+    vec4 mat = vec4(matsrc_vtx ? vcol.rgb : uMatColor[chan].rgb,
+                    amatsrc_vtx ? vcol.a : uMatColor[chan].a);
+    vec4 lacc = vec4(lit  ? (ambsrc_vtx  ? vcol.rgb : uAmbColor[chan].rgb) : vec3(1.0),
+                     alit ? (aambsrc_vtx ? vcol.a   : uAmbColor[chan].a)   : 1.0);
+
+    if (lit) {
+        vec3 _normal = normalize(nrm);
+        for (int i = 0; i < 8; ++i) {
+            if ((lightmask & (1 << i)) == 0) continue;
+            vec3 ldir; float attn;
+            if (attnfunc == 3) { // spot
+                ldir = uLightPos[i].xyz - pos;
+                float dist2 = dot(ldir, ldir);
+                float dist = sqrt(dist2);
+                ldir = ldir / dist;
+                attn = max(0.0, dot(ldir, uLightDir[i].xyz));
+                attn = max(0.0, uLightCosAtt[i].x + uLightCosAtt[i].y * attn +
+                                uLightCosAtt[i].z * attn * attn) /
+                       dot(uLightDistAtt[i].xyz, vec3(1.0, dist, dist2));
+            } else if (attnfunc == 1) { // specular
+                ldir = normalize(uLightPos[i].xyz - pos);
+                attn = (dot(_normal, ldir) >= 0.0)
+                           ? max(0.0, dot(_normal, uLightDir[i].xyz)) : 0.0;
+                vec3 cosAttn = uLightCosAtt[i].xyz;
+                vec3 distAttn = (diffusefunc == 0) ? uLightDistAtt[i].xyz
+                                                   : normalize(uLightDistAtt[i].xyz);
+                attn = max(0.0, dot(cosAttn, vec3(1.0, attn, attn * attn))) /
+                       dot(distAttn, vec3(1.0, attn, attn * attn));
+            } else { // none / directional
+                ldir = uLightPos[i].xyz - pos;
+                ldir = (length(ldir) == 0.0) ? _normal : normalize(ldir);
+                attn = 1.0;
+            }
+            float ndl = (diffusefunc == 0) ? 1.0
+                      : ((diffusefunc == 1) ? dot(ldir, _normal)
+                                            : max(0.0, dot(ldir, _normal)));
+            lacc.rgb += attn * ndl * uLightCol[i].rgb;
+            lacc.a   += attn * ndl * uLightCol[i].a;
+        }
+    }
+    return clamp(mat * clamp(lacc, 0.0, 1.0), 0.0, 1.0);
+}
+)";
 
     vs << "void main() {\n";
     vs << "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n";
-    vs << "    vColor0 = vertexColor;\n";
-    vs << "    vColor1 = vertexColor;\n";
+    vs << "    vColor0 = dolphin_chan(0, vertexPosition, vertexNormal, vertexColor);\n";
+    vs << "    vColor1 = dolphin_chan(1, vertexPosition, vertexNormal, vertexColor);\n";
     for (int i = 0; i < 8; ++i)
         vs << "    vTex" << i << " = (uTexMtx[" << i
            << "] * vec4(vertexTexCoord, 0.0, 1.0)).xy;\n";

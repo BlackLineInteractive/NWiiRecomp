@@ -104,6 +104,10 @@ struct GXState {
   uint32_t projType;
   bool projSet; 
   float posMatrices[256];
+  // XF 0x0400 normal matrices, 0x0600 lights (8 x 16 words, Light layout:
+  // 3 unused, colour as packed RGBA, cosatt[3], distatt[3], pos[3], dir[3]).
+  float normalMatrices[96];
+  float lights[8][16];
 
   
   
