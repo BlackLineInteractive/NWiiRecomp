@@ -258,6 +258,19 @@ static void EmitVertex(const VertexData &vtx) {
   if (vtx.has_tex[0]) {
     bv.u = vtx.tex[0][0];
     bv.v = vtx.tex[0][1];
+    // Texgen: transform the input UV by its texture matrix (shared XF matrix
+    // memory). GX tex matrices live at indices 30-60; anything below is a
+    // position matrix, so treat that as pass-through. Zero matrices (an
+    // index the game never loaded) also fall back, to avoid collapsing UVs.
+    int ti = vtx.texMtxIdx[0];
+    if (g_state.numTexGens > 0 && ti >= 30 && ti * 4 + 8 <= 256) {
+      const float *m = &g_state.posMatrices[ti * 4];
+      if (m[0] || m[1] || m[3] || m[4] || m[5] || m[7]) {
+        float s = vtx.tex[0][0], t = vtx.tex[0][1];
+        bv.u = m[0] * s + m[1] * t + m[2] + m[3];
+        bv.v = m[4] * s + m[5] * t + m[6] + m[7];
+      }
+    }
   }
 
   float x = vtx.pos[0], y = vtx.pos[1], z = vtx.pos[2];
@@ -296,6 +309,9 @@ static uint8_t s_batch_prim = 0;
 
 static int s_compiles_this_frame = 0;
 static const int kMaxCompilesPerFrame = 12;
+// Set by SetupDrawState when the draw's shader isn't ready: DrawPrimitive then
+// skips emitting its vertices instead of drawing them with the wrong shader.
+static bool s_skip_draw = false;
 
 static void SetupDrawState(const GXCommand &cmd);
 static void EmitPrimitive(const GXCommand &cmd);
@@ -355,6 +371,8 @@ static void DrawPrimitive(const GXCommand &cmd) {
     s_batch_open = true;
     s_batch_prim = (uint8_t)cmd.prim_type;
   }
+  if (s_skip_draw)
+    return; // shader for this state not ready yet
   EmitPrimitive(cmd);
 }
 
@@ -368,11 +386,16 @@ static void SetupDrawState(const GXCommand &cmd) {
   if (!g_stat_hash0)
     g_stat_hash0 = hash;
   g_stat_shaders = (uint64_t)s_shader_cache.size();
+  s_skip_draw = false;
   auto it = s_shader_cache.find(hash);
   if (it != s_shader_cache.end()) {
     s_active_shader = it->second;
-  } else if (s_compiles_this_frame >= kMaxCompilesPerFrame &&
-             s_active_shader.id != 0) {
+  } else if (s_compiles_this_frame >= kMaxCompilesPerFrame) {
+    // Shader not compiled yet and out of budget this frame: skip the draw
+    // rather than render this geometry with whatever shader is bound —
+    // wrong TEV/texture/uniforms is the "каша". The cache fills over the
+    // next few frames, so the geometry appears once its shader is ready.
+    s_skip_draw = true;
     return;
   } else {
     ++s_compiles_this_frame;

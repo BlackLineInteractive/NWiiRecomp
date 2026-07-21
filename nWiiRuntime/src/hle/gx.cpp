@@ -14,6 +14,7 @@ namespace nwii::runtime { extern CPUContext *g_ctx_ptr; }
 #include <mutex>
 #include <iterator>
 #include <chrono>
+#include <cstring>
 
 using namespace nwii::runtime;
 using namespace nwii::runtime::gx;
@@ -162,10 +163,24 @@ void ProcessGXFifo() {
             for (uint32_t a = 0x80003000; a < 0x81800000; a += 4096)
                 ramsig = ramsig * 33 + nwii::runtime::g_mmu->read32(a);
         }
+        // Hash the actual draw payloads and XF matrix payloads: counts alone
+        // can't distinguish "static screen" from "animation we drop".
+        uint32_t drawsig = 0, xfsig = 0;
+        for (const auto &c : frame) {
+            if (c.type == nwii::runtime::gx::GXCommandType::DrawPrimitive && c.raw)
+                for (size_t i = 0; i < c.raw->bytes.size(); i += 4)
+                    drawsig = drawsig * 33 + c.raw->bytes[i];
+            if (c.type == nwii::runtime::gx::GXCommandType::XFRegister)
+                for (float f : c.payload) {
+                    uint32_t u; std::memcpy(&u, &f, 4);
+                    xfsig = xfsig * 33 + u;
+                }
+        }
         uint32_t tevsig = 0;
         for (int r = 0xE0; r <= 0xE7; r++) tevsig = tevsig * 33 + g_state.bp[r];
         std::cout << "[FRAMESIG] f=" << g_stat_frames << " draws=" << draws
                   << " verts=" << verts << " tev=" << std::hex << tevsig
+                  << " draw=" << drawsig << " xf=" << xfsig
                   << " ram=" << ramsig
                   << " alpha=" << g_state.bp[0xF3] << " cmode=" << g_state.bp[0x41]
                   << std::dec << "\n";
@@ -205,6 +220,8 @@ void ProcessGXFifo() {
                       << " dl_bytes=" << fp::g_prof_dl_bytes
                       << " dl_ms=" << fp::g_prof_dl_us / 1000
                       << " snap_ms=" << fp::g_prof_snap_us / 1000
+                      << " dl_loadindx=" << fp::g_prof_dl_loadindx
+                      << " dl_hits=" << fp::g_prof_dl_hits
                       << " unknown=" << fp::g_prof_unknown
                       << " carry=" << s_carry.size()
                       << " buf=" << s_parse_buf.size() << "\n";
@@ -216,6 +233,8 @@ void ProcessGXFifo() {
             fp::g_prof_unknown = 0;
             fp::g_prof_dl_us = 0;
             fp::g_prof_snap_us = 0;
+            fp::g_prof_dl_loadindx = 0;
+            fp::g_prof_dl_hits = 0;
         }
     }
 

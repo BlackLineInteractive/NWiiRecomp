@@ -75,6 +75,9 @@ struct GXState {
   uint32_t arrayStride[16];
 
   uint8_t defPosMtxIdx;
+  // Default texture-matrix index per texcoord (CP matrix index A/B, tex fields).
+  // Overridden per-vertex when the VAT has texMatIdx set.
+  uint8_t defTexMtxIdx[8] = {0};
 
   uint8_t numTevStages;
   uint8_t numTexGens;

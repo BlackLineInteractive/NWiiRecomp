@@ -10,7 +10,7 @@ void ApplyBPRegister(uint8_t reg, uint32_t val);
 
 // Drain profiling counters (defined in fifo_parser.cpp, reported by gx.cpp).
 extern uint64_t g_prof_draws, g_prof_draw_bytes, g_prof_dl_calls,
-    g_prof_dl_bytes, g_prof_cmds, g_prof_unknown, g_prof_dl_us, g_prof_snap_us;
+    g_prof_dl_bytes, g_prof_cmds, g_prof_unknown, g_prof_dl_us, g_prof_snap_us, g_prof_dl_loadindx, g_prof_dl_hits;
 
 
 // Parse-time snapshot of everything needed to decode a draw's raw vertex
@@ -20,6 +20,7 @@ struct DrawRaw {
     uint32_t arrayBase[16];
     uint32_t arrayStride[16];
     uint8_t defPosMtxIdx;
+    uint8_t defTexMtxIdx[8];
     bool need_normal;   // lighting enabled at snapshot time
     uint16_t count;
     std::vector<uint8_t> bytes;

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <chrono>
 #include <map>
+#include <unordered_map>
 #include <algorithm>
 
 namespace nwii::runtime {
@@ -205,8 +206,42 @@ namespace {
         } else if (reg >= 0xB0 && reg <= 0xBF) {
             g_state.arrayStride[reg - 0xB0] = val & 0xFF;
         } else if (reg == 0x30) {
-
+            // Matrix index A: pos/normal (bits 0-5), tex0-3 (6-29).
             g_state.defPosMtxIdx = val & 0x3F;
+            for (int t = 0; t < 4; t++)
+                g_state.defTexMtxIdx[t] = (val >> (6 + t * 6)) & 0x3F;
+            static const bool tmdbg = std::getenv("NWII_TEXMTXDBG") != nullptr;
+            if (tmdbg) {
+                static uint32_t seen = 0;
+                for (int t = 0; t < 4; t++) seen |= (1u << g_state.defTexMtxIdx[t]);
+                static auto t0 = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() >= 2) {
+                    t0 = now;
+                    printf("[TEXMTX30] tex0-3 indices:");
+                    for (int i = 0; i < 32; i++) if (seen & (1u << i)) printf(" %d", i);
+                    printf(" numTexGens=%d\n", g_state.numTexGens);
+                    seen = 0;
+                }
+            }
+        } else if (reg == 0x40) {
+            // Matrix index B: tex4-7.
+            for (int t = 0; t < 4; t++)
+                g_state.defTexMtxIdx[4 + t] = (val >> (t * 6)) & 0x3F;
+            static const bool tmdbg = std::getenv("NWII_TEXMTXDBG") != nullptr;
+            if (tmdbg) {
+                static uint32_t seen = 0;
+                for (int t = 0; t < 8; t++) seen |= (1u << g_state.defTexMtxIdx[t]);
+                static auto t0 = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() >= 2) {
+                    t0 = now;
+                    printf("[TEXMTX] indices seen:");
+                    for (int i = 0; i < 32; i++) if (seen & (1u << i)) printf(" %d", i);
+                    printf("\n");
+                    seen = 0;
+                }
+            }
         } else if (reg == 0x50) {
 
             
@@ -436,24 +471,127 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
 
 
 
+// Display lists are static geometry the game CALLs every frame; re-parsing
+// them dominated the 3D-scene drain (measured 1.3s per 2s). Cache the parsed
+// commands keyed by address+content, guarded by a hash of the parser state
+// that gets baked into draw snapshots (VAT, arrays, matrix indices, channel
+// control) so a state change forces a re-parse. LOAD_INDX payloads are the
+// one thing read from RAM at parse time — on a cache hit they are re-read so
+// skinning animation stays live. NWII_NODLCACHE=1 disables.
+struct DLCacheEntry {
+    uint64_t state_hash;
+    uint64_t content_hash;
+    std::vector<GXCommand> cmds;
+};
+static std::unordered_map<uint64_t, DLCacheEntry> s_dl_cache;
+uint64_t g_prof_dl_hits = 0;
+// NWII_SKINDBG: track which XF matrix slots get loaded vs which posMtxIdx the
+// draws reference, to see if skinned geometry (Mario) points at empty slots.
+static bool g_skindbg = false;
+static uint64_t g_skin_loaded_rows = 0; // bitset of loaded matrix rows (xf/4)
+static uint64_t g_skin_used_rows = 0;   // bitset of posMtxIdx used by draws
+static uint64_t g_skin_used_missing = 0;// posMtxIdx used with no matrix loaded
+static uint64_t g_skin_draws_total = 0, g_skin_draws_pmidx = 0, g_skin_defnz = 0;
+static void skin_report() {
+    static auto t0 = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - t0).count() < 2) return;
+    t0 = now;
+    printf("[SKIN] loaded rows:");
+    for (int i = 0; i < 64; i++) if (g_skin_loaded_rows & (1ull<<i)) printf(" %d", i);
+    printf(" | used posMtxIdx:");
+    for (int i = 0; i < 64; i++) if (g_skin_used_rows & (1ull<<i)) printf(" %d", i);
+    printf(" | used-but-unloaded:");
+    for (int i = 0; i < 64; i++) if (g_skin_used_missing & (1ull<<i)) printf(" %d", i);
+    printf(" | draws=%llu perVtxIdx=%llu defNonZero=%llu\n",
+           (unsigned long long)g_skin_draws_total,
+           (unsigned long long)g_skin_draws_pmidx,
+           (unsigned long long)g_skin_defnz);
+    g_skin_loaded_rows = g_skin_used_rows = g_skin_used_missing = 0;
+    g_skin_draws_total = g_skin_draws_pmidx = g_skin_defnz = 0;
+}
+
+static uint64_t DLStateHash() {
+    uint64_t h = 14695981039346656037ull;
+    for (int r = 0x30; r <= 0xBF; ++r) { h ^= g_state.cp[r]; h *= 1099511628211ull; }
+    h ^= g_state.xf[0x00E]; h *= 1099511628211ull;
+    h ^= g_state.xf[0x00F]; h *= 1099511628211ull;
+    return h;
+}
+
 static void ExpandDisplayList(uint32_t addr, uint32_t size,
                               std::vector<GXCommand>& commands, int depth) {
     uint32_t phys = addr & 0x1FFFFFFF;
     if (!nwii::runtime::g_mmu || size == 0 || size > 0x400000 ||
         phys + size > 0x01800000 || depth >= 4)
         return;
-    std::vector<uint8_t> dl(size);
+    g_prof_dl_calls++;
+    g_prof_dl_bytes += size;
+    auto dl0 = std::chrono::steady_clock::now();
 
-    
-    if (const uint8_t* p = nwii::runtime::g_mmu->get_ptr(0x80000000u | phys)) {
-        std::memcpy(dl.data(), p, size);
+    static const bool nocache = std::getenv("NWII_NODLCACHE") != nullptr;
+    const uint8_t* src = nwii::runtime::g_mmu->get_ptr(0x80000000u | phys);
+
+    if (src && !nocache && depth == 0) {
+        // Sampled content hash: stride 512 plus the tail, cheap even for
+        // multi-MB lists. DLs are effectively immutable once written.
+        uint64_t ch = 14695981039346656037ull ^ size;
+        for (uint32_t i = 0; i < size; i += 512) { ch ^= src[i]; ch *= 1099511628211ull; }
+        for (uint32_t i = size > 32 ? size - 32 : 0; i < size; i++) { ch ^= src[i]; ch *= 1099511628211ull; }
+        uint64_t key = ((uint64_t)phys << 23) ^ size;
+        uint64_t sh = DLStateHash();
+        auto it = s_dl_cache.find(key);
+        if (it != s_dl_cache.end() && it->second.state_hash == sh &&
+            it->second.content_hash == ch) {
+            g_prof_dl_hits++;
+            for (const GXCommand& c0 : it->second.cmds) {
+                commands.push_back(c0);
+                GXCommand& c = commands.back();
+                // Replay parser-state side effects so main-stream commands
+                // after the CALL still see the DL's CP/BP writes.
+                if (c.type == GXCommandType::CPRegister)
+                    ParseCP((uint8_t)c.reg, c.val);
+                else if (c.type == GXCommandType::BPRegister)
+                    ParseBP((uint8_t)c.reg, c.val);
+                else if (c.type == GXCommandType::XFRegister &&
+                         (c.val & 0x80000000u)) {
+                    // LOAD_INDX marker: re-read the (possibly animated)
+                    // matrix data from guest RAM at today's array base.
+                    int array = 12 + ((c.val >> 24) & 0x3);
+                    int num = (c.val >> 16) & 0xFF;
+                    uint32_t index = c.val & 0xFFFF;
+                    uint32_t base = g_state.arrayBase[array] +
+                                    index * g_state.arrayStride[array];
+                    for (int i = 0; i < num && i < (int)c.payload.size(); i++)
+                        c.payload[i] =
+                            nwii::runtime::g_mmu->read_f32(base + i * 4);
+                }
+            }
+            auto dl1 = std::chrono::steady_clock::now();
+            g_prof_dl_us += std::chrono::duration_cast<std::chrono::microseconds>(dl1 - dl0).count();
+            return;
+        }
+        // Miss: parse into a local vector so it can be stored.
+        std::vector<uint8_t> dl(src, src + size);
+        size_t off = 0;
+        std::vector<GXCommand> local;
+        ParseStream(dl, off, local, depth + 1);
+        if (s_dl_cache.size() > 512)
+            s_dl_cache.clear();
+        s_dl_cache[key] = {sh, ch, local};
+        commands.insert(commands.end(), local.begin(), local.end());
+        auto dl1 = std::chrono::steady_clock::now();
+        g_prof_dl_us += std::chrono::duration_cast<std::chrono::microseconds>(dl1 - dl0).count();
+        return;
+    }
+
+    std::vector<uint8_t> dl(size);
+    if (src) {
+        std::memcpy(dl.data(), src, size);
     } else {
         for (uint32_t i = 0; i < size; i++)
             dl[i] = nwii::runtime::g_mmu->read8(addr + i);
     }
-    g_prof_dl_calls++;
-    g_prof_dl_bytes += size;
-    auto dl0 = std::chrono::steady_clock::now();
     size_t off = 0;
     ParseStream(dl, off, commands, depth + 1);
     auto dl1 = std::chrono::steady_clock::now();
@@ -470,7 +608,8 @@ uint64_t g_prof_dl_bytes = 0;     // display-list bytes copied+parsed
 uint64_t g_prof_cmds = 0;         // commands emitted
 uint64_t g_prof_unknown = 0;
 uint64_t g_prof_dl_us = 0;      // time inside display-list expansion
-uint64_t g_prof_snap_us = 0;    // time snapshotting draws      // unknown-opcode single-byte skips
+uint64_t g_prof_snap_us = 0;    // time snapshotting draws
+uint64_t g_prof_dl_loadindx = 0; // LOAD_INDX commands seen inside display lists      // unknown-opcode single-byte skips
 
 namespace {
     // Byte width of one attribute in the vertex stream.
@@ -512,9 +651,16 @@ void FifoParser::DecodeDraw(GXCommand& c) {
     for (uint32_t i = 0; i < r.count; i++) {
         VertexData vtx;
         vtx.posMtxIdx = r.defPosMtxIdx;
+        for (int t = 0; t < 8; t++)
+            vtx.texMtxIdx[t] = r.defTexMtxIdx[t];
         if (r.vat.posMatIdx) {
             if (off + 1 > buf_size) return;
             vtx.posMtxIdx = buf[off++];
+        }
+        if (g_skindbg && vtx.posMtxIdx < 64) {
+            g_skin_used_rows |= (1ull << vtx.posMtxIdx);
+            if (!(g_skin_loaded_rows & (1ull << vtx.posMtxIdx)))
+                g_skin_used_missing |= (1ull << vtx.posMtxIdx);
         }
         for (int t = 0; t < 8; t++) {
             if (r.vat.texMatIdx[t]) {
@@ -571,6 +717,9 @@ void FifoParser::DecodeDraw(GXCommand& c) {
 }
 
 void FifoParser::Parse(std::vector<uint8_t>& fifo, std::vector<GXCommand>& commands) {
+    static bool skin_init = (g_skindbg = std::getenv("NWII_SKINDBG") != nullptr, true);
+    (void)skin_init;
+    if (g_skindbg) skin_report();
     size_t offset = 0;
     ParseStream(fifo, offset, commands, 0);
 
@@ -618,9 +767,7 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             
             offset++;
         } else if (cmd == 0x20 || cmd == 0x28 || cmd == 0x30 || cmd == 0x38) {
-
-            
-
+            if (depth > 0) g_prof_dl_loadindx++;
             if (offset + 5 > fifo_size) break;
             uint32_t val = Read32(fifo, offset + 1);
             int array = 12 + (cmd - 0x20) / 8;
@@ -632,6 +779,10 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                 c.type = GXCommandType::XFRegister;
                 c.reg = xf_addr;
                 c.length = num - 1;
+                // LOAD_INDX marker for the DL cache: array/num/index packed so
+                // a cache hit can re-read live matrix data.
+                c.val = 0x80000000u | ((uint32_t)(array - 12) << 24) |
+                        ((uint32_t)num << 16) | (index & 0xFFFF);
                 c.payload.resize(num);
                 uint32_t base = g_state.arrayBase[array] +
                                 index * g_state.arrayStride[array];
@@ -648,6 +799,8 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
                         printf("]\n");
                     }
                 }
+                if (g_skindbg && xf_addr < 0x100 && (xf_addr % 4) == 0)
+                    g_skin_loaded_rows |= (1ull << (xf_addr / 4));
                 commands.push_back(std::move(c));
             }
             offset += 5;
@@ -766,6 +919,12 @@ static void ParseStream(const std::vector<uint8_t>& fifo, size_t& offset, std::v
             c.raw = std::make_shared<DrawRaw>();
             c.raw->vat = vat;
             c.raw->defPosMtxIdx = g_state.defPosMtxIdx;
+            std::memcpy(c.raw->defTexMtxIdx, g_state.defTexMtxIdx, 8);
+            if (g_skindbg) {
+                g_skin_draws_total++;
+                if (vat.posMatIdx) g_skin_draws_pmidx++;
+                if (g_state.defPosMtxIdx != 0) g_skin_defnz++;
+            }
             // Normals only matter when a colour channel is lit (XF 0x100e/0x100f
             // bit1); decoding them otherwise is pure cost.
             c.raw->need_normal = ((g_state.xf[0x00E] >> 1) & 1) ||

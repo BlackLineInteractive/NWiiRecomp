@@ -298,13 +298,18 @@ struct CPUContext {
   
 
   
+  // Instruction count is a virtual clock: the guest gets a fixed number of
+  // instructions per emulated frame and never falls behind. Real elapsed time
+  // (NWII_WALLTB=1) is the hardware-accurate source, but while we run slower
+  // than real time it starves the game — measured on MP7: same input script,
+  // 122 DVD reads with the virtual clock vs 52 with the wall clock. Switch the
+  // default once the drain is fast enough to keep up.
   uint64_t read_timebase() const {
     static const bool wall = std::getenv("NWII_WALLTB") != nullptr;
     if (wall) {
       uint64_t us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - tb_start)
                         .count();
-      
       return us / 1000000 * tb_freq + us % 1000000 * tb_freq / 1000000;
     }
     return inst_count;
